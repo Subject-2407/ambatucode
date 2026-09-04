@@ -1,0 +1,17 @@
+# Normalise to LF in the repository and in the working tree on every platform.
+# Shell scripts and Dockerfiles consumed by the Linux sandbox images break on
+# CRLF, and the Go worker is built in a container.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+
+pnpm-lock.yaml -diff linguist-generated
+packages/db/prisma/migrations/** linguist-generated

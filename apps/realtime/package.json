@@ -1,0 +1,28 @@
+{
+  "name": "realtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotenv -e ../../.env -- tsx watch src/index.ts",
+    "start": "dotenv -e ../../.env -- tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test:integration": "dotenv -e ../../.env -- vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "@ambatucode/db": "workspace:*",
+    "@ambatucode/shared": "workspace:*",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "ioredis": "^5.11.1",
+    "socket.io": "^4.8.3",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "dotenv-cli": "^11.0.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "socket.io-client": "^4.8.3"
+  }
+}

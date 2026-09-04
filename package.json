@@ -1,0 +1,40 @@
+{
+  "name": "ambatucode",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter web --filter realtime dev",
+    "build": "pnpm -r build",
+    "db:migrate": "pnpm --filter @ambatucode/db migrate",
+    "db:generate": "pnpm --filter @ambatucode/db generate",
+    "db:seed": "pnpm --filter @ambatucode/db seed",
+    "db:studio": "pnpm --filter @ambatucode/db studio",
+    "stub:worker": "pnpm --filter web stub:worker",
+    "enqueue:sample": "pnpm --filter web enqueue:sample",
+    "db:reset": "pnpm --filter @ambatucode/db reset",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "pnpm --filter web test:integration && pnpm --filter realtime test:integration",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.1",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
+    "prettier-plugin-prisma": "^5.0.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^3.2.7"
+  }
+}
