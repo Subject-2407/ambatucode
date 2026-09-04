@@ -1,0 +1,528 @@
+// Ambatucode data model. Single source of truth for the database.
+// Enum values are mirrored in packages/shared/src/enums.ts — change both together.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ROOT
+  ARCHITECT
+  CODER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String
+  role         UserRole
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions          Session[]
+  ownedModules      Module[]                @relation("ModuleOwner")
+  enrollments       ModuleEnrollment[]      @relation("EnrollmentUser")
+  enrollmentReviews ModuleEnrollment[]      @relation("EnrollmentDecider")
+  participations    AssessmentParticipant[]
+  attempts          AssessmentAttempt[]     @relation("AttemptUser")
+  attemptResets     AssessmentAttempt[]     @relation("AttemptResetBy")
+  submissions       Submission[]
+  startedSessions   AssessmentSession[]     @relation("SessionStartedBy")
+  events            AssessmentEvent[]
+  achievements      UserAchievement[]
+
+  @@index([role])
+}
+
+model Session {
+  id            String    @id @default(cuid())
+  userId        String
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  lastSeenAt    DateTime  @default(now())
+  userAgent     String?
+  ipAddress     String?
+  revokedAt     DateTime?
+  revokedReason String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // A user has at most one live row: revokedAt IS NULL and expiresAt in the
+  // future. That predicate cannot be expressed as a unique index, so it is
+  // enforced in the login transaction. This index makes the revoke sweep cheap.
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Content
+// ---------------------------------------------------------------------------
+
+enum ModuleVisibility {
+  PUBLIC
+  CLOSED
+}
+
+model Module {
+  id          String           @id @default(cuid())
+  title       String
+  slug        String           @unique
+  description String?
+  visibility  ModuleVisibility @default(PUBLIC)
+  ownerId     String
+  isPublished Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  owner       User               @relation("ModuleOwner", fields: [ownerId], references: [id])
+  sections    Section[]
+  enrollments ModuleEnrollment[]
+
+  @@index([ownerId])
+  @@index([visibility, isPublished])
+}
+
+enum EnrollmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ModuleEnrollment {
+  id          String           @id @default(cuid())
+  moduleId    String
+  userId      String
+  status      EnrollmentStatus @default(PENDING)
+  decidedById String?
+  decidedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  module    Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  user      User   @relation("EnrollmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  decidedBy User?  @relation("EnrollmentDecider", fields: [decidedById], references: [id])
+
+  @@unique([moduleId, userId])
+  @@index([moduleId, status])
+  @@index([userId, status])
+}
+
+model Section {
+  id         String   @id @default(cuid())
+  moduleId   String
+  title      String
+  orderIndex Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  materials   Material[]
+  assessments Assessment[]
+
+  @@index([moduleId, orderIndex])
+}
+
+model Material {
+  id          String   @id @default(cuid())
+  sectionId   String
+  title       String
+  orderIndex  Int
+  contentJson Json     @default("{}")
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  section            Section            @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  practiceActivities PracticeActivity[]
+
+  @@index([sectionId, orderIndex])
+}
+
+model PracticeActivity {
+  id               String   @id @default(cuid())
+  materialId       String
+  title            String
+  orderIndex       Int
+  prompt           String
+  starterCodeJson  Json     @default("{}")
+  allowedLanguages String[]
+  timeLimitMs      Int      @default(5000)
+  memoryLimitMb    Int      @default(256)
+  // Practice cases are all visible to the Coder. No hidden cases live here and
+  // Practice never writes a Submission row.
+  testCasesJson    Json     @default("[]")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@index([materialId, orderIndex])
+}
+
+// ---------------------------------------------------------------------------
+// Assessment
+// ---------------------------------------------------------------------------
+
+enum TimeMode {
+  UNTIMED
+  TIMED
+}
+
+enum AssessmentExecutionMode {
+  INDIVIDUAL
+  LIVE
+}
+
+enum GradingStrategy {
+  ALL_OR_NOTHING
+  WEIGHTED_AVERAGE
+}
+
+model Assessment {
+  id                  String                   @id @default(cuid())
+  sectionId           String
+  title               String
+  orderIndex          Int
+  problemStatement    String
+  starterCodeJson     Json                     @default("{}")
+  allowedLanguages    String[]
+  timeMode            TimeMode                 @default(UNTIMED)
+  durationMinutes     Int?
+  executionMode       AssessmentExecutionMode?
+  timeLimitMs         Int                      @default(5000)
+  memoryLimitMb       Int                      @default(256)
+  gradingStrategy     GradingStrategy          @default(WEIGHTED_AVERAGE)
+  antiCheatConfigJson Json                     @default("{}")
+  isPublished         Boolean                  @default(false)
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  section     Section                @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  testCases   AssessmentTestCase[]
+  testScripts AssessmentTestScript[]
+  sessions    AssessmentSession[]
+  submissions Submission[]
+
+  @@index([sectionId, orderIndex])
+}
+
+enum TestCaseKind {
+  PUBLIC
+  HIDDEN
+}
+
+enum ComparisonMode {
+  EXACT
+  TRIMMED
+  TOKEN
+  NUMERIC_TOLERANT
+}
+
+model AssessmentTestCase {
+  id             String         @id @default(cuid())
+  assessmentId   String
+  name           String
+  orderIndex     Int
+  kind           TestCaseKind   @default(PUBLIC)
+  input          String
+  expectedOutput String
+  weight         Int            @default(1)
+  comparison     ComparisonMode @default(TRIMMED)
+  timeLimitMs    Int?
+  memoryLimitMb  Int?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  assessment Assessment             @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  results    SubmissionTestResult[]
+
+  @@index([assessmentId, orderIndex])
+  @@index([assessmentId, kind])
+}
+
+enum TestScriptFramework {
+  JUNIT
+  JEST
+  PYTEST
+  CUSTOM
+}
+
+// Architect-only data. Never serialized into a Coder-facing response.
+model AssessmentTestScript {
+  id           String              @id @default(cuid())
+  assessmentId String
+  language     String
+  framework    TestScriptFramework
+  entrypoint   String
+  filesJson    Json                @default("[]")
+  weight       Int                 @default(1)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+}
+
+enum AssessmentSessionStatus {
+  DRAFT
+  READY
+  RUNNING
+  ENDED
+  CANCELLED
+}
+
+model AssessmentSession {
+  id                             String                   @id @default(cuid())
+  assessmentId                   String
+  name                           String
+  executionMode                  AssessmentExecutionMode?
+  durationMinutes                Int?
+  status                         AssessmentSessionStatus  @default(DRAFT)
+  startedAt                      DateTime?
+  // Authoritative deadline for Live mode. Set once at start, never moved.
+  endsAt                         DateTime?
+  startedById                    String?
+  startedWithMissingParticipants Boolean                  @default(false)
+  createdAt                      DateTime                 @default(now())
+  updatedAt                      DateTime                 @updatedAt
+
+  assessment   Assessment              @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  startedBy    User?                   @relation("SessionStartedBy", fields: [startedById], references: [id])
+  participants AssessmentParticipant[]
+  attempts     AssessmentAttempt[]
+  submissions  Submission[]
+  events       AssessmentEvent[]
+
+  @@index([assessmentId, status])
+}
+
+enum ReadyState {
+  NOT_READY
+  READY
+}
+
+enum ConnectionState {
+  OFFLINE
+  ONLINE
+}
+
+model AssessmentParticipant {
+  id                 String          @id @default(cuid())
+  sessionId          String
+  userId             String
+  readyState         ReadyState      @default(NOT_READY)
+  connectionState    ConnectionState @default(OFFLINE)
+  activeConnectionId String?
+  lastSeenAt         DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  session AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+  @@index([sessionId, connectionState])
+}
+
+enum AttemptStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+  EXPIRED
+  RESET
+}
+
+model AssessmentAttempt {
+  id                   String        @id @default(cuid())
+  sessionId            String
+  userId               String
+  attemptNumber        Int           @default(1)
+  status               AttemptStatus @default(NOT_STARTED)
+  startedAt            DateTime?
+  individualDeadlineAt DateTime?
+  consumedMs           Int           @default(0)
+  pausedAt             DateTime?
+  // At most one attempt per (sessionId, userId) may be official. The siblings
+  // hold false rather than null, so a partial unique index cannot express it —
+  // the official-score transaction enforces it instead.
+  isOfficial           Boolean       @default(false)
+  resetById            String?
+  resetAt              DateTime?
+  resetReason          String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  session     AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user        User              @relation("AttemptUser", fields: [userId], references: [id], onDelete: Cascade)
+  resetBy     User?             @relation("AttemptResetBy", fields: [resetById], references: [id])
+  draft       AttemptDraft?
+  submissions Submission[]
+  events      AssessmentEvent[]
+
+  @@unique([sessionId, userId, attemptNumber])
+  @@index([sessionId, userId])
+  @@index([userId, status])
+}
+
+// The latest autosave for one attempt. Overwritten in place. Never history.
+model AttemptDraft {
+  id         String   @id @default(cuid())
+  attemptId  String   @unique
+  language   String
+  sourceCode String
+  savedAt    DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  attempt AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+}
+
+enum SubmissionStatus {
+  QUEUED
+  RUNNING
+  GRADED
+  COMPILE_ERROR
+  RUNTIME_ERROR
+  TIME_LIMIT_EXCEEDED
+  MEMORY_LIMIT_EXCEEDED
+  SYSTEM_ERROR
+}
+
+model Submission {
+  id              String           @id @default(cuid())
+  attemptId       String
+  userId          String
+  assessmentId    String
+  sessionId       String
+  language        String
+  // Immutable after insert. Autosave and reset never touch it.
+  sourceCode      String
+  status          SubmissionStatus @default(QUEUED)
+  score           Int?
+  executionTimeMs Int?
+  memoryUsedKb    Int?
+  compilerOutput  String?
+  systemError     String?
+  isAutoSubmitted Boolean          @default(false)
+  submittedAt     DateTime         @default(now())
+  gradedAt        DateTime?
+  jobId           String?          @unique
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  attempt    AssessmentAttempt      @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  user       User                   @relation(fields: [userId], references: [id])
+  assessment Assessment             @relation(fields: [assessmentId], references: [id])
+  session    AssessmentSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  results    SubmissionTestResult[]
+
+  @@index([attemptId, submittedAt])
+  @@index([sessionId, status])
+  @@index([userId, submittedAt])
+}
+
+model SubmissionTestResult {
+  id              String   @id @default(cuid())
+  submissionId    String
+  testCaseId      String?
+  name            String
+  passed          Boolean
+  weight          Int      @default(1)
+  executionTimeMs Int?
+  memoryUsedKb    Int?
+  stdoutExcerpt   String   @default("")
+  stderrExcerpt   String   @default("")
+  // Rows with isPublic = false are stripped before any Coder-facing response.
+  isPublic        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  submission Submission          @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  testCase   AssessmentTestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+}
+
+enum AssessmentEventType {
+  SESSION_STARTED
+  SESSION_ENDED
+  ATTEMPT_STARTED
+  ATTEMPT_SUBMITTED
+  ATTEMPT_AUTO_SUBMITTED
+  CONNECTED
+  DISCONNECTED
+  RECONNECTED
+  FOCUS_LOST
+  FOCUS_REGAINED
+  CLIPBOARD_BLOCKED
+  TIMER_PAUSED
+  TIMER_RESUMED
+  ATTEMPT_RESET
+}
+
+// Meaningful transitions only. Heartbeats are never written here.
+model AssessmentEvent {
+  id          String              @id @default(cuid())
+  sessionId   String
+  userId      String?
+  attemptId   String?
+  type        AssessmentEventType
+  payloadJson Json                @default("{}")
+  durationMs  Int?
+  occurredAt  DateTime            @default(now())
+  createdAt   DateTime            @default(now())
+
+  session AssessmentSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attempt AssessmentAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId, occurredAt])
+  @@index([attemptId, occurredAt])
+}
+
+// ---------------------------------------------------------------------------
+// Gamification
+// ---------------------------------------------------------------------------
+
+model Achievement {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String
+  iconKey     String
+  rulesJson   Json     @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  awards UserAchievement[]
+}
+
+// Awards are permanent. Rows are inserted, never deleted.
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  achievementId String
+  awardedAt     DateTime @default(now())
+  contextJson   Json     @default("{}")
+  createdAt     DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+}
