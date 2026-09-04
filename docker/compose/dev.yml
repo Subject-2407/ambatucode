@@ -1,0 +1,43 @@
+name: ambatucode-dev
+
+# Local development dependencies only. The sandbox images live in
+# docker/compose/sandbox.yml and are driven exclusively by apps/worker.
+# Neither service here is ever given access to the Docker socket.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ambatucode-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ambatucode
+      POSTGRES_PASSWORD: ambatucode
+      POSTGRES_DB: ambatucode
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ambatucode -d ambatucode"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: ambatucode-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-data:
