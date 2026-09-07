@@ -2,6 +2,7 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
+import reactHooks from "eslint-plugin-react-hooks";
 
 export default tseslint.config(
   {
@@ -49,6 +50,15 @@ export default tseslint.config(
           ],
         },
       ],
+    },
+  },
+  // React lives only in apps/web. The hook rules are what keep socket
+  // listeners, timers, and effect cleanups honest, so they are errors.
+  {
+    files: ["apps/web/**/*.{ts,tsx}"],
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
     },
   },
   {
