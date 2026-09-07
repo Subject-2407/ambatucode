@@ -1,6 +1,7 @@
 import "server-only";
 import { createHmac } from "node:crypto";
-import { AppError, constantTimeEquals } from "@ambatucode/shared";
+import { AppError } from "@ambatucode/shared";
+import { constantTimeEquals } from "@ambatucode/shared/auth/session-token";
 import { getServerEnv } from "../env";
 
 /**

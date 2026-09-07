@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@ambatucode/db";
-import { hashSessionToken, isAppError, isSessionLive } from "@ambatucode/shared";
+import { isAppError } from "@ambatucode/shared";
+import { hashSessionToken, isSessionLive } from "@ambatucode/shared/auth/session-token";
 import { hashPassword } from "../auth/password";
 import { closeRedis } from "../redis";
 import { login, logout } from "./auth";

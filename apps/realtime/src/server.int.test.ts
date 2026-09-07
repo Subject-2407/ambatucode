@@ -6,12 +6,14 @@ import { prisma } from "@ambatucode/db";
 import {
   CLIENT_EVENTS,
   REDIS_CHANNELS,
-  SESSION_COOKIE_NAME,
-  generateSessionToken,
-  hashSessionToken,
   type Ack,
   type SessionRevokedMessage,
 } from "@ambatucode/shared";
+import {
+  SESSION_COOKIE_NAME,
+  generateSessionToken,
+  hashSessionToken,
+} from "@ambatucode/shared/auth/session-token";
 import { createRealtimeServer, type RealtimeServer } from "./server";
 
 /**

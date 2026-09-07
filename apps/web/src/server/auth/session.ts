@@ -1,13 +1,13 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { prisma, type Prisma } from "@ambatucode/db";
+import type { AuthenticatedUser } from "@ambatucode/shared";
 import {
   SESSION_COOKIE_NAME,
-  type AuthenticatedUser,
   generateSessionToken,
   hashSessionToken,
   isSessionLive,
-} from "@ambatucode/shared";
+} from "@ambatucode/shared/auth/session-token";
 import { getServerEnv, isProduction } from "../env";
 
 export type SessionContext = {

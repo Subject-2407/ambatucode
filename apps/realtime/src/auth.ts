@@ -1,6 +1,10 @@
 import { prisma } from "@ambatucode/db";
-import { hashSessionToken, isSessionLive, readSessionCookie } from "@ambatucode/shared";
 import type { SocketData } from "@ambatucode/shared";
+import {
+  hashSessionToken,
+  isSessionLive,
+  readSessionCookie,
+} from "@ambatucode/shared/auth/session-token";
 
 /**
  * Handshake authentication.
