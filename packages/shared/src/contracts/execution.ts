@@ -11,6 +11,20 @@ import { COMPARISON_MODES, LANGUAGES, SUBMISSION_STATUSES, TEST_SCRIPT_FRAMEWORK
  * job id that the worker echoes back on result ingest.
  */
 
+/**
+ * Wire format version, carried on every job and every result.
+ *
+ * The producer and the worker are separate processes on separate release
+ * cycles, so a deploy can leave an old worker draining a queue that now holds
+ * a new payload shape. Without this field a renamed or dropped field surfaces
+ * as a silently mis-graded submission; with it, both sides reject the message
+ * outright and say why.
+ *
+ * Bump it whenever a field is added, removed, renamed, or changes meaning, and
+ * update `apps/worker/internal/contract` in the same commit.
+ */
+export const EXECUTION_CONTRACT_VERSION = 1;
+
 export const executionKindSchema = z.enum(["RUN", "SUBMIT"]);
 export type ExecutionKind = z.infer<typeof executionKindSchema>;
 
@@ -43,6 +57,7 @@ export const executionTestScriptSchema = z.object({
 export type ExecutionTestScript = z.infer<typeof executionTestScriptSchema>;
 
 export const executionJobSchema = z.object({
+  contractVersion: z.literal(EXECUTION_CONTRACT_VERSION),
   jobId: z.string().min(1),
   kind: executionKindSchema,
   submissionId: z.string().min(1).nullable(),
@@ -68,6 +83,7 @@ export const executionTestResultSchema = z.object({
 export type ExecutionTestResult = z.infer<typeof executionTestResultSchema>;
 
 export const executionResultSchema = z.object({
+  contractVersion: z.literal(EXECUTION_CONTRACT_VERSION),
   jobId: z.string().min(1),
   submissionId: z.string().min(1).nullable(),
   status: z.enum(SUBMISSION_STATUSES),

@@ -2,6 +2,7 @@ import "server-only";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import {
+  EXECUTION_CONTRACT_VERSION,
   QUEUE_NAMES,
   RUN_JOB_OPTIONS,
   SUBMIT_JOB_OPTIONS,
@@ -45,7 +46,12 @@ export function getSubmitQueue(): Queue<ExecutionJob> {
   return globalForQueues.ambatucodeSubmitQueue;
 }
 
-export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken">;
+/**
+ * `contractVersion` and `callbackToken` are stamped here rather than supplied
+ * by callers: one is a property of the wire format and the other is a
+ * credential, and neither is a decision a calling service should be making.
+ */
+export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken" | "contractVersion">;
 
 /**
  * Enqueues one execution job.
@@ -61,6 +67,7 @@ export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken">;
 export async function enqueueExecutionJob(input: ExecutionJobInput): Promise<string> {
   const job: ExecutionJob = {
     ...input,
+    contractVersion: EXECUTION_CONTRACT_VERSION,
     callbackToken: issueCallbackToken(input.jobId),
   };
 
