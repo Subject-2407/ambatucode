@@ -61,6 +61,17 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
     },
   },
+  // Maintenance scripts run under plain Node and belong to no tsconfig
+  // project, so the type-aware rules have nothing to resolve against. Linting
+  // them for the syntactic rules is still worth it.
+  {
+    files: ["scripts/**/*.mjs"],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      parserOptions: { projectService: false, project: false },
+      globals: { console: "readonly", process: "readonly" },
+    },
+  },
   {
     files: ["**/*.test.ts", "**/*.spec.ts", "packages/db/prisma/seed.ts"],
     rules: {

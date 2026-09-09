@@ -12,6 +12,10 @@ blob-report/
 *.tsbuildinfo
 next-env.d.ts
 
+# `go build ./cmd/worker` drops its binary beside the source.
+apps/worker/worker
+apps/worker/worker.exe
+
 .env
 .env.local
 .env.*.local
