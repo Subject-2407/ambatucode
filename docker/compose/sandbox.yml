@@ -1,0 +1,28 @@
+name: ambatucode-sandbox
+
+# Build definitions for the language sandbox images. This file exists to build
+# images, never to run them: the Go worker creates every execution container
+# itself, one per execution, with the security controls it owns.
+#
+#   docker compose -f docker/compose/sandbox.yml build
+#
+# The images are built locally and referenced by tag. Nothing pulls them at
+# execution time — the worker resolves the tag against the local daemon and
+# fails loudly when an image is absent, so an offline deployment can never
+# silently reach for a registry.
+#
+# Adding a language means adding a Dockerfile in docker/sandbox and a service
+# here, plus a registry entry in the worker. Nothing else may need to change.
+
+services:
+  python:
+    image: ambatucode/sandbox-python:3.12
+    build:
+      context: ../..
+      dockerfile: docker/sandbox/python.Dockerfile
+    # There is deliberately no compose profile guarding this service: the
+    # documented command is a plain `docker compose ... build`, and a profile
+    # would make it silently match nothing. Do not `docker compose up` this
+    # file — execution containers exist only for the lifetime of one job and
+    # are created by the worker with --network none and the rest of the
+    # sandbox controls applied.
