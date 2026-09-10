@@ -16,3 +16,4 @@ export * from "./contracts/execution";
 export * from "./schemas/admin-users";
 export * from "./schemas/auth";
 export * from "./schemas/common";
+export * from "./schemas/content";
