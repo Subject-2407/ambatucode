@@ -50,8 +50,21 @@ export function SessionProvider({
   const [isLoggingOut, setLoggingOut] = useState(false);
   const [superseded, setSuperseded] = useState(false);
   const lastVerifiedAt = useRef(0);
+  /**
+   * Set the moment a sign-out begins, and never cleared.
+   *
+   * Logging out revokes the session server-side, which drops this socket the
+   * same way a rival login would. Without this flag the user's own deliberate
+   * sign-out races the supersede notice and can end on a modal telling them
+   * their account signed in somewhere else — alarming, and untrue.
+   *
+   * A ref rather than the `isLoggingOut` state because the socket listeners
+   * below close over their first render and would keep reading `false`.
+   */
+  const isSigningOut = useRef(false);
 
   const logout = useCallback(async () => {
+    isSigningOut.current = true;
     setLoggingOut(true);
     try {
       await apiClient.post("/api/auth/logout");
@@ -73,6 +86,9 @@ export function SessionProvider({
      * so the socket event is a trigger to ask, never the answer itself.
      */
     const verifySession = () => {
+      // Our own sign-out already knows the session is gone.
+      if (isSigningOut.current) return;
+
       const now = Date.now();
       if (now - lastVerifiedAt.current < VERIFY_THROTTLE_MS) return;
       lastVerifiedAt.current = now;
