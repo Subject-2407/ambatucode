@@ -6,8 +6,11 @@ import { prisma } from "@ambatucode/db";
 import {
   CLIENT_EVENTS,
   REDIS_CHANNELS,
+  SERVER_EVENTS,
   type Ack,
+  type ExecutionStatusMessage,
   type SessionRevokedMessage,
+  type SubmissionStatusPayload,
 } from "@ambatucode/shared";
 import {
   SESSION_COOKIE_NAME,
@@ -224,6 +227,96 @@ describe("session:revoked", () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(socket.connected).toBe(true);
+    socket.close();
+  });
+});
+
+describe("execution:status", () => {
+  function runMessage(recipient: string, jobId: string): ExecutionStatusMessage {
+    return {
+      userId: recipient,
+      payload: {
+        kind: "RUN",
+        jobId,
+        submissionId: null,
+        status: "GRADED",
+        testResults: [
+          {
+            name: "echoes its input",
+            passed: true,
+            executionTimeMs: 12,
+            stdoutExcerpt: "hello",
+            stderrExcerpt: "",
+          },
+        ],
+        compilerOutput: null,
+      },
+    };
+  }
+
+  function nextStatus(socket: ClientSocket): Promise<SubmissionStatusPayload> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("No submission:status arrived")), 10_000);
+      socket.once(SERVER_EVENTS.SUBMISSION_STATUS, (payload: unknown) => {
+        clearTimeout(timer);
+        resolve(payload as SubmissionStatusPayload);
+      });
+    });
+  }
+
+  /**
+   * A Run leaves no database row, so this push is the only way its result ever
+   * reaches the Coder who asked for it.
+   *
+   * Both halves are asserted with one publish order rather than a timeout: a
+   * message for someone else goes out first, and receiving the second one
+   * proves the first was filtered, since Redis preserves publish order on a
+   * single connection.
+   */
+  it("delivers a Run result to its owner and to nobody else", async () => {
+    const socket = clientFor(sessionCookie(token));
+    await waitForConnect(socket);
+
+    const received = nextStatus(socket);
+
+    await publisher.publish(
+      REDIS_CHANNELS.EXECUTION_STATUS,
+      JSON.stringify(runMessage("usr_someone_else", "job-for-a-stranger")),
+    );
+    await publisher.publish(
+      REDIS_CHANNELS.EXECUTION_STATUS,
+      JSON.stringify(runMessage(userId, "job-for-me")),
+    );
+
+    const payload = await received;
+    expect(payload.jobId).toBe("job-for-me");
+    expect(payload.kind).toBe("RUN");
+    expect(payload.status).toBe("GRADED");
+    expect(payload.kind === "RUN" && payload.testResults).toHaveLength(1);
+    expect(payload.kind === "RUN" && payload.testResults[0]?.passed).toBe(true);
+
+    socket.close();
+  });
+
+  it("drops a malformed message instead of forwarding it to the browser", async () => {
+    const socket = clientFor(sessionCookie(token));
+    await waitForConnect(socket);
+
+    const received = nextStatus(socket);
+
+    // A RUN payload missing its results: apps/realtime hands whatever it gets
+    // straight to a browser, so a shape apps/web never promised must die here.
+    await publisher.publish(
+      REDIS_CHANNELS.EXECUTION_STATUS,
+      JSON.stringify({ userId, payload: { kind: "RUN", jobId: "job-malformed" } }),
+    );
+    await publisher.publish(
+      REDIS_CHANNELS.EXECUTION_STATUS,
+      JSON.stringify(runMessage(userId, "job-well-formed")),
+    );
+
+    expect((await received).jobId).toBe("job-well-formed");
+
     socket.close();
   });
 });

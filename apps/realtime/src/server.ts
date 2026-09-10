@@ -10,7 +10,9 @@ import { prisma } from "@ambatucode/db";
 import {
   CLIENT_EVENTS,
   REDIS_CHANNELS,
+  SERVER_EVENTS,
   attemptHeartbeatPayloadSchema,
+  executionStatusMessageSchema,
   rooms,
   sessionRevokedMessageSchema,
   type ClientToServerEvents,
@@ -134,24 +136,8 @@ export function createRealtimeServer(): RealtimeServer {
     });
   });
 
-  void redis.revocationSub.subscribe(REDIS_CHANNELS.SESSION_REVOKED, (error) => {
-    if (error) {
-      console.error("[realtime] failed to subscribe to session:revoked:", error.message);
-    }
-  });
-
-  redis.revocationSub.on("message", (channel: string, raw: string) => {
-    if (channel !== REDIS_CHANNELS.SESSION_REVOKED) return;
-
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(raw);
-    } catch {
-      console.error("[realtime] session:revoked message was not valid JSON");
-      return;
-    }
-
-    const message = sessionRevokedMessageSchema.safeParse(parsedJson);
+  function handleSessionRevoked(raw: unknown): void {
+    const message = sessionRevokedMessageSchema.safeParse(raw);
     if (!message.success) {
       console.error("[realtime] session:revoked message failed validation");
       return;
@@ -165,6 +151,52 @@ export function createRealtimeServer(): RealtimeServer {
         socket.disconnect(true);
       }
     }
+  }
+
+  /**
+   * apps/web decided both what to say and who may hear it; this only routes.
+   * The payload is re-validated anyway — apps/realtime forwards it straight to
+   * a browser, so a malformed message must die here rather than downstream.
+   */
+  function handleExecutionStatus(raw: unknown): void {
+    const message = executionStatusMessageSchema.safeParse(raw);
+    if (!message.success) {
+      console.error("[realtime] execution:status message failed validation");
+      return;
+    }
+
+    io.to(rooms.user(message.data.userId)).emit(
+      SERVER_EVENTS.SUBMISSION_STATUS,
+      message.data.payload,
+    );
+  }
+
+  const CHANNEL_HANDLERS: Record<string, (raw: unknown) => void> = {
+    [REDIS_CHANNELS.SESSION_REVOKED]: handleSessionRevoked,
+    [REDIS_CHANNELS.EXECUTION_STATUS]: handleExecutionStatus,
+  };
+
+  for (const channel of Object.keys(CHANNEL_HANDLERS)) {
+    void redis.events.subscribe(channel, (error) => {
+      if (error) {
+        console.error(`[realtime] failed to subscribe to ${channel}:`, error.message);
+      }
+    });
+  }
+
+  redis.events.on("message", (channel: string, raw: string) => {
+    const handler = CHANNEL_HANDLERS[channel];
+    if (!handler) return;
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw);
+    } catch {
+      console.error(`[realtime] ${channel} message was not valid JSON`);
+      return;
+    }
+
+    handler(parsedJson);
   });
 
   return {
@@ -181,7 +213,7 @@ export function createRealtimeServer(): RealtimeServer {
       }),
     close: async () => {
       await io.close();
-      await Promise.allSettled([redis.pub.quit(), redis.sub.quit(), redis.revocationSub.quit()]);
+      await Promise.allSettled([redis.pub.quit(), redis.sub.quit(), redis.events.quit()]);
     },
   };
 }
