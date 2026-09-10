@@ -15,9 +15,20 @@ export const routes = {
   // Coder
   dashboard: "/dashboard",
   profile: "/profile",
+  /** The catalog a Coder browses and enrolls from. */
+  modules: "/modules",
+  /** Coder-facing Module pages are addressed by slug, which is the readable
+   * half of the URL a Coder may end up typing or sharing. */
+  module: (moduleSlug: string) => `/modules/${moduleSlug}`,
+  material: (moduleSlug: string, materialId: string) =>
+    `/modules/${moduleSlug}/materials/${materialId}`,
 
   // Architect
   manageModules: "/manage/modules",
+  /** The Architect's own tree is addressed by id: a builder URL survives a
+   * slug rename, which a Coder-facing link does not need to. */
+  moduleBuilder: (moduleId: string) => `/manage/modules/${moduleId}/builder`,
+  moduleEnrollments: (moduleId: string) => `/manage/modules/${moduleId}/enrollments`,
   manageGrades: "/manage/grades",
 
   // Root
