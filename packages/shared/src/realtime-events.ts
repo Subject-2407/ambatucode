@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SUBMISSION_STATUSES } from "./enums";
 import type {
   AssessmentEventType,
   AssessmentSessionStatus,
@@ -6,7 +7,6 @@ import type {
   ConnectionState,
   Language,
   ReadyState,
-  SubmissionStatus,
 } from "./enums";
 
 /**
@@ -115,11 +115,59 @@ export type SessionStatePayload = {
 };
 export type SessionStartedPayload = { sessionId: string; endsAt: number; serverTimeMs: number };
 
-export type SubmissionStatusPayload = {
-  submissionId: string;
-  status: SubmissionStatus;
-  score?: number | null;
-};
+/**
+ * One public test case as a Coder is allowed to see it.
+ *
+ * There is deliberately no `expectedOutput` and no test case id: a Run shows a
+ * Coder how their own program behaved, not what the grader was holding. Weight
+ * is absent for the same reason — a Run produces no grade.
+ */
+export const runTestResultViewSchema = z.object({
+  name: z.string(),
+  passed: z.boolean(),
+  executionTimeMs: z.number().nonnegative(),
+  stdoutExcerpt: z.string(),
+  stderrExcerpt: z.string(),
+});
+export type RunTestResultView = z.infer<typeof runTestResultViewSchema>;
+
+/**
+ * Pipeline progress for the job a Coder is waiting on, discriminated by kind
+ * because the two halves may carry very different amounts of detail.
+ *
+ * A RUN writes no database row, so this event is the only delivery path for
+ * its output and has to carry the per-case results itself. Every case in a RUN
+ * is public by construction — the producer rejects a RUN payload containing a
+ * hidden case — so there is nothing here to strip.
+ *
+ * A SUBMIT deliberately carries status and score only. Its per-case detail
+ * lives behind `GET /api/submissions/[submissionId]`, where the Coder-facing
+ * serializer removes hidden rows. Sending that detail over the socket would
+ * mean re-implementing the same filter in a second place, and getting it wrong
+ * there would leak grading data.
+ *
+ * This is validated at runtime rather than merely typed: it crosses a Redis
+ * pub/sub boundary between two processes, and apps/realtime must not forward a
+ * shape apps/web did not promise.
+ */
+export const submissionStatusPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("SUBMIT"),
+    jobId: z.string().min(1),
+    submissionId: z.string().min(1),
+    status: z.enum(SUBMISSION_STATUSES),
+    score: z.number().int().min(0).max(100).nullable(),
+  }),
+  z.object({
+    kind: z.literal("RUN"),
+    jobId: z.string().min(1),
+    submissionId: z.null(),
+    status: z.enum(SUBMISSION_STATUSES),
+    testResults: z.array(runTestResultViewSchema),
+    compilerOutput: z.string().nullable(),
+  }),
+]);
+export type SubmissionStatusPayload = z.infer<typeof submissionStatusPayloadSchema>;
 
 export type MonitorParticipantPayload = {
   sessionId: string;
