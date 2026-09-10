@@ -35,6 +35,15 @@ export type CodeEditorProps = {
   /** Suppresses Monaco's own context menu when an Assessment configures it. */
   blockContextMenu?: boolean;
   ariaLabel?: string;
+  /**
+   * Takes focus once the editor has loaded.
+   *
+   * Off by default, and deliberately so: Monaco finishes loading a beat after
+   * the surrounding form, and an editor that grabs focus then steals the
+   * keystrokes of whoever was already typing in another field. Only a screen
+   * where the editor *is* the task should turn this on.
+   */
+  autoFocus?: boolean;
 };
 
 export function CodeEditor({
@@ -45,6 +54,7 @@ export function CodeEditor({
   height = "100%",
   blockContextMenu = false,
   ariaLabel = "Code editor",
+  autoFocus = false,
 }: CodeEditorProps) {
   const { colorMode } = useColorMode();
 
@@ -69,9 +79,12 @@ export function CodeEditor({
     [ariaLabel, blockContextMenu, language, readOnly],
   );
 
-  const handleMount = useCallback<OnMount>((editor) => {
-    editor.focus();
-  }, []);
+  const handleMount = useCallback<OnMount>(
+    (editor) => {
+      if (autoFocus) editor.focus();
+    },
+    [autoFocus],
+  );
 
   return (
     <Box height={height} minHeight="16rem" overflow="hidden" borderRadius="md">
