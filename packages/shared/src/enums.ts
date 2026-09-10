@@ -104,3 +104,29 @@ export type Language = (typeof LANGUAGES)[number];
 export function isLanguage(value: string): value is Language {
   return (LANGUAGES as readonly string[]).includes(value);
 }
+
+/**
+ * The subset of `LANGUAGES` the execution worker can actually run today —
+ * those with a built sandbox image and an entry in the worker's language
+ * registry (`apps/worker/internal/language/registry.go`). The two lists must
+ * be widened in the same change.
+ *
+ * They are separate because `LANGUAGES` is the product's vocabulary while this
+ * is a deployment fact. Without the distinction an Architect can offer a
+ * language nothing can execute, and the Coder discovers it as a SYSTEM_ERROR
+ * after spending an attempt — a failure that surfaces at the worst possible
+ * moment and looks like their fault.
+ */
+export const EXECUTABLE_LANGUAGES = ["python"] as const satisfies readonly Language[];
+
+/**
+ * Narrower than `Language` on purpose. `satisfies` still rejects an entry that
+ * is not a real language, but keeping the literals means a caller that rules
+ * this out is left with the languages that actually lack an image rather than
+ * with `never`.
+ */
+export type ExecutableLanguage = (typeof EXECUTABLE_LANGUAGES)[number];
+
+export function isExecutableLanguage(value: string): value is ExecutableLanguage {
+  return (EXECUTABLE_LANGUAGES as readonly string[]).includes(value);
+}
