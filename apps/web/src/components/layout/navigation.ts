@@ -16,6 +16,7 @@ export type NavItem = {
 const NAV_BY_ROLE: Readonly<Record<UserRole, readonly NavItem[]>> = {
   CODER: [
     { href: routes.dashboard, label: "Dashboard", icon: LayoutDashboard },
+    { href: routes.modules, label: "Modules", icon: BookOpen },
     { href: routes.profile, label: "Profile", icon: User },
   ],
   ARCHITECT: [{ href: routes.manageModules, label: "Modules", icon: BookOpen }],
