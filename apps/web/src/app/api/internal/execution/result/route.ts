@@ -17,5 +17,9 @@ export const POST = route(async (request) => {
   verifyCallbackToken(body.jobId, token);
 
   const outcome = await ingestExecutionResult(body);
-  return ok({ accepted: true, persisted: outcome.persisted });
+  return ok({
+    accepted: true,
+    persisted: outcome.persisted,
+    delivered: outcome.delivered,
+  });
 });

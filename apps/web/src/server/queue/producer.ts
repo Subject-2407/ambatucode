@@ -2,14 +2,17 @@ import "server-only";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import {
+  AppError,
   EXECUTION_CONTRACT_VERSION,
   QUEUE_NAMES,
   RUN_JOB_OPTIONS,
   SUBMIT_JOB_OPTIONS,
   type ExecutionJob,
   executionJobSchema,
+  isExecutableLanguage,
 } from "@ambatucode/shared";
 import { getServerEnv } from "../env";
+import { getRedis } from "../redis";
 import { issueCallbackToken } from "../auth/callback-token";
 
 /**
@@ -53,6 +56,25 @@ export function getSubmitQueue(): Queue<ExecutionJob> {
  */
 export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken" | "contractVersion">;
 
+/** Who is waiting on this job's result. Never travels in the job payload. */
+export type ExecutionJobOwner = { userId: string };
+
+/**
+ * A RUN leaves no row behind — that is the whole point of a Run — so this key
+ * is the only record of who to hand the result to when the worker calls back.
+ * A SUBMIT needs no equivalent: its `Submission` row already names the user and
+ * outlives any expiry.
+ *
+ * The TTL comfortably outlives the 5-minute life of a run job. If it lapses
+ * anyway the result is simply not delivered, which is the correct failure for
+ * a Run: nothing was graded and nothing was lost.
+ */
+export const RUN_OWNER_TTL_SECONDS = 900;
+
+export function runOwnerKey(jobId: string): string {
+  return `execution:run-owner:${jobId}`;
+}
+
 /**
  * Enqueues one execution job.
  *
@@ -64,7 +86,10 @@ export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken" | "contractVe
  * process: the Go worker parses it strictly, and a malformed job would fail
  * there with far less context than it does here.
  */
-export async function enqueueExecutionJob(input: ExecutionJobInput): Promise<string> {
+export async function enqueueExecutionJob(
+  input: ExecutionJobInput,
+  owner: ExecutionJobOwner,
+): Promise<string> {
   const job: ExecutionJob = {
     ...input,
     contractVersion: EXECUTION_CONTRACT_VERSION,
@@ -72,6 +97,17 @@ export async function enqueueExecutionJob(input: ExecutionJobInput): Promise<str
   };
 
   const parsed = executionJobSchema.parse(job);
+
+  // The schema accepts every language the product knows about; only some of
+  // them have a sandbox image. Refusing here turns a mis-configured Assessment
+  // into an immediate, explainable rejection instead of a SYSTEM_ERROR the
+  // Coder discovers after their attempt is already spent.
+  if (!isExecutableLanguage(parsed.language)) {
+    throw new AppError(
+      "LANGUAGE_NOT_ALLOWED",
+      `No execution environment is available for ${parsed.language}`,
+    );
+  }
 
   if (parsed.kind === "RUN") {
     // A hidden case in a run payload would be a direct leak of grading data.
@@ -82,6 +118,10 @@ export async function enqueueExecutionJob(input: ExecutionJobInput): Promise<str
     if (parsed.testScript !== null) {
       throw new Error("RUN jobs may not carry a test script");
     }
+    // Written before the job is queued. The worker can finish a trivial run in
+    // well under a second, and a result that arrives before its owner is
+    // recorded has nowhere to go.
+    await getRedis().set(runOwnerKey(parsed.jobId), owner.userId, "EX", RUN_OWNER_TTL_SECONDS);
     await getRunQueue().add(QUEUE_NAMES.RUN, parsed, {
       ...RUN_JOB_OPTIONS,
       jobId: parsed.jobId,
