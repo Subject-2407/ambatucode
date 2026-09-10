@@ -17,3 +17,8 @@ export * from "./schemas/admin-users";
 export * from "./schemas/auth";
 export * from "./schemas/common";
 export * from "./schemas/content";
+export * from "./schemas/enrollments";
+export * from "./schemas/materials";
+export * from "./schemas/modules";
+export * from "./schemas/practice";
+export * from "./schemas/sections";
