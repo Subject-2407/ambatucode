@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "dotenv -e ../../.env -- next dev --port 3000",
-    "build": "dotenv -e ../../.env -- next build",
+    "dev": "node scripts/vendor-monaco.mjs && dotenv -e ../../.env -- next dev --port 3000",
+    "build": "node scripts/vendor-monaco.mjs && dotenv -e ../../.env -- next build",
     "start": "dotenv -e ../../.env -- next start --port 3000",
     "typecheck": "tsc --noEmit",
     "test:integration": "dotenv -e ../../.env -- vitest run --config vitest.integration.config.ts",
     "stub:worker": "dotenv -e ../../.env -- tsx scripts/stub-execution-worker.ts",
-    "enqueue:sample": "dotenv -e ../../.env -- node --conditions=react-server --import tsx scripts/enqueue-sample-job.ts"
+    "enqueue:sample": "dotenv -e ../../.env -- node --conditions=react-server --import tsx scripts/enqueue-sample-job.ts",
+    "vendor:monaco": "node scripts/vendor-monaco.mjs"
   },
   "dependencies": {
     "@ambatucode/db": "workspace:*",
