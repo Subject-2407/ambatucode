@@ -11,6 +11,7 @@ import {
   CLIENT_EVENTS,
   REDIS_CHANNELS,
   SERVER_EVENTS,
+  assessmentBroadcastMessageSchema,
   attemptHeartbeatPayloadSchema,
   executionStatusMessageSchema,
   rooms,
@@ -20,9 +21,12 @@ import {
   type ServerToClientEvents,
   type SocketData,
 } from "@ambatucode/shared";
+import { createAssessmentRuntime } from "./assessment";
 import { authenticateHandshake } from "./auth";
+import { createDeadlineRuntime, type DeadlineRuntime } from "./deadlines";
 import { getEnv } from "./env";
 import { createRedisClients, type RealtimeRedis } from "./redis";
+import { createWebClient, type WebClient } from "./web-client";
 
 export type AppServer = Server<
   ClientToServerEvents,
@@ -60,14 +64,31 @@ export type RealtimeServer = {
   io: AppServer;
   httpServer: HttpServer;
   redis: RealtimeRedis;
+  deadlines: DeadlineRuntime;
   listen: (port: number) => Promise<number>;
   close: () => Promise<void>;
 };
 
-export function createRealtimeServer(): RealtimeServer {
+export type RealtimeServerOptions = {
+  /** Replaces the HTTP client to apps/web. Tests pass a fake. */
+  web?: WebClient;
+  disconnectDebounceMs?: number;
+  tickIntervalMs?: number;
+  sweepIntervalMs?: number;
+};
+
+export function createRealtimeServer(options: RealtimeServerOptions = {}): RealtimeServer {
   const env = getEnv();
   const redis = createRedisClients();
   const httpServer = createServer(handleHealth);
+  const web =
+    options.web ??
+    createWebClient({ baseUrl: env.WEB_INTERNAL_URL, secret: env.INTERNAL_API_SECRET });
+  const deadlines = createDeadlineRuntime({
+    connection: redis.pub,
+    web,
+    ...(options.sweepIntervalMs === undefined ? {} : { sweepIntervalMs: options.sweepIntervalMs }),
+  });
 
   const io: AppServer = new Server(httpServer, {
     path: "/socket.io",
@@ -93,6 +114,16 @@ export function createRealtimeServer(): RealtimeServer {
       });
   });
 
+  const assessments = createAssessmentRuntime({
+    io,
+    deadlines,
+    web,
+    ...(options.disconnectDebounceMs === undefined
+      ? {}
+      : { disconnectDebounceMs: options.disconnectDebounceMs }),
+    ...(options.tickIntervalMs === undefined ? {} : { tickIntervalMs: options.tickIntervalMs }),
+  });
+
   const lastSeenWrites = new Map<string, number>();
 
   async function refreshLastSeen(sessionId: string): Promise<void> {
@@ -116,6 +147,7 @@ export function createRealtimeServer(): RealtimeServer {
 
     // Personal room: submission status and account-level notifications.
     void socket.join(rooms.user(userId));
+    assessments.register(socket);
 
     socket.on(CLIENT_EVENTS.ATTEMPT_HEARTBEAT, (payload, ack) => {
       const parsed = attemptHeartbeatPayloadSchema.safeParse(payload);
@@ -171,9 +203,22 @@ export function createRealtimeServer(): RealtimeServer {
     );
   }
 
+  /** Same contract as `execution:status`: apps/web names the subject, this picks the rooms. */
+  function handleAssessmentBroadcast(raw: unknown): void {
+    const message = assessmentBroadcastMessageSchema.safeParse(raw);
+    if (!message.success) {
+      console.error("[realtime] assessment broadcast failed validation");
+      return;
+    }
+    assessments.handleBroadcast(message.data).catch((error: unknown) => {
+      console.error("[realtime] assessment broadcast handling failed:", error);
+    });
+  }
+
   const CHANNEL_HANDLERS: Record<string, (raw: unknown) => void> = {
     [REDIS_CHANNELS.SESSION_REVOKED]: handleSessionRevoked,
     [REDIS_CHANNELS.EXECUTION_STATUS]: handleExecutionStatus,
+    [REDIS_CHANNELS.ASSESSMENT_BROADCAST]: handleAssessmentBroadcast,
   };
 
   for (const channel of Object.keys(CHANNEL_HANDLERS)) {
@@ -203,6 +248,7 @@ export function createRealtimeServer(): RealtimeServer {
     io,
     httpServer,
     redis,
+    deadlines,
     listen: (port: number) =>
       new Promise<number>((resolve, reject) => {
         httpServer.once("error", reject);
@@ -212,6 +258,8 @@ export function createRealtimeServer(): RealtimeServer {
         });
       }),
     close: async () => {
+      assessments.close();
+      await deadlines.close();
       await io.close();
       await Promise.allSettled([redis.pub.quit(), redis.sub.quit(), redis.events.quit()]);
     },

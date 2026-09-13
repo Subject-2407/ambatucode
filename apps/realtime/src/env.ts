@@ -6,6 +6,8 @@ const realtimeEnvSchema = z.object({
   REDIS_URL: z.string().min(1),
   REALTIME_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
   REALTIME_CORS_ORIGIN: z.string().min(1).default("http://localhost:3000"),
+  INTERNAL_API_SECRET: z.string().min(32),
+  WEB_INTERNAL_URL: z.url().default("http://localhost:3000"),
 });
 
 export type RealtimeEnv = z.infer<typeof realtimeEnvSchema>;
