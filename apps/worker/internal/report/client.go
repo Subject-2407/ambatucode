@@ -32,16 +32,18 @@ const (
 var ErrRejected = errors.New("callback rejected the result")
 
 type Client struct {
-	http   *http.Client
-	url    string
-	logger *slog.Logger
+	http    *http.Client
+	url     string
+	logger  *slog.Logger
+	backoff time.Duration
 }
 
 func New(url string, logger *slog.Logger) *Client {
 	return &Client{
-		http:   &http.Client{Timeout: 30 * time.Second},
-		url:    url,
-		logger: logger,
+		http:    &http.Client{Timeout: 30 * time.Second},
+		url:     url,
+		logger:  logger,
+		backoff: baseBackoff,
 	}
 }
 
@@ -68,10 +70,15 @@ func (c *Client) Send(ctx context.Context, result contract.Result, callbackToken
 		}
 		lastErr = err
 
+		c.logger.Warn("result callback failed; retrying",
+			slog.String("jobId", result.JobID),
+			slog.Int("attempt", attempt),
+			slog.String("error", err.Error()))
+
 		if attempt == maxAttempts {
 			break
 		}
-		delay := baseBackoff * time.Duration(1<<(attempt-1))
+		delay := c.backoff * time.Duration(1<<(attempt-1))
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("report job %s: %w", result.JobID, ctx.Err())

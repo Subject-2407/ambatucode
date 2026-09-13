@@ -283,11 +283,21 @@ func (p *Pool) execute(ctx context.Context, lane Queue, job *queue.Job) {
 				slog.String("error", failErr.Error()))
 			return
 		}
-		p.logger.Error("job failed",
+		if outcome.Retrying {
+			p.logger.Warn("job failed; the queue will retry it",
+				slog.String("jobId", job.ID),
+				slog.String("queue", job.Queue),
+				slog.Duration("retryDelay", outcome.Delay),
+				slog.String("error", err.Error()))
+			return
+		}
+		// Escalation point: nothing will try this job again. On the submit
+		// queue that can mean a graded submission whose result never reached
+		// the database, which needs an operator.
+		p.logger.Error("job failed permanently; no retries remain",
 			slog.String("jobId", job.ID),
 			slog.String("queue", job.Queue),
-			slog.Bool("retrying", outcome.Retrying),
-			slog.Duration("retryDelay", outcome.Delay),
+			slog.Int("attemptsMade", job.AttemptsMade+1),
 			slog.String("error", err.Error()))
 		return
 	}
