@@ -23,6 +23,7 @@ import (
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/observability"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/pool"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/queue"
+	"github.com/Subject-2407/ambatucode/apps/worker/internal/reaper"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/report"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/runner"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/sandbox"
@@ -101,6 +102,12 @@ func run() error {
 		return fmt.Errorf("startup container sweep: %w", err)
 	}
 	logger.Info("startup container sweep complete", slog.Int("removed", swept))
+
+	// The reaper outlives the pool's accept context: jobs still draining
+	// through the grace period can leak a container too.
+	reapCtx, stopReaping := context.WithCancel(context.Background())
+	defer stopReaping()
+	go reaper.New(box, logger).Run(reapCtx)
 
 	queueSettings := queue.Settings{
 		LockDuration:    cfg.LockDuration,

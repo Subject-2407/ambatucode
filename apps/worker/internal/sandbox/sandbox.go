@@ -29,6 +29,9 @@ const (
 	LabelWorker = "ambatucode.worker"
 	// LabelJob records which job a container belongs to. Diagnostic only.
 	LabelJob = "ambatucode.job"
+	// LabelDeadline is the Unix second after which the container's keeper has
+	// exited, so no job can still be using it. The reaper removes by it.
+	LabelDeadline = "ambatucode.deadline"
 
 	// sandboxUser is nobody:nogroup. It owns nothing and has no shell account.
 	sandboxUser   = "65534:65534"
@@ -212,6 +215,9 @@ func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) 
 	// as an exec inside it, sharing the same cgroup — which is what keeps the
 	// memory and pid limits meaningful.
 	keeperSeconds := int64((spec.WallTimeout + keeperMargin).Seconds())
+	// Stamped before create, so it can only be earlier than the keeper's real
+	// exit is late — the reaper waits a further margin on top of it.
+	deadline := time.Now().Add(spec.WallTimeout + keeperMargin)
 
 	config := &container.Config{
 		Image:           spec.Image,
@@ -220,8 +226,9 @@ func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) 
 		NetworkDisabled: true,
 		WorkingDir:      workspaceDir,
 		Labels: map[string]string{
-			LabelWorker: "1",
-			LabelJob:    spec.JobID,
+			LabelWorker:   "1",
+			LabelJob:      spec.JobID,
+			LabelDeadline: strconv.FormatInt(deadline.Unix(), 10),
 		},
 	}
 
@@ -472,26 +479,69 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 	return result, nil
 }
 
-// SweepOrphans removes every container carrying this worker's label.
-//
-// Run at startup before any job is consumed: a worker that crashed mid-job
-// leaves containers behind, and `defer` cannot help once the process is gone.
-func (s *Sandbox) SweepOrphans(ctx context.Context) (int, error) {
+// Managed is one container this worker created, as the reaper sees it.
+type Managed struct {
+	ID    string
+	JobID string
+	// Created is when the daemon created the container.
+	Created time.Time
+	// Deadline is when its keeper exits; zero when the label is missing or
+	// unreadable, which the reaper handles by age instead.
+	Deadline time.Time
+}
+
+// ListManaged returns every container carrying the worker label.
+func (s *Sandbox) ListManaged(ctx context.Context) ([]Managed, error) {
 	args := filters.NewArgs()
 	args.Add("label", LabelWorker+"=1")
 
 	containers, err := s.client.ContainerList(ctx, container.ListOptions{All: true, Filters: args})
 	if err != nil {
-		return 0, fmt.Errorf("list orphaned containers: %w", err)
+		return nil, fmt.Errorf("list managed containers: %w", err)
+	}
+
+	managed := make([]Managed, 0, len(containers))
+	for _, existing := range containers {
+		entry := Managed{
+			ID:      existing.ID,
+			JobID:   existing.Labels[LabelJob],
+			Created: time.Unix(existing.Created, 0),
+		}
+		if seconds, err := strconv.ParseInt(existing.Labels[LabelDeadline], 10, 64); err == nil {
+			entry.Deadline = time.Unix(seconds, 0)
+		}
+		managed = append(managed, entry)
+	}
+	return managed, nil
+}
+
+// Remove force-removes one managed container. A container that is already
+// gone is not an error: the job's own cleanup may have won the race.
+func (s *Sandbox) Remove(ctx context.Context, id string) error {
+	err := s.client.ContainerRemove(ctx, id, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	if err != nil && !client.IsErrNotFound(err) {
+		return fmt.Errorf("remove container %s: %w", id, err)
+	}
+	return nil
+}
+
+// SweepOrphans removes every container carrying this worker's label.
+//
+// Run at startup before any job is consumed: a worker that crashed mid-job
+// leaves containers behind, and `defer` cannot help once the process is gone.
+//
+// Unlike the reaper it does not wait for a deadline, which assumes this worker
+// is the only one using the daemon. Workers sharing a daemon would destroy
+// each other's live containers on restart; give each its own daemon.
+func (s *Sandbox) SweepOrphans(ctx context.Context) (int, error) {
+	managed, err := s.ListManaged(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("sweep orphaned containers: %w", err)
 	}
 
 	removed := 0
-	for _, existing := range containers {
-		err := s.client.ContainerRemove(ctx, existing.ID, container.RemoveOptions{
-			Force:         true,
-			RemoveVolumes: true,
-		})
-		if err != nil && !client.IsErrNotFound(err) {
+	for _, existing := range managed {
+		if err := s.Remove(ctx, existing.ID); err != nil {
 			s.logger.Error("remove orphaned container failed",
 				slog.String("containerId", existing.ID),
 				slog.String("error", err.Error()))
