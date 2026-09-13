@@ -1,13 +1,19 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@ambatucode/db";
-import { isAppError, type AuthenticatedUser, type ErrorCode } from "@ambatucode/shared";
+import {
+  MAX_BLOCK_JS_BYTES,
+  createPracticeRequestSchema,
+  isAppError,
+  type AuthenticatedUser,
+  type ErrorCode,
+} from "@ambatucode/shared";
 import { getRedis, closeRedis } from "../redis";
 import { closeQueueConnection, getRunQueue, runOwnerKey } from "../queue/producer";
 import { createModule, deleteModule, getModule, listModules, updateModule } from "./modules";
 import { decideEnrollment, listEnrollments, requestEnrollment } from "./enrollments";
 import { createSection, deleteSection, listSections, reorderSections } from "./sections";
-import { createMaterial, getMaterial, listMaterials } from "./materials";
+import { createMaterial, getMaterial, listMaterials, updateMaterial } from "./materials";
 import { createPracticeActivity, runPracticeActivity } from "./practice";
 
 /**
@@ -28,6 +34,16 @@ function actor(id: string, role: AuthenticatedUser["role"], name: string): Authe
 
 function errorCodeOf(error: unknown): ErrorCode | null {
   return isAppError(error) ? error.code : null;
+}
+
+/** Runs the call and hands back whatever it threw, or null if it did not. */
+async function captureError(call: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await call();
+    return null;
+  } catch (error) {
+    return error;
+  }
 }
 
 /** Runs the call and reports the error code it refused with, or null. */
@@ -325,6 +341,146 @@ describe("sections and materials", () => {
 
     const stored = await getMaterial(owner, material.id);
     expect(stored.content).toEqual(document);
+  });
+});
+
+describe("interactive blocks", () => {
+  /** A published module the Coder is enrolled in, with one empty Material. */
+  async function buildMaterial(title: string) {
+    const module = await createModule(owner, {
+      title: `${title} ${suffix}`,
+      visibility: "PUBLIC",
+      isPublished: true,
+    });
+    const section = await createSection(owner, module.id, { title: "Reading" });
+    await requestEnrollment(enrolledCoder, module.id);
+    return createMaterial(owner, section.id, { title, isPublished: true });
+  }
+
+  function block(id: string, overrides: Record<string, unknown> = {}) {
+    return {
+      type: "interactiveBlock",
+      attrs: {
+        id,
+        title: "Binary search",
+        html: '<div id="stage"></div>',
+        css: "#stage { color: red }",
+        js: "document.getElementById('stage').textContent = 'ready'",
+        initialHeight: 240,
+        ...overrides,
+      },
+    };
+  }
+
+  it("round-trips a material holding several blocks, byte for byte", async () => {
+    const material = await buildMaterial("Blocks round trip");
+    const document = {
+      type: "doc" as const,
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Watch it run:" }] },
+        block("first"),
+        { type: "paragraph", content: [{ type: "text", text: "And again:" }] },
+        block("second", { title: "Second pass" }),
+      ],
+    };
+
+    await updateMaterial(owner, material.id, { content: document });
+
+    // Nothing is sanitized, stripped, or rewritten on either leg. Safety comes
+    // from where the content runs — an opaque-origin sandboxed frame — not
+    // from filtering it on the way past, and a filter here would quietly break
+    // legitimate authoring while providing assurance it cannot deliver.
+    expect((await getMaterial(owner, material.id)).content).toEqual(document);
+    expect((await getMaterial(enrolledCoder, material.id)).content).toEqual(document);
+  });
+
+  it("refuses an oversized block and names which one to trim", async () => {
+    const material = await buildMaterial("Oversized block");
+    const tooMuch = "a".repeat(MAX_BLOCK_JS_BYTES + 1);
+
+    const refusal = await captureError(() =>
+      updateMaterial(owner, material.id, {
+        content: { type: "doc", content: [block("fine"), block("fat", { js: tooMuch })] },
+      }),
+    );
+
+    expect(errorCodeOf(refusal)).toBe("VALIDATION_FAILED");
+    // "Content is invalid" would send an Architect hunting through twenty
+    // blocks. Naming the offending one is the whole point of the message.
+    expect((refusal as Error).message).toContain("block fat");
+    expect((refusal as Error).message).not.toContain("block fine");
+  });
+
+  it("counts the limit in bytes, so multi-byte content cannot slip past it", async () => {
+    const material = await buildMaterial("Multibyte block");
+    // A quarter of the character budget and four times the bytes. A
+    // `String.length` check would wave this straight through.
+    const emoji = "🙂".repeat(MAX_BLOCK_JS_BYTES / 4 + 1);
+
+    expect(emoji.length).toBeLessThan(MAX_BLOCK_JS_BYTES);
+    expect(
+      await refusalCode(() =>
+        updateMaterial(owner, material.id, {
+          content: { type: "doc", content: [block("emoji", { js: emoji })] },
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("refuses malformed attrs rather than storing a block nothing can render", async () => {
+    const material = await buildMaterial("Malformed block");
+
+    expect(
+      await refusalCode(() =>
+        updateMaterial(owner, material.id, {
+          content: { type: "doc", content: [block("weird", { js: 42 })] },
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+
+    expect(
+      await refusalCode(() =>
+        updateMaterial(owner, material.id, {
+          content: { type: "doc", content: [{ type: "interactiveBlock", attrs: {} }] },
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("fails loudly when a stored document holds a drifted block, rather than serving it", async () => {
+    const material = await buildMaterial("Drifted block");
+
+    // Written straight past the service, the way an older editor build would
+    // have. The open node schema accepts it — attrs are untyped by design — so
+    // the check on the read leg is the only thing between a drifted shape and
+    // a document that executes in a reader's browser.
+    await prisma.material.update({
+      where: { id: material.id },
+      data: {
+        contentJson: {
+          type: "doc",
+          content: [{ type: "interactiveBlock", attrs: { id: "legacy", markup: "<p>old</p>" } }],
+        },
+      },
+    });
+
+    expect(await refusalCode(() => getMaterial(owner, material.id))).toBe("INTERNAL");
+    expect(await refusalCode(() => getMaterial(enrolledCoder, material.id))).toBe("INTERNAL");
+  });
+
+  it("keeps blocks out of a practice prompt, which is prose and not a document", () => {
+    // The prompt is a plain string, so there is no node for a block to be, and
+    // the assertion is that it stays that way. A document here would put an
+    // Architect-authored program inside the timed workspace, where anti-cheat
+    // and timing controls are active and there is no frame host.
+    expect(
+      createPracticeRequestSchema.safeParse({
+        title: "Smuggled",
+        prompt: { type: "doc", content: [block("sneaky")] },
+        allowedLanguages: ["python"],
+        testCases: [{ name: "one", input: "", expectedOutput: "" }],
+      }).success,
+    ).toBe(false);
   });
 });
 

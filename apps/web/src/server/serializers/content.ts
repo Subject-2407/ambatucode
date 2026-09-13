@@ -21,6 +21,7 @@ import {
   type SectionView,
 } from "@ambatucode/shared";
 import type { z } from "zod";
+import { assertInteractiveBlocksValid } from "../services/interactive-blocks";
 
 /**
  * Row-to-response translation for learning content.
@@ -202,6 +203,13 @@ export function toMaterialDetail(
   const content = isEmptyObject(row.contentJson)
     ? EMPTY_RICH_TEXT_DOCUMENT
     : parseStored(richTextDocumentSchema, row.contentJson, "Material.contentJson");
+
+  // The open node schema above says nothing about an `interactiveBlock`'s
+  // attrs, and that node is the one thing in a Material that executes in the
+  // reader's browser. So it is validated again here, on the way out: a block
+  // written by an older editor build is exactly as untrusted as a request
+  // body, and a drifted one fails loudly rather than reaching a reader.
+  assertInteractiveBlocksValid(content, { origin: "stored" });
 
   return { ...toMaterialSummary(row), content, practiceActivities };
 }

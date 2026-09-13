@@ -15,6 +15,7 @@ import {
   toPracticeActivityView,
 } from "../serializers/content";
 import { moduleIdForSection, scopeForMaterial } from "./content-scope";
+import { assertInteractiveBlocksValid } from "./interactive-blocks";
 import { assertCanRead, assertCanWrite } from "./modules";
 
 /**
@@ -23,6 +24,11 @@ import { assertCanRead, assertCanWrite } from "./modules";
  * `isPublished` is a real boundary, not a badge: an unpublished Material
  * answers NOT_FOUND for a Coder, because a draft the Architect is still
  * writing is not content that exists yet as far as the reader is concerned.
+ *
+ * A Material is also the only place an Interactive Block may live, so it is
+ * the only write path that validates one. The block and its surrounding prose
+ * save together, which is what keeps them atomic: one save, one version, and
+ * no orphan row when a block is deleted from the document.
  */
 
 const MATERIAL_SELECT = {
@@ -99,6 +105,8 @@ export async function createMaterial(
   const moduleId = await moduleIdForSection(sectionId);
   await assertCanWrite(actor, moduleId);
 
+  if (input.content) assertInteractiveBlocksValid(input.content, { origin: "request" });
+
   const created = await prisma.$transaction(async (tx) => {
     const count = await tx.material.count({ where: { sectionId } });
     return tx.material.create({
@@ -123,6 +131,8 @@ export async function updateMaterial(
 ): Promise<MaterialSummary> {
   const scope = await scopeForMaterial(materialId);
   await assertCanWrite(actor, scope.moduleId);
+
+  if (input.content) assertInteractiveBlocksValid(input.content, { origin: "request" });
 
   const updated = await prisma.material.update({
     where: { id: materialId },
