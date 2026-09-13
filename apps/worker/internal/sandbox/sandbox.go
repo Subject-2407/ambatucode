@@ -34,10 +34,12 @@ const (
 	LabelDeadline = "ambatucode.deadline"
 
 	// sandboxUser is nobody:nogroup. It owns nothing and has no shell account.
-	sandboxUser   = "65534:65534"
-	sandboxUID    = 65534
-	workspaceDir  = "/workspace"
-	workspaceSize = "64m"
+	sandboxUser = "65534:65534"
+	sandboxUID  = 65534
+	// sandboxHostname is the same for every container, so it identifies none.
+	sandboxHostname = "sandbox"
+	workspaceDir    = "/workspace"
+	workspaceSize   = "64m"
 
 	// tmpfsTmp caps the general scratch path. noexec stops a program from
 	// writing a payload and executing it; the size cap stops it from filling
@@ -220,8 +222,12 @@ func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) 
 	deadline := time.Now().Add(spec.WallTimeout + keeperMargin)
 
 	config := &container.Config{
-		Image:           spec.Image,
-		Cmd:             strslice.StrSlice{"sleep", strconv.FormatInt(keeperSeconds, 10)},
+		Image: spec.Image,
+		Cmd:   strslice.StrSlice{"sleep", strconv.FormatInt(keeperSeconds, 10)},
+		// Docker defaults the hostname to the container id, which a program can
+		// print from its environment or /etc/hostname straight into a Coder-
+		// visible excerpt.
+		Hostname:        sandboxHostname,
 		User:            sandboxUser,
 		NetworkDisabled: true,
 		WorkingDir:      workspaceDir,
