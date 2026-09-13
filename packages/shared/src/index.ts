@@ -9,6 +9,7 @@
 export * from "./api";
 export * from "./enums";
 export * from "./errors";
+export * from "./interactive-block-bridge";
 export * from "./queue";
 export * from "./realtime-events";
 export * from "./redis-channels";
