@@ -26,6 +26,83 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((monaco) 
   loading: () => <Skeleton height="100%" width="100%" />,
 });
 
+type SourceEditorProps = {
+  /**
+   * A Monaco grammar id rather than a product `Language`.
+   *
+   * The Interactive Block authoring dialog edits HTML, CSS, and JavaScript —
+   * none of which is a sandbox language, and two of which never will be. They
+   * still have to come through here so there is one vendored Monaco, one theme
+   * binding, and one set of options in the product.
+   */
+  monacoLanguage: string;
+  tabSize: number;
+  value: string;
+  onChange: (value: string) => void;
+  readOnly?: boolean;
+  height?: string;
+  blockContextMenu?: boolean;
+  ariaLabel?: string;
+  autoFocus?: boolean;
+};
+
+export function SourceEditor({
+  monacoLanguage,
+  tabSize,
+  value,
+  onChange,
+  readOnly = false,
+  height = "100%",
+  blockContextMenu = false,
+  ariaLabel = "Code editor",
+  autoFocus = false,
+}: SourceEditorProps) {
+  const { colorMode } = useColorMode();
+
+  const options = useMemo(
+    () => ({
+      readOnly,
+      contextmenu: !blockContextMenu,
+      tabSize,
+      insertSpaces: true,
+      minimap: { enabled: false },
+      // Ligatures off: a lab projector and an unfamiliar font turn `!==` into
+      // a glyph a beginner cannot type back.
+      fontLigatures: false,
+      fontFamily: "var(--chakra-fonts-mono)",
+      fontSize: 14,
+      lineNumbersMinChars: 3,
+      scrollBeyondLastLine: false,
+      automaticLayout: true,
+      renderWhitespace: "selection" as const,
+      ariaLabel,
+    }),
+    [ariaLabel, blockContextMenu, readOnly, tabSize],
+  );
+
+  const handleMount = useCallback<OnMount>(
+    (editor) => {
+      if (autoFocus) editor.focus();
+    },
+    [autoFocus],
+  );
+
+  return (
+    <Box height={height} minHeight="16rem" overflow="hidden" borderRadius="md">
+      <MonacoEditor
+        language={monacoLanguage}
+        theme={colorMode === "dark" ? "vs-dark" : "vs"}
+        value={value}
+        onChange={(next) => onChange(next ?? "")}
+        onMount={handleMount}
+        options={options}
+        height="100%"
+        loading={<Skeleton height="100%" width="100%" />}
+      />
+    </Box>
+  );
+}
+
 export type CodeEditorProps = {
   language: Language;
   value: string;
@@ -46,58 +123,13 @@ export type CodeEditorProps = {
   autoFocus?: boolean;
 };
 
-export function CodeEditor({
-  language,
-  value,
-  onChange,
-  readOnly = false,
-  height = "100%",
-  blockContextMenu = false,
-  ariaLabel = "Code editor",
-  autoFocus = false,
-}: CodeEditorProps) {
-  const { colorMode } = useColorMode();
-
-  const options = useMemo(
-    () => ({
-      readOnly,
-      contextmenu: !blockContextMenu,
-      tabSize: TAB_SIZE[language],
-      insertSpaces: true,
-      minimap: { enabled: false },
-      // Ligatures off: a lab projector and an unfamiliar font turn `!==` into
-      // a glyph a beginner cannot type back.
-      fontLigatures: false,
-      fontFamily: "var(--chakra-fonts-mono)",
-      fontSize: 14,
-      lineNumbersMinChars: 3,
-      scrollBeyondLastLine: false,
-      automaticLayout: true,
-      renderWhitespace: "selection" as const,
-      ariaLabel,
-    }),
-    [ariaLabel, blockContextMenu, language, readOnly],
-  );
-
-  const handleMount = useCallback<OnMount>(
-    (editor) => {
-      if (autoFocus) editor.focus();
-    },
-    [autoFocus],
-  );
-
+/** The editor a Coder writes sandbox-language source in. */
+export function CodeEditor({ language, ...rest }: CodeEditorProps) {
   return (
-    <Box height={height} minHeight="16rem" overflow="hidden" borderRadius="md">
-      <MonacoEditor
-        language={MONACO_LANGUAGE_ID[language]}
-        theme={colorMode === "dark" ? "vs-dark" : "vs"}
-        value={value}
-        onChange={(next) => onChange(next ?? "")}
-        onMount={handleMount}
-        options={options}
-        height="100%"
-        loading={<Skeleton height="100%" width="100%" />}
-      />
-    </Box>
+    <SourceEditor
+      monacoLanguage={MONACO_LANGUAGE_ID[language]}
+      tabSize={TAB_SIZE[language]}
+      {...rest}
+    />
   );
 }

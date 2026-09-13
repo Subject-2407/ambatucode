@@ -136,7 +136,8 @@ function MaterialForm({ moduleId, material }: { moduleId: string; material: Mate
         </Text>
       ) : null}
 
-      <RichTextEditor value={content} onChange={setContent} />
+      {/* Materials are the only surface where Interactive Blocks are offered. */}
+      <RichTextEditor value={content} onChange={setContent} allowInteractiveBlocks />
 
       <Stack gap="3">
         <Flex justify="space-between" align="center">

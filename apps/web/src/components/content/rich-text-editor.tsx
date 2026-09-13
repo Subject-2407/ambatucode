@@ -15,12 +15,21 @@ import {
   Quote,
   Strikethrough,
   SquareCode,
+  Boxes,
 } from "lucide-react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { richTextDocumentSchema, type RichTextDocument } from "@ambatucode/shared";
+import {
+  INTERACTIVE_BLOCK_NODE_TYPE,
+  interactiveBlockAttrsSchema,
+  type InteractiveBlockAttrs,
+  type RichTextDocument,
+  richTextDocumentSchema,
+} from "@ambatucode/shared";
 import { PromptDialog } from "@/components/ui/prompt-dialog";
 import { toaster } from "@/components/ui/toaster";
+import { InteractiveBlockDialog } from "./interactive-block-dialog";
+import { InteractiveBlockExtension, emptyBlock } from "./interactive-block-extension";
 import { sanitizeHref } from "./rich-text";
 
 /**
@@ -36,9 +45,26 @@ export type RichTextEditorProps = {
   value: RichTextDocument;
   onChange: (document: RichTextDocument) => void;
   placeholder?: string;
+  /**
+   * Interactive Blocks belong to Materials and nowhere else, so the toolbar
+   * action and the node itself are both opt-in.
+   *
+   * An Assessment problem statement and a Practice Activity prompt are read
+   * inside the timed workspace, where anti-cheat and timing controls are active
+   * and there is no frame host to render a block. Withholding the button is the
+   * authoring half of that rule; the server refusing the node is the half that
+   * actually enforces it.
+   */
+  allowInteractiveBlocks?: boolean;
 };
 
-export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
+export function RichTextEditor({
+  value,
+  onChange,
+  allowInteractiveBlocks = false,
+}: RichTextEditorProps) {
+  const [blockDraft, setBlockDraft] = useState<InteractiveBlockAttrs | null>(null);
+
   const editor = useEditor({
     // The document is rendered on the server too; TipTap must not try to
     // hydrate its own markup on top of that.
@@ -49,6 +75,7 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         heading: { levels: [2, 3] },
         link: { openOnClick: false, autolink: false },
       }),
+      ...(allowInteractiveBlocks ? [InteractiveBlockExtension] : []),
     ],
     content: value,
     onUpdate: ({ editor: instance }) => {
@@ -72,9 +99,39 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
 
   if (!editor) return <Box height="20rem" />;
 
+  /**
+   * Opens the dialog on the block under the cursor, or on a fresh one.
+   *
+   * Attrs come out of the node untyped, so they are parsed before they reach
+   * the dialog — a block whose stored shape drifted gets a clean form to be
+   * rewritten in rather than a form full of undefined.
+   */
+  const openBlockDialog = () => {
+    if (!editor.isActive(INTERACTIVE_BLOCK_NODE_TYPE)) {
+      setBlockDraft(emptyBlock());
+      return;
+    }
+    const existing = interactiveBlockAttrsSchema.safeParse(
+      editor.getAttributes(INTERACTIVE_BLOCK_NODE_TYPE),
+    );
+    setBlockDraft(existing.success ? existing.data : emptyBlock());
+  };
+
+  const saveBlock = (block: InteractiveBlockAttrs) => {
+    if (editor.isActive(INTERACTIVE_BLOCK_NODE_TYPE)) {
+      editor.chain().focus().updateInteractiveBlock(block).run();
+    } else {
+      editor.chain().focus().insertInteractiveBlock(block).run();
+    }
+    setBlockDraft(null);
+  };
+
   return (
     <Box borderWidth="1px" borderColor="border.default" borderRadius="md" overflow="hidden">
-      <Toolbar editor={editor} />
+      <Toolbar
+        editor={editor}
+        onInteractiveBlock={allowInteractiveBlocks ? openBlockDialog : undefined}
+      />
       <Box
         px="4"
         py="3"
@@ -105,10 +162,37 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
             paddingInlineStart: "1rem",
             color: "var(--chakra-colors-fg-muted)",
           },
+          // A placeholder, never the authored content. The editor's document is
+          // the application's own DOM, and nothing authored may run there — the
+          // block only ever executes inside its sandboxed frame.
+          "& .tiptap .interactive-block-node": {
+            borderWidth: "1px",
+            borderStyle: "dashed",
+            borderColor: "var(--chakra-colors-border-emphasized)",
+            borderRadius: "0.375rem",
+            background: "var(--chakra-colors-bg-subtle)",
+            color: "var(--chakra-colors-fg-muted)",
+            padding: "0.75rem",
+            fontSize: "0.875rem",
+            cursor: "pointer",
+          },
+          "& .tiptap .interactive-block-node.ProseMirror-selectednode": {
+            borderStyle: "solid",
+            borderColor: "var(--chakra-colors-accent-solid)",
+          },
         }}
       >
         <EditorContent editor={editor} />
       </Box>
+
+      {blockDraft ? (
+        <InteractiveBlockDialog
+          open
+          block={blockDraft}
+          onSave={saveBlock}
+          onClose={() => setBlockDraft(null)}
+        />
+      ) : null}
     </Box>
   );
 }
@@ -201,7 +285,14 @@ const BLOCK_ACTIONS: ToolbarAction[] = [
   },
 ];
 
-function Toolbar({ editor }: { editor: Editor }) {
+function Toolbar({
+  editor,
+  onInteractiveBlock,
+}: {
+  editor: Editor;
+  /** Absent on every surface that is not a Material, which is how the rule reads. */
+  onInteractiveBlock?: () => void;
+}) {
   const [linkOpen, setLinkOpen] = useState(false);
 
   // getAttributes is untyped by design — the attribute set depends on the
@@ -260,6 +351,18 @@ function Toolbar({ editor }: { editor: Editor }) {
       >
         <Link2 size={16} />
       </IconButton>
+
+      {onInteractiveBlock ? (
+        <IconButton
+          aria-label="Interactive block"
+          title="Interactive block"
+          size="xs"
+          variant={editor.isActive(INTERACTIVE_BLOCK_NODE_TYPE) ? "subtle" : "ghost"}
+          onClick={onInteractiveBlock}
+        >
+          <Boxes size={16} />
+        </IconButton>
+      ) : null}
 
       {linkOpen ? (
         <PromptDialog
