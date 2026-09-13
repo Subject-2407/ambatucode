@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { submissionStatusPayloadSchema } from "./realtime-events";
+import {
+  attemptAutoSubmittedPayloadSchema,
+  monitorEventPayloadSchema,
+  monitorParticipantPayloadSchema,
+  sessionStartedPayloadSchema,
+  sessionStatePayloadSchema,
+  submissionStatusPayloadSchema,
+} from "./realtime-events";
 
 /** Redis pub/sub channels shared by apps/web and apps/realtime. */
 export const REDIS_CHANNELS = {
@@ -7,6 +14,8 @@ export const REDIS_CHANNELS = {
   SESSION_REVOKED: "ambatucode:session:revoked",
   /** Emitted when an execution job changes state, for delivery to its owner. */
   EXECUTION_STATUS: "ambatucode:execution:status",
+  /** Assessment lifecycle changes apps/web made, for apps/realtime to fan out. */
+  ASSESSMENT_BROADCAST: "ambatucode:assessment:broadcast",
 } as const;
 
 export const sessionRevokedMessageSchema = z.object({
@@ -33,3 +42,34 @@ export const executionStatusMessageSchema = z.object({
 });
 
 export type ExecutionStatusMessage = z.infer<typeof executionStatusMessageSchema>;
+
+/**
+ * Everything apps/web changes about a running assessment that some socket has
+ * to hear about: a session starting or ending, an attempt closing, an event for
+ * the monitor feed.
+ *
+ * apps/web names the subject (a session, a user) and apps/realtime turns that
+ * into rooms, the same division as `execution:status`. Changes apps/realtime
+ * makes itself — pauses, resumes, connection events — never come through here;
+ * it emits those directly.
+ */
+export const assessmentBroadcastMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("SESSION_STARTED"), payload: sessionStartedPayloadSchema }),
+  z.object({ type: z.literal("SESSION_STATE"), payload: sessionStatePayloadSchema }),
+  z.object({ type: z.literal("MONITOR_EVENT"), payload: monitorEventPayloadSchema }),
+  z.object({ type: z.literal("MONITOR_PARTICIPANT"), payload: monitorParticipantPayloadSchema }),
+  z.object({
+    type: z.literal("ATTEMPT_AUTO_SUBMITTED"),
+    userId: z.string().min(1),
+    attemptId: z.string().min(1),
+    payload: attemptAutoSubmittedPayloadSchema,
+  }),
+  /** The attempt left IN_PROGRESS. Its sockets get a fresh `attempt:state`. */
+  z.object({
+    type: z.literal("ATTEMPT_CLOSED"),
+    userId: z.string().min(1),
+    attemptId: z.string().min(1),
+  }),
+]);
+
+export type AssessmentBroadcastMessage = z.infer<typeof assessmentBroadcastMessageSchema>;

@@ -1,13 +1,13 @@
 import { z } from "zod";
-import { SUBMISSION_STATUSES } from "./enums";
-import type {
-  AssessmentEventType,
-  AssessmentSessionStatus,
-  AttemptStatus,
-  ConnectionState,
-  Language,
-  ReadyState,
+import {
+  ASSESSMENT_EVENT_TYPES,
+  ASSESSMENT_SESSION_STATUSES,
+  CONNECTION_STATES,
+  LANGUAGES,
+  READY_STATES,
+  SUBMISSION_STATUSES,
 } from "./enums";
+import type { AttemptStatus, Language } from "./enums";
 
 /**
  * The single source of truth for Socket.IO event names and payloads. Never
@@ -59,8 +59,8 @@ export const attemptReadyPayloadSchema = z.object({
 });
 export const attemptDraftPayloadSchema = z.object({
   attemptId: z.string().min(1),
-  language: z.string().min(1),
-  sourceCode: z.string(),
+  language: z.enum(LANGUAGES),
+  sourceCode: z.string().max(200_000),
 });
 export const anticheatFocusPayloadSchema = z.object({
   attemptId: z.string().min(1),
@@ -102,18 +102,45 @@ export type AttemptStatePayload = {
 export type AttemptTickPayload = { remainingMs: number; serverTimeMs: number };
 export type AttemptPausedPayload = { consumedMs: number };
 export type AttemptResumedPayload = { consumedMs: number };
-export type AttemptAutoSubmittedPayload = { submissionId: string };
+export const attemptAutoSubmittedPayloadSchema = z.object({ submissionId: z.string().min(1) });
+export type AttemptAutoSubmittedPayload = z.infer<typeof attemptAutoSubmittedPayloadSchema>;
 export type AttemptWarningPayload = { code: string; message: string };
 export type AttemptSupersededPayload = Record<string, never>;
 
-export type SessionCounts = { ready: number; notReady: number; offline: number; total: number };
-export type SessionStatePayload = {
-  sessionId: string;
-  status: AssessmentSessionStatus;
-  endsAt: number | null;
-  counts: SessionCounts;
-};
-export type SessionStartedPayload = { sessionId: string; endsAt: number; serverTimeMs: number };
+/**
+ * The payloads below are schemas rather than bare types because they cross a
+ * process boundary: apps/web publishes them on Redis and apps/realtime forwards
+ * them to browsers, so a shape apps/web did not promise must die on arrival.
+ */
+
+/**
+ * Mutually exclusive, so they add up to the listed total: a participant who is
+ * offline counts as offline whatever their last readiness was, because a
+ * "ready" Coder who is not connected is not ready.
+ */
+export const sessionCountsSchema = z.object({
+  ready: z.number().int().nonnegative(),
+  notReady: z.number().int().nonnegative(),
+  offline: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+export type SessionCounts = z.infer<typeof sessionCountsSchema>;
+
+export const sessionStatePayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  status: z.enum(ASSESSMENT_SESSION_STATUSES),
+  endsAt: z.number().nullable(),
+  counts: sessionCountsSchema,
+});
+export type SessionStatePayload = z.infer<typeof sessionStatePayloadSchema>;
+
+/** `endsAt` is null for Individual and Untimed sessions, which have no global clock. */
+export const sessionStartedPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  endsAt: z.number().nullable(),
+  serverTimeMs: z.number(),
+});
+export type SessionStartedPayload = z.infer<typeof sessionStartedPayloadSchema>;
 
 /**
  * One public test case as a Coder is allowed to see it.
@@ -169,24 +196,32 @@ export const submissionStatusPayloadSchema = z.discriminatedUnion("kind", [
 ]);
 export type SubmissionStatusPayload = z.infer<typeof submissionStatusPayloadSchema>;
 
-export type MonitorParticipantPayload = {
-  sessionId: string;
-  userId: string;
-  displayName: string;
-  readyState: ReadyState;
-  connectionState: ConnectionState;
-  lastSeenAt: number | null;
-};
+export const monitorParticipantPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  userId: z.string().min(1),
+  displayName: z.string(),
+  readyState: z.enum(READY_STATES),
+  connectionState: z.enum(CONNECTION_STATES),
+  lastSeenAt: z.number().nullable(),
+});
+export type MonitorParticipantPayload = z.infer<typeof monitorParticipantPayloadSchema>;
 
-export type MonitorEventPayload = {
-  id: string;
-  sessionId: string;
-  userId: string | null;
-  attemptId: string | null;
-  type: AssessmentEventType;
-  durationMs: number | null;
-  occurredAt: number;
-};
+/**
+ * One meaningful event for the Architect's feed. `payload` carries the small
+ * facts that make an entry readable — the focus-loss action taken, the
+ * clipboard action blocked — and never participant source code.
+ */
+export const monitorEventPayloadSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  userId: z.string().nullable(),
+  attemptId: z.string().nullable(),
+  type: z.enum(ASSESSMENT_EVENT_TYPES),
+  durationMs: z.number().nullable(),
+  occurredAt: z.number(),
+  payload: z.record(z.string(), z.unknown()),
+});
+export type MonitorEventPayload = z.infer<typeof monitorEventPayloadSchema>;
 
 export type LeaderboardRow = {
   rank: number;
