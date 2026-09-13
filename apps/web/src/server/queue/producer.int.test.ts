@@ -145,15 +145,21 @@ describe("enqueueExecutionJob", () => {
     await connection.del(key);
   });
 
-  it("refuses a language that has no sandbox image, without queueing it", async () => {
-    const input = buildRunJob({ language: "java" });
+  it("refuses a language the worker could not run, without queueing it", async () => {
+    // Two gates guard this, in order. The contract schema refuses anything
+    // outside the product vocabulary, and behind it the executable-language
+    // check refuses a language that has no sandbox image — the one that would
+    // catch an image dropped from docker/sandbox without the registry being
+    // narrowed. Every language currently has an image, so what fires here is
+    // the schema; both exist so a mis-configuration cannot reach a Coder as a
+    // SYSTEM_ERROR after their attempt is already spent.
+    const input = buildRunJob({ language: "pascal" as unknown as ExecutionJob["language"] });
 
-    await expect(enqueueExecutionJob(input, OWNER)).rejects.toThrow(
-      /No execution environment is available for java/,
-    );
+    await expect(enqueueExecutionJob(input, OWNER)).rejects.toThrow();
 
     // The rejection happens before anything is written, so no owner record is
     // left behind to expire on its own.
     expect(await connection.get(runOwnerKey(input.jobId))).toBeNull();
+    expect(await getRunQueue().getJob(input.jobId)).toBeUndefined();
   });
 });

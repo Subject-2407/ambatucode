@@ -7,6 +7,7 @@ import {
   isAppError,
   type AuthenticatedUser,
   type ErrorCode,
+  type Language,
 } from "@ambatucode/shared";
 import { getRedis, closeRedis } from "../redis";
 import { closeQueueConnection, getRunQueue, runOwnerKey } from "../queue/producer";
@@ -521,17 +522,29 @@ describe("practice", () => {
       visibility: "PUBLIC",
       isPublished: true,
     });
-    const section = await createSection(owner, module.id, { title: "Practice" });
-    const material = await createMaterial(owner, section.id, { title: "Java", isPublished: true });
+    const section = await createSection(owner, module.id, { title: "Unrunnable" });
+    const material = await createMaterial(owner, section.id, {
+      title: "Unrunnable",
+      isPublished: true,
+    });
 
-    // Caught while the Architect is authoring, not as a SYSTEM_ERROR a Coder
-    // meets halfway through the exercise.
+    // Every language in the product vocabulary has a sandbox image today, so
+    // there is no legitimate value left that this guard would reject — which is
+    // precisely why the test has to reach past the type system to reach it. The
+    // guard defends against values the compiler cannot vouch for: a column
+    // written by an older build naming a language since removed, or an image
+    // dropped from docker/sandbox without the registry being narrowed.
+    //
+    // Without it the Coder meets the failure as a SYSTEM_ERROR halfway through
+    // the exercise, which looks like their fault and arrives far too late.
+    const retired = "pascal" as unknown as Language;
+
     expect(
       await refusalCode(() =>
         createPracticeActivity(owner, material.id, {
-          title: "Java practice",
+          title: "Retired language",
           prompt: "Print a greeting.",
-          allowedLanguages: ["java"],
+          allowedLanguages: [retired],
           starterCode: {},
           timeLimitMs: 5_000,
           memoryLimitMb: 256,

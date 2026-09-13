@@ -156,7 +156,16 @@ function boundedUtf8(limitBytes: number, field: string) {
   });
 }
 
-export const interactiveBlockAttrsSchema = z.object({
+/**
+ * Strict, and that is the whole point of calling the shape closed.
+ *
+ * A non-strict object silently drops keys it does not know, which is the right
+ * default almost everywhere and exactly wrong here. A block whose `html` was
+ * renamed by an older editor build would parse cleanly, lose its content on the
+ * way past, and render as an empty frame — a drift that reaches the reader as a
+ * blank lesson rather than as an error anybody can act on.
+ */
+export const interactiveBlockAttrsSchema = z.strictObject({
   /**
    * Stable across edits. Keys the frame and its resize state, and is echoed
    * back in validation errors — hence an opaque token rather than free text, so
