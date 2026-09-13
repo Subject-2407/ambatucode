@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Box, Container, Flex, Heading, Stack, Text } from "@chakra-ui/react";
 import type { AuthenticatedUser } from "@ambatucode/shared";
+import { AssessmentModeProvider, useAssessmentMode } from "@/providers/assessment-mode";
 import { SessionProvider } from "@/providers/session-provider";
 import { ColorModeToggle } from "@/providers/color-mode";
 import { BrandMark } from "./brand-mark";
@@ -23,47 +24,73 @@ const SIDEBAR_WIDTH = "16rem";
 export function AppShell({ user, children }: { user: AuthenticatedUser; children: ReactNode }) {
   return (
     <SessionProvider user={user}>
-      <Flex direction={{ base: "column", md: "row" }} minHeight="100dvh" bg="bg.canvas">
-        <Stack
-          as="aside"
-          width={{ base: "full", md: SIDEBAR_WIDTH }}
-          flexShrink="0"
-          gap="6"
-          px="4"
-          py={{ base: "3", md: "5" }}
-          borderBottomWidth={{ base: "1px", md: "0" }}
-          borderEndWidth={{ md: "1px" }}
-          borderColor="border.default"
-          bg="bg.surface"
-          position={{ md: "sticky" }}
-          top={{ md: "0" }}
-          height={{ md: "100dvh" }}
-        >
-          <Flex align="center" justify="space-between" gap="2">
-            <BrandMark />
-            <Box display={{ md: "none" }}>
-              <ColorModeToggle />
-            </Box>
-          </Flex>
+      <AssessmentModeProvider>
+        <ShellFrame user={user}>{children}</ShellFrame>
+      </AssessmentModeProvider>
+    </SessionProvider>
+  );
+}
 
-          <SidebarNav items={navItemsForRole(user.role)} />
+/**
+ * The chrome, or the deliberate absence of it.
+ *
+ * While an attempt is in progress the shell steps out of the way entirely:
+ * no sidebar, no navigation, nothing competing with the timer and the editor.
+ * A Coder mid-assessment has one task, and every link out of it is either a
+ * distraction or a mistake waiting to happen.
+ */
+function ShellFrame({ user, children }: { user: AuthenticatedUser; children: ReactNode }) {
+  const { active } = useAssessmentMode();
 
-          <Flex gap="1" align="center" display={{ base: "none", md: "flex" }}>
-            <Box flex="1" minWidth="0">
-              <UserMenu />
-            </Box>
+  if (active) {
+    return (
+      <Box as="main" minHeight="100dvh" bg="bg.canvas">
+        {children}
+      </Box>
+    );
+  }
+
+  return (
+    <Flex direction={{ base: "column", md: "row" }} minHeight="100dvh" bg="bg.canvas">
+      <Stack
+        as="aside"
+        width={{ base: "full", md: SIDEBAR_WIDTH }}
+        flexShrink="0"
+        gap="6"
+        px="4"
+        py={{ base: "3", md: "5" }}
+        borderBottomWidth={{ base: "1px", md: "0" }}
+        borderEndWidth={{ md: "1px" }}
+        borderColor="border.default"
+        bg="bg.surface"
+        position={{ md: "sticky" }}
+        top={{ md: "0" }}
+        height={{ md: "100dvh" }}
+      >
+        <Flex align="center" justify="space-between" gap="2">
+          <BrandMark />
+          <Box display={{ md: "none" }}>
             <ColorModeToggle />
-          </Flex>
-        </Stack>
+          </Box>
+        </Flex>
 
-        <Box as="main" flex="1" minWidth="0">
-          <Box display={{ base: "block", md: "none" }} px="4" pt="3">
+        <SidebarNav items={navItemsForRole(user.role)} />
+
+        <Flex gap="1" align="center" display={{ base: "none", md: "flex" }}>
+          <Box flex="1" minWidth="0">
             <UserMenu />
           </Box>
-          {children}
+          <ColorModeToggle />
+        </Flex>
+      </Stack>
+
+      <Box as="main" flex="1" minWidth="0">
+        <Box display={{ base: "block", md: "none" }} px="4" pt="3">
+          <UserMenu />
         </Box>
-      </Flex>
-    </SessionProvider>
+        {children}
+      </Box>
+    </Flex>
   );
 }
 

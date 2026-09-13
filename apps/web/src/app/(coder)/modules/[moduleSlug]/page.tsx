@@ -1,8 +1,9 @@
+import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import NextLink from "next/link";
 import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { ChevronRight, FileText, Lock, Terminal } from "lucide-react";
-import type { ModuleDetail, ModuleSectionView } from "@ambatucode/shared";
+import { ChevronRight, ClipboardCheck, FileText, Lock, Terminal } from "lucide-react";
+import type { AssessmentSummary, ModuleDetail, ModuleSectionView } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -114,42 +115,77 @@ function SectionBlock({
         <Text fontWeight="semibold">{section.title}</Text>
       </HStack>
 
-      {section.materials.length === 0 ? (
+      {section.materials.length === 0 && section.assessments.length === 0 ? (
         <Text fontSize="sm" color="fg.muted" ps="8">
-          No materials in this section yet.
+          Nothing in this section yet.
         </Text>
       ) : (
         <Stack gap="2">
           {section.materials.map((material) => (
-            <Box
-              key={material.id}
-              asChild
-              borderWidth="1px"
-              borderColor="border.default"
-              borderRadius="md"
-              bg="bg.surface"
-              px="4"
-              py="3"
-              _hover={{ borderColor: "accent.solid", bg: "bg.subtle" }}
+            <ItemLink key={material.id} href={routes.material(moduleSlug, material.id)}>
+              <HStack gap="3" minWidth="0">
+                <FileText size={16} aria-hidden />
+                <Text truncate>{material.title}</Text>
+                {material.practiceCount > 0 ? (
+                  <Badge tone="accent">
+                    <Terminal size={12} aria-hidden /> {material.practiceCount}
+                  </Badge>
+                ) : null}
+              </HStack>
+            </ItemLink>
+          ))}
+
+          {section.assessments.map((assessment) => (
+            <ItemLink
+              key={assessment.id}
+              href={routes.assessment(moduleSlug, assessment.id)}
             >
-              <NextLink href={routes.material(moduleSlug, material.id)}>
-                <Flex align="center" justify="space-between" gap="3">
-                  <HStack gap="3" minWidth="0">
-                    <FileText size={16} aria-hidden />
-                    <Text truncate>{material.title}</Text>
-                    {material.practiceCount > 0 ? (
-                      <Badge tone="accent">
-                        <Terminal size={12} aria-hidden /> {material.practiceCount}
-                      </Badge>
-                    ) : null}
-                  </HStack>
-                  <ChevronRight size={16} aria-hidden />
-                </Flex>
-              </NextLink>
-            </Box>
+              <HStack gap="3" minWidth="0">
+                <ClipboardCheck size={16} aria-hidden />
+                <Text truncate>{assessment.title}</Text>
+                <AssessmentTimingBadge assessment={assessment} />
+              </HStack>
+            </ItemLink>
           ))}
         </Stack>
       )}
     </Stack>
+  );
+}
+
+/**
+ * Materials and Assessments sit in one list because that is the order the
+ * Architect arranged them in, and a Coder works through a Section top to
+ * bottom. The icon and the timing badge are what tell them apart — reading
+ * an explanation and sitting an exam should never look identical.
+ */
+function ItemLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <Box
+      asChild
+      borderWidth="1px"
+      borderColor="border.default"
+      borderRadius="md"
+      bg="bg.surface"
+      px="4"
+      py="3"
+      _hover={{ borderColor: "accent.solid", bg: "bg.subtle" }}
+    >
+      <NextLink href={href}>
+        <Flex align="center" justify="space-between" gap="3">
+          {children}
+          <ChevronRight size={16} aria-hidden />
+        </Flex>
+      </NextLink>
+    </Box>
+  );
+}
+
+function AssessmentTimingBadge({ assessment }: { assessment: AssessmentSummary }) {
+  if (assessment.timeMode === "UNTIMED") return <Badge tone="neutral">Untimed</Badge>;
+  return (
+    <Badge tone="warning">
+      {assessment.durationMinutes} min · {assessment.executionMode === "LIVE" ? "Live" : "Individual"}
+    </Badge>
   );
 }

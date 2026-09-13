@@ -22,6 +22,11 @@ export const routes = {
   module: (moduleSlug: string) => `/modules/${moduleSlug}`,
   material: (moduleSlug: string, materialId: string) =>
     `/modules/${moduleSlug}/materials/${materialId}`,
+  assessment: (moduleSlug: string, assessmentId: string) =>
+    `/modules/${moduleSlug}/assessments/${assessmentId}`,
+  /** The attempt workspace. Addressed by attempt, not by session: a reset
+   * produces a new attempt, and the old URL must not reopen it. */
+  attempt: (attemptId: string) => `/attempt/${attemptId}`,
 
   // Architect
   manageModules: "/manage/modules",
@@ -29,6 +34,9 @@ export const routes = {
    * slug rename, which a Coder-facing link does not need to. */
   moduleBuilder: (moduleId: string) => `/manage/modules/${moduleId}/builder`,
   moduleEnrollments: (moduleId: string) => `/manage/modules/${moduleId}/enrollments`,
+  manageAssessment: (assessmentId: string) => `/manage/assessments/${assessmentId}`,
+  manageSession: (sessionId: string) => `/manage/sessions/${sessionId}`,
+  manageSessionMonitor: (sessionId: string) => `/manage/sessions/${sessionId}/monitor`,
   manageGrades: "/manage/grades",
 
   // Root

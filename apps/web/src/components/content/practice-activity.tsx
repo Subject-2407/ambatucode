@@ -1,19 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { Check, Play, RotateCcw, Terminal, X } from "lucide-react";
-import type { Language, PracticeActivityView, RunTestResultView } from "@ambatucode/shared";
+import { Play, RotateCcw, Terminal } from "lucide-react";
+import type { Language, PracticeActivityView } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toaster } from "@/components/ui/toaster";
 import { CodeEditor } from "@/components/editor/code-editor";
+import { RunOutcome } from "@/components/editor/run-results";
 import { LanguagePicker } from "@/components/editor/language-picker";
 import { switchLanguage } from "@/components/editor/starter-code";
-import { usePracticeRun, type PracticeRunState } from "@/hooks/use-practice-run";
+import { usePracticeRun } from "@/hooks/use-practice-run";
 import { isApiError } from "@/lib/api-client";
-import { describeRun, shouldShowCompilerOutput } from "./run-status";
 
 /**
  * A Practice Activity as a Coder works through it.
@@ -140,7 +140,7 @@ export function PracticeActivity({ activity }: { activity: PracticeActivityView 
         </Text>
       </Flex>
 
-      <RunPanel state={state} />
+      <RunOutcome state={state} />
 
       <ConfirmDialog
         open={pendingLanguage !== null}
@@ -154,131 +154,6 @@ export function PracticeActivity({ activity }: { activity: PracticeActivityView 
         }}
         onClose={() => setPendingLanguage(null)}
       />
-    </Stack>
-  );
-}
-
-/**
- * Everything the Coder learns from a run. Results arrive over the socket, so
- * this is also where a run that never comes back has to say so rather than
- * leaving a spinner turning.
- */
-function RunPanel({ state }: { state: PracticeRunState }) {
-  if (state.phase === "idle") return null;
-
-  if (state.phase === "waiting") {
-    return (
-      <ConsoleFrame>
-        <HStack gap="2">
-          <Badge tone="info">{state.status === "RUNNING" ? "Running" : "Queued"}</Badge>
-          <Text fontSize="sm" color="fg.muted" aria-live="polite">
-            Waiting for the sandbox…
-          </Text>
-        </HStack>
-      </ConsoleFrame>
-    );
-  }
-
-  if (state.phase === "failed") {
-    return (
-      <ConsoleFrame>
-        <HStack gap="2">
-          <Badge tone="warning">No result</Badge>
-          <Text fontSize="sm" color="fg.muted" aria-live="polite">
-            {state.message}
-          </Text>
-        </HStack>
-      </ConsoleFrame>
-    );
-  }
-
-  const summary = describeRun(state.status, state.testResults);
-
-  return (
-    <ConsoleFrame>
-      <Stack gap="3">
-        <HStack gap="2" aria-live="polite">
-          <Badge tone={summary.tone}>{summary.label}</Badge>
-        </HStack>
-
-        {shouldShowCompilerOutput(state.status, state.compilerOutput) ? (
-          <Box
-            as="pre"
-            fontFamily="mono"
-            fontSize="xs"
-            whiteSpace="pre-wrap"
-            color="fg.muted"
-            maxHeight="12rem"
-            overflowY="auto"
-          >
-            {state.compilerOutput}
-          </Box>
-        ) : null}
-
-        {state.testResults.map((result, index) => (
-          <TestResultRow key={`${result.name}-${String(index)}`} result={result} />
-        ))}
-      </Stack>
-    </ConsoleFrame>
-  );
-}
-
-function ConsoleFrame({ children }: { children: ReactNode }) {
-  return (
-    <Box
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="md"
-      bg="bg.subtle"
-      padding="4"
-    >
-      {children}
-    </Box>
-  );
-}
-
-/** Pass and fail carry an icon and a word, never colour alone. */
-function TestResultRow({ result }: { result: RunTestResultView }) {
-  const output = result.stderrExcerpt.trim() === "" ? result.stdoutExcerpt : result.stderrExcerpt;
-
-  return (
-    <Stack
-      gap="1"
-      borderTopWidth="1px"
-      borderColor="border.default"
-      pt="3"
-      _first={{ borderTopWidth: 0, pt: 0 }}
-    >
-      <Flex justify="space-between" gap="3" align="center">
-        <HStack gap="2" minWidth="0">
-          <Box color={result.passed ? "fg.success" : "fg.error"} aria-hidden>
-            {result.passed ? <Check size={16} /> : <X size={16} />}
-          </Box>
-          <Text fontSize="sm" truncate>
-            {result.name}
-          </Text>
-          <Text fontSize="xs" color="fg.muted">
-            {result.passed ? "Passed" : "Failed"}
-          </Text>
-        </HStack>
-        <Text fontSize="xs" color="fg.muted" flexShrink="0">
-          {result.executionTimeMs} ms
-        </Text>
-      </Flex>
-
-      {output.trim() === "" ? null : (
-        <Box
-          as="pre"
-          fontFamily="mono"
-          fontSize="xs"
-          whiteSpace="pre-wrap"
-          color="fg.muted"
-          maxHeight="10rem"
-          overflowY="auto"
-        >
-          {output}
-        </Box>
-      )}
     </Stack>
   );
 }
