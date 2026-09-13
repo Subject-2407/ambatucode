@@ -14,6 +14,7 @@ const serverEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
   EXECUTION_CALLBACK_SECRET: z.string().min(32),
+  INTERNAL_API_SECRET: z.string().min(32),
   SESSION_TTL_HOURS: z.coerce
     .number()
     .int()

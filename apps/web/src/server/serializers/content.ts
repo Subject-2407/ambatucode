@@ -2,6 +2,7 @@ import "server-only";
 import {
   AppError,
   EMPTY_RICH_TEXT_DOCUMENT,
+  type AssessmentSummary,
   isLanguage,
   practiceTestCasesSchema,
   richTextDocumentSchema,
@@ -99,24 +100,37 @@ type SectionTreeRow = {
     isPublished: boolean;
     _count: { practiceActivities: number };
   }>;
+  assessments: AssessmentSummary[];
 };
 
 /**
  * The tree an Architect sees and the tree a Coder sees differ by exactly one
- * rule: an unpublished Material is invisible to the reader. Passing that in as
- * a flag keeps the two callers from inventing their own filter.
+ * rule: unpublished content is invisible to the reader. Passing that in as a
+ * flag keeps the two callers from inventing their own filter.
  */
 export function toModuleSectionViews(
   rows: SectionTreeRow[],
-  options: { includeUnpublishedMaterials: boolean },
+  options: { includeUnpublished: boolean },
 ): ModuleSectionView[] {
   return rows.map((section) => ({
     id: section.id,
     moduleId: section.moduleId,
     title: section.title,
     orderIndex: section.orderIndex,
+    assessments: section.assessments
+      .filter((assessment) => options.includeUnpublished || assessment.isPublished)
+      .map((assessment): AssessmentSummary => ({
+        id: assessment.id,
+        sectionId: assessment.sectionId,
+        title: assessment.title,
+        orderIndex: assessment.orderIndex,
+        isPublished: assessment.isPublished,
+        timeMode: assessment.timeMode,
+        durationMinutes: assessment.durationMinutes,
+        executionMode: assessment.executionMode,
+      })),
     materials: section.materials
-      .filter((material) => options.includeUnpublishedMaterials || material.isPublished)
+      .filter((material) => options.includeUnpublished || material.isPublished)
       .map((material): ModuleMaterialSummary => ({
         id: material.id,
         sectionId: material.sectionId,

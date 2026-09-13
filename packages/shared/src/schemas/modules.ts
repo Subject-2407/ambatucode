@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MODULE_VISIBILITIES, type EnrollmentStatus, type ModuleVisibility } from "../enums";
+import type { AssessmentSummary } from "./assessments";
 
 /**
  * Module CRUD and the Coder-facing catalog.
@@ -91,10 +92,9 @@ export type ModuleDetail = ModuleSummary & {
 };
 
 /**
- * A Section as it appears inside a Module tree. Assessments arrive in a later
- * phase and get their own array beside `materials`; they are absent here
- * rather than stubbed, so a screen cannot render an empty list that looks like
- * "no assessments" when the truth is "not built yet".
+ * A Section as it appears inside a Module tree. Materials and Assessments are
+ * separate arrays because they are separate things — one teaches, the other
+ * grades — and a screen should never have to tell them apart by shape.
  */
 export type ModuleSectionView = {
   id: string;
@@ -102,6 +102,7 @@ export type ModuleSectionView = {
   title: string;
   orderIndex: number;
   materials: ModuleMaterialSummary[];
+  assessments: AssessmentSummary[];
 };
 
 export type ModuleMaterialSummary = {

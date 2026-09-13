@@ -6,6 +6,7 @@ beforeAll(() => {
   vi.stubEnv("DATABASE_URL", "postgresql://test/test");
   vi.stubEnv("REDIS_URL", "redis://localhost:6379");
   vi.stubEnv("EXECUTION_CALLBACK_SECRET", "a".repeat(48));
+  vi.stubEnv("INTERNAL_API_SECRET", "b".repeat(48));
 });
 
 function expectForbidden(action: () => void): void {

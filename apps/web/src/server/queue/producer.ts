@@ -27,7 +27,8 @@ const globalForQueues = globalThis as unknown as {
   ambatucodeSubmitQueue?: Queue<ExecutionJob>;
 };
 
-function getConnection(): Redis {
+/** Shared by every BullMQ queue apps/web produces to, execution or not. */
+export function getConnection(): Redis {
   // BullMQ requires maxRetriesPerRequest to be null on its connection.
   globalForQueues.ambatucodeQueueConnection ??= new Redis(getServerEnv().REDIS_URL, {
     maxRetriesPerRequest: null,

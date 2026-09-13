@@ -208,13 +208,26 @@ export async function getModule(actor: AuthenticatedUser, ref: ModuleRef): Promi
           _count: { select: { practiceActivities: true } },
         },
       },
+      assessments: {
+        orderBy: { orderIndex: "asc" },
+        select: {
+          id: true,
+          sectionId: true,
+          title: true,
+          orderIndex: true,
+          isPublished: true,
+          timeMode: true,
+          durationMinutes: true,
+          executionMode: true,
+        },
+      },
     },
   });
 
   return toModuleDetail(
     row,
     viewer,
-    toModuleSectionViews(sections, { includeUnpublishedMaterials: viewer.isOwner }),
+    toModuleSectionViews(sections, { includeUnpublished: viewer.isOwner }),
   );
 }
 

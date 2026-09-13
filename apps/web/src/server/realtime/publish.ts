@@ -1,6 +1,7 @@
 import "server-only";
 import {
   REDIS_CHANNELS,
+  type AssessmentBroadcastMessage,
   type ExecutionStatusMessage,
   type SessionRevokedMessage,
 } from "@ambatucode/shared";
@@ -37,5 +38,23 @@ export async function publishExecutionStatus(message: ExecutionStatusMessage): P
     await getPublisher().publish(REDIS_CHANNELS.EXECUTION_STATUS, JSON.stringify(message));
   } catch (error) {
     console.error("[realtime] failed to publish execution:status:", error);
+  }
+}
+
+/**
+ * Tells apps/realtime about an assessment change apps/web just committed.
+ *
+ * Best-effort for the same reason as the two above: the change is already in
+ * the database, which is the source of truth. A socket that misses the push
+ * catches up on its next `attempt:join`, and the monitor snapshot endpoint is
+ * always current. Failing the request that made the change would be worse.
+ */
+export async function publishAssessmentBroadcast(
+  message: AssessmentBroadcastMessage,
+): Promise<void> {
+  try {
+    await getPublisher().publish(REDIS_CHANNELS.ASSESSMENT_BROADCAST, JSON.stringify(message));
+  } catch (error) {
+    console.error("[realtime] failed to publish assessment broadcast:", error);
   }
 }
