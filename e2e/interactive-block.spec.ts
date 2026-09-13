@@ -92,9 +92,12 @@ test.describe("interactive block isolation", () => {
   test("cannot read cookies or storage", async ({ page }) => {
     const frame = await openMaterialWithBlock(page);
 
-    // An opaque origin has no cookie jar, so the read yields nothing rather
-    // than throwing — either way the session is unreachable.
-    expect(await probe(frame, () => document.cookie)).toBe("ok:");
+    // An opaque origin has no cookie jar. Chrome denies the read outright;
+    // older builds handed back an empty string instead. The assertion must not
+    // pin which, because both say the one thing that matters — no cookie comes
+    // back — and pinning it turns a browser hardening its own behaviour into a
+    // failure here.
+    expect(await probe(frame, () => document.cookie)).toMatch(/^threw:|^ok:$/);
 
     // Storage is denied outright to an opaque origin.
     expect(await probe(frame, () => localStorage.length)).toMatch(/^threw:/);
@@ -124,8 +127,30 @@ test.describe("interactive block isolation", () => {
     });
     expect(fetched).toBe("blocked");
 
-    const socket = await probe(frame, () => new WebSocket("ws://localhost:3001").url);
-    expect(socket).toMatch(/^threw:/);
+    /**
+     * The constructor is not the assertion. Chrome used to throw from it under
+     * CSP and now lets it return and fails the connection asynchronously, so a
+     * test that pins the throw is testing the browser's reporting style rather
+     * than the block's reach. What has to hold is that the socket never opens:
+     * anything else — an error, a close, or silence — leaves the realtime
+     * server as unreachable from inside a block as the network already is.
+     */
+    const socket = await frame.locator("body").evaluate(async () => {
+      return await new Promise<string>((resolve) => {
+        let ws: WebSocket;
+        try {
+          ws = new WebSocket("ws://localhost:3001");
+        } catch {
+          resolve("blocked");
+          return;
+        }
+        ws.onopen = () => resolve("REACHED");
+        ws.onerror = () => resolve("blocked");
+        ws.onclose = () => resolve("blocked");
+        setTimeout(() => resolve("blocked"), 5_000);
+      });
+    });
+    expect(socket).toBe("blocked");
   });
 
   test("ignores a forged resize message from another frame", async ({ page }) => {
