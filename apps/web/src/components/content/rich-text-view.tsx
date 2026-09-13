@@ -1,6 +1,11 @@
 import { Fragment, type ReactNode } from "react";
 import { Box, Code, Heading, Link, List, Text } from "@chakra-ui/react";
-import type { RichTextDocument, RichTextNode } from "@ambatucode/shared";
+import {
+  INTERACTIVE_BLOCK_NODE_TYPE,
+  type RichTextDocument,
+  type RichTextNode,
+} from "@ambatucode/shared";
+import { InteractiveBlockNode } from "./interactive-block";
 import { headingLevel, sanitizeHref } from "./rich-text";
 
 /**
@@ -102,6 +107,11 @@ function renderNode(node: RichTextNode, index: number): ReactNode {
 
     case "horizontalRule":
       return <Box borderTopWidth="1px" borderColor="border.default" />;
+
+    case INTERACTIVE_BLOCK_NODE_TYPE:
+      // The only node whose attrs are a closed shape, because it is the only
+      // one that executes. It is parsed and framed inside its own component.
+      return <InteractiveBlockNode node={node} />;
 
     default:
       return <Fragment key={index}>{renderChildren(node)}</Fragment>;

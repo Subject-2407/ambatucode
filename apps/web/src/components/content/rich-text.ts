@@ -1,4 +1,8 @@
-import type { RichTextDocument, RichTextNode } from "@ambatucode/shared";
+import {
+  INTERACTIVE_BLOCK_NODE_TYPE,
+  type RichTextDocument,
+  type RichTextNode,
+} from "@ambatucode/shared";
 
 /**
  * Pure helpers behind the Material renderer.
@@ -47,8 +51,16 @@ export function isEmptyDocument(document: RichTextDocument): boolean {
 }
 
 function isEmptyNode(node: RichTextNode): boolean {
-  // A rule or an image is content even with nothing inside it.
-  if (node.type === "horizontalRule" || node.type === "image") return false;
+  // A rule, an image, or an interactive block is content even with nothing
+  // inside it. The block is a leaf carrying everything in its attrs, so
+  // counting children would read a whole simulation as an empty Material.
+  if (
+    node.type === "horizontalRule" ||
+    node.type === "image" ||
+    node.type === INTERACTIVE_BLOCK_NODE_TYPE
+  ) {
+    return false;
+  }
   if (typeof node.text === "string" && node.text.trim() !== "") return false;
   return (node.content ?? []).every(isEmptyNode);
 }

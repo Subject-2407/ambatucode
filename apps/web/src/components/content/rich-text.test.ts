@@ -67,6 +67,17 @@ describe("isEmptyDocument", () => {
   it("counts a rule as content even though it holds no text", () => {
     expect(isEmptyDocument({ type: "doc", content: [{ type: "horizontalRule" }] })).toBe(false);
   });
+
+  it("counts an interactive block as content", () => {
+    // The block is a leaf holding everything in its attrs, so a walk that only
+    // looked for text would read a Material containing a whole simulation as
+    // empty and offer the Coder nothing to read.
+    const document: RichTextDocument = {
+      type: "doc",
+      content: [{ type: "interactiveBlock", attrs: { id: "sorting", html: "<canvas></canvas>" } }],
+    };
+    expect(isEmptyDocument(document)).toBe(false);
+  });
 });
 
 describe("headingLevel", () => {
