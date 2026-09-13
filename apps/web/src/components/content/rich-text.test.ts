@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { RichTextDocument } from "@ambatucode/shared";
-import { headingLevel, isEmptyDocument, sanitizeHref } from "./rich-text";
+import type { RichTextDocument, RichTextNode } from "@ambatucode/shared";
+import { headingLevel, isEmptyDocument, readableInteractiveBlock, sanitizeHref } from "./rich-text";
 
 describe("sanitizeHref", () => {
   it.each(["https://example.test/guide", "http://example.test", "mailto:tutor@example.test"])(
@@ -88,5 +88,53 @@ describe("headingLevel", () => {
   it("falls back for a level it cannot render", () => {
     expect(headingLevel({ level: 6 })).toBeNull();
     expect(headingLevel(undefined)).toBeNull();
+  });
+});
+
+describe("readableInteractiveBlock", () => {
+  it("fills in the optional fields a stored block may omit", () => {
+    const block = readableInteractiveBlock({
+      type: "interactiveBlock",
+      attrs: { id: "sorting", html: "<canvas></canvas>" },
+    });
+
+    expect(block).not.toBeNull();
+    expect(block?.id).toBe("sorting");
+    expect(block?.css).toBe("");
+    expect(block?.js).toBe("");
+  });
+
+  it.each([
+    ["an id carrying markup", { id: "<img src=x>", html: "" }],
+    ["no id at all", { html: "<p>hi</p>" }],
+    ["a height the host would refuse to honour", { id: "tall", initialHeight: 500_000 }],
+    ["a key the frame knows nothing about", { id: "extra", srcdoc: "<script>x()</script>" }],
+    ["no attrs whatsoever", undefined],
+  ])("degrades to a notice rather than running %s", (_label, attrs) => {
+    expect(readableInteractiveBlock({ type: "interactiveBlock", attrs })).toBeNull();
+  });
+
+  it("leaves the rest of the Material readable when one block is unusable", () => {
+    // The whole point of the null: a single drifted block costs the reader that
+    // block, not the lesson around it. A Material that threw here would take
+    // every paragraph down with the one node that failed to parse.
+    const before: RichTextNode = {
+      type: "paragraph",
+      content: [{ type: "text", text: "Before the block." }],
+    };
+    const broken: RichTextNode = {
+      type: "interactiveBlock",
+      attrs: { id: "broken", initialHeight: -1 },
+    };
+    const after: RichTextNode = {
+      type: "paragraph",
+      content: [{ type: "text", text: "After the block." }],
+    };
+    const document: RichTextDocument = { type: "doc", content: [before, broken, after] };
+
+    expect(readableInteractiveBlock(broken)).toBeNull();
+    expect(isEmptyDocument(document)).toBe(false);
+    expect(before.content?.[0]?.text).toBe("Before the block.");
+    expect(after.content?.[0]?.text).toBe("After the block.");
   });
 });

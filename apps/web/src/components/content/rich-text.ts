@@ -1,5 +1,7 @@
 import {
   INTERACTIVE_BLOCK_NODE_TYPE,
+  interactiveBlockAttrsSchema,
+  type InteractiveBlockAttrs,
   type RichTextDocument,
   type RichTextNode,
 } from "@ambatucode/shared";
@@ -69,4 +71,23 @@ function isEmptyNode(node: RichTextNode): boolean {
 export function headingLevel(attrs: Record<string, unknown> | undefined): 1 | 2 | 3 | null {
   const level = attrs?.level;
   return level === 1 || level === 2 || level === 3 ? level : null;
+}
+
+/**
+ * The block a reader will actually be given, or null when its attrs no longer
+ * parse into the closed shape the frame needs.
+ *
+ * The renderer must not be the thing that decides this inline. An
+ * `interactiveBlock` is the one node in a Material that executes, so the
+ * difference between "run this" and "show a notice instead" is the most
+ * consequential branch in the whole view — and a branch buried in JSX is one
+ * nobody can test without a DOM. Kept here, it is checked directly.
+ *
+ * A null is not an error path. The server already refuses to serve a Material
+ * whose stored blocks do not validate, so reaching this is a defect upstream;
+ * the point is that when it happens the surrounding Material still renders.
+ */
+export function readableInteractiveBlock(node: RichTextNode): InteractiveBlockAttrs | null {
+  const parsed = interactiveBlockAttrsSchema.safeParse(node.attrs ?? {});
+  return parsed.success ? parsed.data : null;
 }

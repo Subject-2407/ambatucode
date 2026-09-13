@@ -8,13 +8,13 @@ import {
   BLOCK_RESIZE_MESSAGE,
   blockOutboundMessageSchema,
   clampBlockHeight,
-  interactiveBlockAttrsSchema,
   type BlockContextMessage,
   type InteractiveBlockAttrs,
   type RichTextNode,
 } from "@ambatucode/shared";
 import { useColorMode } from "@/providers/color-mode";
 import { INTERACTIVE_BLOCK_SANDBOX, assembleInteractiveBlock } from "@/lib/interactive-block";
+import { readableInteractiveBlock } from "./rich-text";
 
 /**
  * The one component that runs an Interactive Block, used by both the Material
@@ -93,9 +93,9 @@ export function InteractiveBlock({ block, onRuntimeError, eager = false }: Inter
  * whole lesson down with it.
  */
 export function InteractiveBlockNode({ node }: { node: RichTextNode }) {
-  const parsed = interactiveBlockAttrsSchema.safeParse(node.attrs ?? {});
+  const block = readableInteractiveBlock(node);
 
-  if (!parsed.success) {
+  if (block === null) {
     return (
       <BlockFrame title="">
         <BlockNotice message="This interactive block could not be loaded. Its author will need to fix it." />
@@ -103,7 +103,7 @@ export function InteractiveBlockNode({ node }: { node: RichTextNode }) {
     );
   }
 
-  return <InteractiveBlock block={parsed.data} />;
+  return <InteractiveBlock block={block} />;
 }
 
 /**
