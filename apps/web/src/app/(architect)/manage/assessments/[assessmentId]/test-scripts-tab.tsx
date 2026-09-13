@@ -23,6 +23,7 @@ import { SelectField } from "@/components/ui/select";
 import { toaster } from "@/components/ui/toaster";
 import { SourceEditor } from "@/components/editor/code-editor";
 import { LANGUAGE_LABEL, MONACO_LANGUAGE_ID, TAB_SIZE } from "@/components/editor/language-labels";
+import { describeScriptContract } from "@/components/assessment/test-script-guidance";
 import { useDeleteTestScript, useUploadTestScript } from "@/hooks/use-assessments";
 import { isApiError } from "@/lib/api-client";
 
@@ -181,6 +182,7 @@ function TestScriptDialog({
   }
 
   const fixedLanguage = FRAMEWORK_LANGUAGE[framework];
+  const guidance = describeScriptContract(framework, language);
 
   return (
     <Modal
@@ -223,6 +225,20 @@ function TestScriptDialog({
             }
           />
         </HStack>
+
+        <Stack
+          gap="1"
+          borderWidth="1px"
+          borderColor="border.default"
+          borderRadius="md"
+          bg="bg.subtle"
+          padding="3"
+        >
+          <Text fontSize="sm">{guidance.submission}</Text>
+          <Text fontSize="sm" color="fg.muted">
+            {guidance.results} Each test counts as one case with this script&apos;s weight.
+          </Text>
+        </Stack>
 
         <HStack gap="4" align="start">
           <TextField
