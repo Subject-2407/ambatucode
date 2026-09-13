@@ -53,6 +53,57 @@ const helloDocument = {
   ],
 };
 
+/**
+ * A seeded Interactive Block.
+ *
+ * It is deliberately a working one rather than a placeholder: it responds to
+ * clicks, reports its own height back to the host, and answers the theme the
+ * platform hands it. A seed that only proved a block can be stored would not
+ * catch the runtime going wrong.
+ *
+ * Note what it does not do. No network, no storage, no dialogs, and no reach
+ * into the page around it — none of which would work, and all of which an
+ * Architect copying this as a starting point should not learn the hard way.
+ */
+const loopTraceBlock = {
+  type: "interactiveBlock",
+  attrs: {
+    id: "seed-block-loop-trace",
+    title: "Loop trace",
+    initialHeight: 200,
+    html: '<div id="trace"></div><button id="step" type="button">Step</button>',
+    css: [
+      "#trace { display: flex; gap: 6px; margin-bottom: 12px; }",
+      ".cell { width: 34px; height: 34px; display: grid; place-items: center;",
+      "  border: 1px solid #999; border-radius: 6px; font-variant-numeric: tabular-nums; }",
+      ".cell.seen { background: #2f855a; color: white; border-color: #2f855a; }",
+      "[data-theme='dark'] .cell { border-color: #555; }",
+      "button { font: inherit; padding: 6px 12px; border-radius: 6px; cursor: pointer; }",
+    ].join("\n"),
+    js: [
+      "const values = [4, 8, 15, 16, 23, 42];",
+      "const trace = document.getElementById('trace');",
+      "const cells = values.map((value) => {",
+      "  const cell = document.createElement('div');",
+      "  cell.className = 'cell';",
+      "  cell.textContent = String(value);",
+      "  trace.appendChild(cell);",
+      "  return cell;",
+      "});",
+      "let index = 0;",
+      "document.getElementById('step').addEventListener('click', () => {",
+      "  if (index >= cells.length) {",
+      "    cells.forEach((cell) => cell.classList.remove('seen'));",
+      "    index = 0;",
+      "    return;",
+      "  }",
+      "  cells[index].classList.add('seen');",
+      "  index += 1;",
+      "});",
+    ].join("\n"),
+  },
+};
+
 const loopsDocument = {
   type: "doc",
   content: [
@@ -70,6 +121,7 @@ const loopsDocument = {
         },
       ],
     },
+    loopTraceBlock,
     {
       type: "bulletList",
       content: [
