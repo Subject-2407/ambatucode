@@ -37,6 +37,9 @@ type fakeQueue struct {
 	completed []string
 	failed    map[string]error
 	released  []string
+	processed []string
+
+	markedAfterComplete bool
 
 	extensions      atomic.Int64
 	lockLost        atomic.Bool
@@ -85,6 +88,17 @@ func (q *fakeQueue) ExtendLock(context.Context, *queue.Job) (bool, error) {
 		q.extensionsAfter.Add(1)
 	}
 	return !q.lockLost.Load(), nil
+}
+
+func (q *fakeQueue) MarkProcessed(_ context.Context, job *queue.Job) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.processed = append(q.processed, job.ID)
+	// The mark has to land before Complete for a crash in between to be safe.
+	if len(q.completed) > 0 && q.completed[len(q.completed)-1] == job.ID {
+		q.markedAfterComplete = true
+	}
+	return nil
 }
 
 func (q *fakeQueue) RecoverStalled(context.Context) ([]string, error) {
@@ -447,6 +461,82 @@ func TestStalledCheckRunsAtStartupAndOnItsInterval(t *testing.T) {
 	})
 	stopAccepting()
 	wait(t)
+}
+
+// A job redelivered after its result already went out is completed, not rerun.
+func TestAlreadyProcessedJobIsCompletedWithoutRunning(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.mu.Lock()
+	submit.pending = append(submit.pending,
+		&queue.Job{ID: "reported-1", Queue: "submit", ProcessedAt: "1757750400000"})
+	submit.mu.Unlock()
+
+	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error {
+		t.Error("an already-processed job was run again")
+		return nil
+	}}
+
+	p := newTestPool(submit, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "the job to be completed", submit.finished.Load)
+	stopAccepting()
+	wait(t)
+
+	if processor.calls.Load() != 0 {
+		t.Fatalf("processor called %d times", processor.calls.Load())
+	}
+}
+
+// A successful job is marked processed, and before it is completed.
+func TestProcessedJobIsMarkedBeforeItIsCompleted(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.push("graded-1")
+
+	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error { return nil }}
+	p := newTestPool(submit, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "the job to be completed", submit.finished.Load)
+	stopAccepting()
+	wait(t)
+
+	submit.mu.Lock()
+	defer submit.mu.Unlock()
+	if len(submit.processed) != 1 || submit.processed[0] != "graded-1" {
+		t.Fatalf("processed marks = %v, want [graded-1]", submit.processed)
+	}
+	if submit.markedAfterComplete {
+		t.Fatal("the processed mark was written after Complete")
+	}
+}
+
+// A failed job is not marked: its retry must actually run.
+func TestFailedJobIsNotMarkedProcessed(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.push("broken-1")
+
+	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error {
+		return errors.New("callback unreachable")
+	}}
+	p := newTestPool(submit, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "the failure to be recorded", func() bool {
+		_, failed, _ := submit.snapshot()
+		return len(failed) == 1
+	})
+	stopAccepting()
+	wait(t)
+
+	submit.mu.Lock()
+	defer submit.mu.Unlock()
+	if len(submit.processed) != 0 {
+		t.Fatalf("a failed job was marked processed: %v", submit.processed)
+	}
 }
 
 func TestReleaseInFlightIsSafeWithNothingRunning(t *testing.T) {

@@ -37,6 +37,7 @@ type Queue interface {
 	Release(ctx context.Context, job *queue.Job) error
 	ExtendLock(ctx context.Context, job *queue.Job) (bool, error)
 	RecoverStalled(ctx context.Context) ([]string, error)
+	MarkProcessed(ctx context.Context, job *queue.Job) error
 }
 
 type Options struct {
@@ -234,6 +235,11 @@ func (p *Pool) execute(ctx context.Context, lane Queue, job *queue.Job) {
 		p.active.Add(-1)
 	}()
 
+	if job.ProcessedAt != "" {
+		p.completeProcessed(ctx, lane, job)
+		return
+	}
+
 	renewCtx, stopRenewing := context.WithCancel(ctx)
 	renewed := make(chan struct{})
 	go func() {
@@ -286,11 +292,40 @@ func (p *Pool) execute(ctx context.Context, lane Queue, job *queue.Job) {
 		return
 	}
 
+	// Recorded before Complete, so a worker dying between the two leaves a job
+	// the next claim completes rather than reruns.
+	if err := lane.MarkProcessed(finishCtx, job); err != nil {
+		p.logger.Warn("recording the job as processed failed; a redelivery would rerun it",
+			slog.String("jobId", job.ID),
+			slog.String("error", err.Error()))
+	}
+
 	if err := lane.Complete(finishCtx, job, ""); err != nil {
 		// The result already reached the LMS, so this is a bookkeeping loss
-		// rather than a grading one. Ingest is idempotent, so a redelivery is
-		// harmless.
+		// rather than a grading one. The processed mark keeps a redelivery
+		// from rerunning it, and ingest is idempotent if the mark was lost too.
 		p.logger.Error("marking job complete did not stick",
+			slog.String("jobId", job.ID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// completeProcessed finishes a redelivered job whose result already went out.
+//
+// Rerunning it would be the duplicate that idempotent reprocessing forbids:
+// the program could land on a different verdict the second time — a timing-
+// sensitive case passing where it had failed — and a Run would push a second
+// result to a Coder who already has one.
+func (p *Pool) completeProcessed(ctx context.Context, lane Queue, job *queue.Job) {
+	p.logger.Info("job was already processed; completing without rerunning",
+		slog.String("jobId", job.ID),
+		slog.String("queue", job.Queue),
+		slog.String("processedAt", job.ProcessedAt))
+
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := lane.Complete(finishCtx, job, ""); err != nil {
+		p.logger.Error("completing an already-processed job did not stick",
 			slog.String("jobId", job.ID),
 			slog.String("error", err.Error()))
 	}

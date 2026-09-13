@@ -356,6 +356,54 @@ func TestRepeatedStallsDeferFailureToTheNextClaim(t *testing.T) {
 	}
 }
 
+// A worker that reported and then died before completing leaves a mark the
+// redelivered claim can see.
+func TestProcessedMarkSurvivesRedelivery(t *testing.T) {
+	f := newRedisFixture(t)
+	f.add(t, "done-1", `{"attempts":3}`)
+
+	job := f.claim(t, "done-1")
+	if job.ProcessedAt != "" {
+		t.Fatalf("a fresh job already carries a processed mark: %q", job.ProcessedAt)
+	}
+	if err := f.consumer.MarkProcessed(context.Background(), job); err != nil {
+		t.Fatalf("mark processed: %v", err)
+	}
+
+	// The worker dies before Complete.
+	f.runStalledCheck(t)
+	f.dropLock(t, "done-1")
+	f.runStalledCheck(t)
+
+	redelivered := f.claim(t, "done-1")
+	if redelivered.ProcessedAt == "" {
+		t.Fatal("the redelivered job lost its processed mark")
+	}
+	if err := f.consumer.Complete(context.Background(), redelivered, ""); err != nil {
+		t.Fatalf("complete the redelivered job: %v", err)
+	}
+	if !f.inSortedSet(t, f.keys.completed(), "done-1") {
+		t.Fatal("the redelivered job did not complete")
+	}
+}
+
+// Marking a job that was removed meanwhile must not resurrect its hash.
+func TestMarkProcessedDoesNotRecreateARemovedJob(t *testing.T) {
+	f := newRedisFixture(t)
+	ghost := &Job{ID: "removed-1", Queue: testQueue}
+
+	if err := f.consumer.MarkProcessed(context.Background(), ghost); err != nil {
+		t.Fatalf("mark processed: %v", err)
+	}
+	exists, err := f.client.Exists(context.Background(), f.keys.job("removed-1")).Result()
+	if err != nil {
+		t.Fatalf("exists: %v", err)
+	}
+	if exists != 0 {
+		t.Fatal("marking a removed job recreated its hash")
+	}
+}
+
 // A run job has a single attempt, so one failure is final.
 func TestFailOnASingleAttemptJobIsFinal(t *testing.T) {
 	f := newRedisFixture(t)

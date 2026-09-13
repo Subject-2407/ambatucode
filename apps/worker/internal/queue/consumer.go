@@ -42,9 +42,30 @@ type Job struct {
 	// taking its worker down. BullMQ leaves failing it to whoever claims it
 	// next, and the job must not be processed again.
 	DeferredFailure string
+	// ProcessedAt is set when a worker already finished this job — its result
+	// went out — but the job was redelivered before it could be completed,
+	// typically because that worker died in between. Such a job is completed
+	// again without being run: a second run could reach a different verdict
+	// and would push a duplicate result to the Coder.
+	ProcessedAt string
 
 	opts jobOpts
 }
+
+// processedField is the one field this worker adds to BullMQ's job hash.
+// BullMQ ignores fields it does not know, and the prefix keeps it from ever
+// colliding with one it adds later.
+const processedField = "ambatucodeProcessedAt"
+
+// markProcessedScript refuses to write into a job hash that no longer exists,
+// which would otherwise recreate a one-field orphan of a removed job.
+var markProcessedScript = redis.NewScript(`
+if redis.call("EXISTS", KEYS[1]) == 1 then
+  redis.call("HSET", KEYS[1], ARGV[1], ARGV[2])
+  return 1
+end
+return 0
+`)
 
 // jobOpts is the subset of BullMQ's per-job options the worker has to honour
 // when finishing a job. Retention and retry policy live on the job, not the
@@ -165,6 +186,21 @@ func (c *Consumer) ExtendLock(ctx context.Context, job *Job) (bool, error) {
 	}
 	extended, _ := result.(int64)
 	return extended == 1, nil
+}
+
+// MarkProcessed records that this job's work is done and its result is out.
+//
+// Written between processing and Complete. If the worker dies in that window,
+// the redelivered job carries ProcessedAt and is completed without a rerun.
+// Death before this write still reruns the job, which is safe because result
+// ingest is idempotent — this narrows the duplicate window, it cannot close it.
+func (c *Consumer) MarkProcessed(ctx context.Context, job *Job) error {
+	err := markProcessedScript.Run(ctx, c.client, []string{c.keys.job(job.ID)},
+		processedField, nowMillis()).Err()
+	if err != nil {
+		return fmt.Errorf("mark job %s processed on %s: %w", job.ID, c.queueName, err)
+	}
+	return nil
 }
 
 // RecoverStalled moves jobs whose worker died back to the wait list.
@@ -310,6 +346,7 @@ func (c *Consumer) decodeClaim(result any, token string) (*Job, error) {
 		job.AttemptsMade = atm
 	}
 	job.DeferredFailure = hash["defa"]
+	job.ProcessedAt = hash[processedField]
 	return job, nil
 }
 
