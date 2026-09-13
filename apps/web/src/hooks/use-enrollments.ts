@@ -17,8 +17,14 @@ export const enrollmentKeys = {
     ["enrollments", moduleId, query] as const,
 };
 
-export function useEnrollments(moduleId: string, query: ListEnrollmentsQuery) {
+/**
+ * `enabled` exists for callers that learn the module id from another query.
+ * Without it the first render would ask for `/api/modules//enrollments`, which
+ * is a guaranteed 404 and a request nobody wanted.
+ */
+export function useEnrollments(moduleId: string, query: ListEnrollmentsQuery, enabled = true) {
   return useQuery({
+    enabled: enabled && moduleId !== "",
     queryKey: enrollmentKeys.list(moduleId, query),
     queryFn: ({ signal }) =>
       apiClient.get<Paginated<EnrollmentView>>(`/api/modules/${moduleId}/enrollments`, {

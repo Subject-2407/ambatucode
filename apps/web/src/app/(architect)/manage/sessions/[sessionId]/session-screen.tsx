@@ -49,11 +49,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const readiness = useReadiness(sessionId, stillLive);
   const live = useMonitorSocket({ sessionId });
 
-  const enrollments = useEnrollments(session.data?.moduleId ?? "", {
-    page: 1,
-    pageSize: 100,
-    status: "APPROVED",
-  });
+  // The module id arrives with the session, so this waits rather than asking
+  // for an enrollment list under an empty id.
+  const enrollments = useEnrollments(
+    session.data?.moduleId ?? "",
+    { page: 1, pageSize: 100, status: "APPROVED" },
+    editable,
+  );
 
   const [warning, setWarning] = useState<SessionCounts | null>(null);
   const start = useStartSession(sessionId);
