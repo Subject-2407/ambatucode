@@ -32,37 +32,100 @@ func New(box *sandbox.Sandbox, logger *slog.Logger) *Runner {
 
 // Run executes a job and always returns a reportable result.
 //
-// An infrastructure failure becomes a SYSTEM_ERROR result rather than an
-// error return: a submission with no result at all is worse than one marked
-// as having failed inside the platform.
+// An infrastructure failure becomes a SYSTEM_ERROR result rather than an error
+// return: a submission with no result at all is worse than one marked as
+// having failed inside the platform.
 func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
-	spec, err := language.Lookup(job.Language)
+	base, err := language.Lookup(job.Language)
 	if err != nil {
 		return r.systemError(job, err)
 	}
+	// Java needs the file named after the public class the program declares.
+	// Every other language ignores its source here.
+	spec := base.For(job.SourceCode)
 
-	workspace := []sandbox.File{{Name: spec.SourceFile, Content: []byte(job.SourceCode)}}
+	session, err := r.sandbox.Open(ctx, sandbox.SessionSpec{
+		JobID:          job.JobID,
+		Image:          spec.Image,
+		WallTimeout:    time.Duration(job.Limits.WallTimeoutMs) * time.Millisecond,
+		MemoryLimitMb:  job.Limits.MemoryLimitMb,
+		MaxProcesses:   job.Limits.MaxProcesses,
+		MaxOutputBytes: job.Limits.MaxOutputBytes,
+	})
+	if err != nil {
+		return r.systemError(job, err)
+	}
+	defer session.Close()
 
-	// A job with no cases still runs once, so a program that cannot start is
-	// reported as a runtime failure instead of a silent pass.
-	cases := job.TestCases
-	if len(cases) == 0 {
-		outcome, err := r.runOnce(ctx, job, spec, workspace, "")
+	if err := session.Write(ctx, sandbox.File{
+		Name:    spec.SourceFile,
+		Content: []byte(job.SourceCode),
+	}); err != nil {
+		return r.systemError(job, err)
+	}
+
+	result := baseResult(job)
+
+	if spec.Compiled() {
+		outcome, err := session.Run(ctx, sandbox.ExecSpec{
+			Cmd:     spec.CompileCmd,
+			Timeout: time.Duration(job.Limits.CompileTimeoutMs) * time.Millisecond,
+		})
 		if err != nil {
 			return r.systemError(job, err)
 		}
-		result := baseResult(job)
+
+		// A compiler writes its diagnostics to stderr and says nothing useful
+		// on stdout, so both are folded into one field the Coder can read.
+		compilerOutput := strings.TrimSpace(outcome.Stderr + outcome.Stdout)
+		if compilerOutput != "" {
+			sanitized := excerpt(compilerOutput, outcome.StderrTruncated || outcome.StdoutTruncated)
+			result.CompilerOutput = &sanitized
+		}
+
+		if status, failed := classifyCompile(outcome); failed {
+			// Nothing ran, so there are no test results to report — only why
+			// the program never got as far as running.
+			result.Status = status
+			result.ExecutionTimeMs = float64(outcome.Duration.Milliseconds())
+			return result
+		}
+	}
+
+	return r.runCases(ctx, job, spec, session, result)
+}
+
+// runCases executes every test case in the already-prepared session.
+func (r *Runner) runCases(
+	ctx context.Context,
+	job contract.Job,
+	spec language.Spec,
+	session *sandbox.Session,
+	result contract.Result,
+) contract.Result {
+	caseTimeout := time.Duration(job.Limits.RunTimeoutMs) * time.Millisecond
+
+	// A job with no cases still runs once, so a program that cannot start is
+	// reported as a runtime failure instead of a silent pass.
+	if len(job.TestCases) == 0 {
+		outcome, err := session.Run(ctx, sandbox.ExecSpec{Cmd: spec.RunCmd, Timeout: caseTimeout})
+		if err != nil {
+			return r.systemError(job, err)
+		}
 		result.Status = classify(outcome)
 		result.ExecutionTimeMs = float64(outcome.Duration.Milliseconds())
 		return result
 	}
 
-	result := baseResult(job)
-	var worst contract.Status = contract.StatusGraded
+	worst := contract.StatusGraded
 	var totalDuration time.Duration
 
-	for _, testCase := range cases {
-		outcome, err := r.runOnce(ctx, job, spec, workspace, testCase.Input)
+	for _, testCase := range job.TestCases {
+		outcome, err := session.Run(ctx, sandbox.ExecSpec{
+			Cmd:     spec.RunCmd,
+			Stdin:   testCase.Input,
+			Timeout: caseTimeout,
+		})
 		if err != nil {
 			return r.systemError(job, err)
 		}
@@ -73,7 +136,9 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 
 		passed := false
 		if status == contract.StatusGraded {
-			matched, compareErr := grader.Compare(testCase.Comparison, testCase.ExpectedOutput, outcome.Stdout)
+			matched, compareErr := grader.Compare(
+				testCase.Comparison, testCase.ExpectedOutput, outcome.Stdout,
+			)
 			if compareErr != nil {
 				return r.systemError(job, compareErr)
 			}
@@ -90,6 +155,15 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 			StdoutExcerpt:   excerpt(outcome.Stdout, outcome.StdoutTruncated),
 			StderrExcerpt:   excerpt(outcome.Stderr, outcome.StderrTruncated),
 		})
+
+		// A memory kill or a timeout ends the job rather than rolling on to the
+		// next case. The container's OOM state is sticky once its cgroup has
+		// fired, so every later case would inherit a verdict that is no longer
+		// about it — and a wall-clock kill has already destroyed the container
+		// the remaining cases would need.
+		if status == contract.StatusMemoryLimitExceeded || status == contract.StatusTimeLimitExceeded {
+			break
+		}
 	}
 
 	result.Status = worst
@@ -97,31 +171,26 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 	return result
 }
 
-// runOnce executes one container. A fresh container per test case keeps the
-// "one container per execution" rule trivially true — no state can survive
-// from one case to the next.
-func (r *Runner) runOnce(
-	ctx context.Context,
-	job contract.Job,
-	spec language.Spec,
-	workspace []sandbox.File,
-	stdin string,
-) (sandbox.RunOutcome, error) {
-	return r.sandbox.Run(ctx, sandbox.RunSpec{
-		JobID:          job.JobID,
-		Image:          spec.Image,
-		Cmd:            spec.RunCmd,
-		Workspace:      workspace,
-		Stdin:          stdin,
-		WallTimeout:    time.Duration(job.Limits.WallTimeoutMs) * time.Millisecond,
-		MemoryLimitMb:  job.Limits.MemoryLimitMb,
-		MaxProcesses:   job.Limits.MaxProcesses,
-		MaxOutputBytes: job.Limits.MaxOutputBytes,
-	})
+// classifyCompile maps a build step's outcome, and reports whether it failed.
+//
+// A compiler that exceeds the wall clock or the memory limit is not a
+// COMPILE_ERROR: the program was never judged, and telling a Coder their code
+// does not compile when the platform ran out of time would be a lie.
+func classifyCompile(outcome sandbox.RunOutcome) (contract.Status, bool) {
+	switch {
+	case outcome.TimedOut:
+		return contract.StatusTimeLimitExceeded, true
+	case outcome.OOMKilled:
+		return contract.StatusMemoryLimitExceeded, true
+	case outcome.ExitCode != 0:
+		return contract.StatusCompileError, true
+	default:
+		return contract.StatusGraded, false
+	}
 }
 
-// classify maps one container outcome to a status, in the documented
-// precedence. OOM is read from the daemon's flag rather than guessed from an
+// classify maps one execution outcome to a status, in the documented
+// precedence. OOM is read from the daemon's state rather than guessed from an
 // exit code, because a memory kill and an ordinary SIGKILL both surface as 137.
 func classify(outcome sandbox.RunOutcome) contract.Status {
 	switch {
@@ -179,9 +248,10 @@ func excerpt(value string, alreadyTruncated bool) string {
 
 // sanitize strips paths that describe the sandbox's insides.
 //
-// A Python traceback names `/workspace/main.py`; leaking the container
-// filesystem layout to a Coder tells them where to aim. The file name itself
-// is kept because it is the only thing that makes a traceback readable.
+// A Python traceback names `/workspace/main.py` and a g++ diagnostic names
+// `/workspace/main.cpp`; leaking the container filesystem layout to a Coder
+// tells them where to aim. The file name itself is kept because it is the only
+// thing that makes a traceback or a compiler error readable.
 func sanitize(value string) string {
 	return strings.ReplaceAll(value, language.WorkspaceDir+"/", "")
 }

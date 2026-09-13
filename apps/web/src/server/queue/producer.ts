@@ -98,14 +98,20 @@ export async function enqueueExecutionJob(
 
   const parsed = executionJobSchema.parse(job);
 
-  // The schema accepts every language the product knows about; only some of
-  // them have a sandbox image. Refusing here turns a mis-configured Assessment
-  // into an immediate, explainable rejection instead of a SYSTEM_ERROR the
-  // Coder discovers after their attempt is already spent.
-  if (!isExecutableLanguage(parsed.language)) {
+  // The schema accepts every language the product knows about; only those with
+  // a built sandbox image can run. Refusing here turns a mis-configured
+  // Assessment into an immediate, explainable rejection instead of a
+  // SYSTEM_ERROR the Coder discovers after their attempt is already spent.
+  //
+  // Widened to a string on purpose. The two lists agree today, so the compiler
+  // can prove this branch unreachable and types the value as `never` — but the
+  // guard is a runtime fact about which images were built, not a proof, and it
+  // is the only thing that would catch one being dropped.
+  const requested: string = parsed.language;
+  if (!isExecutableLanguage(requested)) {
     throw new AppError(
       "LANGUAGE_NOT_ALLOWED",
-      `No execution environment is available for ${parsed.language}`,
+      `No execution environment is available for ${requested}`,
     );
   }
 

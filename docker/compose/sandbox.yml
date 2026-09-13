@@ -26,3 +26,21 @@ services:
     # file — execution containers exist only for the lifetime of one job and
     # are created by the worker with --network none and the rest of the
     # sandbox controls applied.
+
+  javascript:
+    image: ambatucode/sandbox-javascript:22
+    build:
+      context: ../..
+      dockerfile: docker/sandbox/javascript.Dockerfile
+
+  java:
+    image: ambatucode/sandbox-java:21
+    build:
+      context: ../..
+      dockerfile: docker/sandbox/java.Dockerfile
+
+  cpp:
+    image: ambatucode/sandbox-cpp:12
+    build:
+      context: ../..
+      dockerfile: docker/sandbox/cpp.Dockerfile

@@ -120,3 +120,83 @@ func errorWithWorkspacePath() error { return pathError{} }
 func newTestRunner() *Runner {
 	return New(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
+
+// A build step fails differently from a program that ran and crashed, and the
+// difference matters to the person reading the result: COMPILE_ERROR means
+// "your code does not build", while a timeout or a memory kill during
+// compilation means the platform never got far enough to judge it. Telling a
+// Coder their code does not compile when the compiler ran out of time would be
+// a lie about their work.
+func TestClassifyCompileSeparatesBuildFailureFromPlatformLimits(t *testing.T) {
+	cases := []struct {
+		name       string
+		outcome    sandbox.RunOutcome
+		wantStatus contract.Status
+		wantFailed bool
+	}{
+		{"clean build", sandbox.RunOutcome{ExitCode: 0}, contract.StatusGraded, false},
+		{"syntax error", sandbox.RunOutcome{ExitCode: 1}, contract.StatusCompileError, true},
+		{
+			"compiler ran out of time",
+			sandbox.RunOutcome{TimedOut: true, ExitCode: 137},
+			contract.StatusTimeLimitExceeded,
+			true,
+		},
+		{
+			"compiler ran out of memory",
+			sandbox.RunOutcome{OOMKilled: true, ExitCode: 137},
+			contract.StatusMemoryLimitExceeded,
+			true,
+		},
+		{
+			// Both kills surface as 137; ours fired first, so it wins.
+			"timeout outranks oom",
+			sandbox.RunOutcome{TimedOut: true, OOMKilled: true},
+			contract.StatusTimeLimitExceeded,
+			true,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			status, failed := classifyCompile(testCase.outcome)
+			if status != testCase.wantStatus || failed != testCase.wantFailed {
+				t.Fatalf(
+					"classifyCompile = (%s, %v), want (%s, %v)",
+					status, failed, testCase.wantStatus, testCase.wantFailed,
+				)
+			}
+		})
+	}
+}
+
+// COMPILE_ERROR outranks every ordinary run failure: a program that never
+// built cannot also have crashed, and the compiler's message is the only thing
+// worth reporting.
+func TestCompileErrorOutranksRunFailures(t *testing.T) {
+	for _, lesser := range []contract.Status{
+		contract.StatusGraded,
+		contract.StatusRuntimeError,
+		contract.StatusMemoryLimitExceeded,
+		contract.StatusTimeLimitExceeded,
+	} {
+		if got := escalate(lesser, contract.StatusCompileError); got != contract.StatusCompileError {
+			t.Fatalf("escalate(%s, COMPILE_ERROR) = %s", lesser, got)
+		}
+	}
+}
+
+// A g++ diagnostic names the source file by its full path inside the sandbox.
+// The name is what makes the error readable; the directory tells a Coder where
+// the container keeps things.
+func TestCompilerOutputIsSanitizedBeforeItReachesACoder(t *testing.T) {
+	diagnostic := language.WorkspaceDir + "/main.cpp:4:5: error: 'x' was not declared in this scope"
+
+	cleaned := excerpt(diagnostic, false)
+	if strings.Contains(cleaned, language.WorkspaceDir) {
+		t.Fatalf("workspace path survived: %q", cleaned)
+	}
+	if !strings.Contains(cleaned, "main.cpp:4:5") {
+		t.Fatalf("expected the file and line to be kept: %q", cleaned)
+	}
+}

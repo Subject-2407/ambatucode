@@ -9,6 +9,16 @@
 //	docker compose -f docker/compose/sandbox.yml build
 //	go test -tags docker ./internal/sandbox/
 //
+// Run the Docker-tagged packages one at a time:
+//
+//	go test -tags docker -p 1 ./...
+//
+// The -p 1 is not optional. Go runs packages in parallel by default, and the
+// container sweep these tests rely on finds containers by label across the
+// whole daemon — so a sweep in one package deletes the live containers of
+// another, and the failure surfaces as a program that mysteriously died
+// mid-run rather than as anything resembling its cause.
+//
 // These assert the controls that cannot be verified any other way. A unit test
 // can check that NetworkMode is set to "none"; only a container can prove that
 // a socket actually fails to open.
@@ -44,9 +54,23 @@ func newTestSandbox(t *testing.T) *Sandbox {
 	return box
 }
 
-func pythonSpec(source string, stdin string) RunSpec {
-	return RunSpec{
-		JobID:          "integration",
+// runSpec is one whole execution as these tests describe it: a container, a
+// workspace, and a single command. Production opens a session and runs several
+// commands in it — a compile then each test case — so this collapses that into
+// the one-shot shape the assertions below are written against.
+type runSpec struct {
+	Image          string
+	Cmd            []string
+	Workspace      []File
+	Stdin          string
+	WallTimeout    time.Duration
+	MemoryLimitMb  int64
+	MaxProcesses   int64
+	MaxOutputBytes int64
+}
+
+func pythonSpec(source string, stdin string) runSpec {
+	return runSpec{
 		Image:          testImage,
 		Cmd:            []string{"python3", workspaceDir + "/main.py"},
 		Workspace:      []File{{Name: "main.py", Content: []byte(source)}},
@@ -58,12 +82,35 @@ func pythonSpec(source string, stdin string) RunSpec {
 	}
 }
 
-func run(t *testing.T, box *Sandbox, spec RunSpec) RunOutcome {
+func run(t *testing.T, box *Sandbox, spec runSpec) RunOutcome {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	outcome, err := box.Run(ctx, spec)
+	session, err := box.Open(ctx, SessionSpec{
+		JobID:          "integration",
+		Image:          spec.Image,
+		WallTimeout:    spec.WallTimeout,
+		MemoryLimitMb:  spec.MemoryLimitMb,
+		MaxProcesses:   spec.MaxProcesses,
+		MaxOutputBytes: spec.MaxOutputBytes,
+	})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	defer session.Close()
+
+	for _, file := range spec.Workspace {
+		if err := session.Write(ctx, file); err != nil {
+			t.Fatalf("write workspace: %v", err)
+		}
+	}
+
+	outcome, err := session.Run(ctx, ExecSpec{
+		Cmd:     spec.Cmd,
+		Stdin:   spec.Stdin,
+		Timeout: spec.WallTimeout,
+	})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

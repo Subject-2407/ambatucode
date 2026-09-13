@@ -116,8 +116,17 @@ export function isLanguage(value: string): value is Language {
  * language nothing can execute, and the Coder discovers it as a SYSTEM_ERROR
  * after spending an attempt — a failure that surfaces at the worst possible
  * moment and looks like their fault.
+ *
+ * The two lists happen to agree today. Keeping them apart still earns its
+ * keep: it is what lets a language be added to the vocabulary before its image
+ * exists, and it is the only thing that would catch an image being dropped.
  */
-export const EXECUTABLE_LANGUAGES = ["python"] as const satisfies readonly Language[];
+export const EXECUTABLE_LANGUAGES = [
+  "python",
+  "javascript",
+  "java",
+  "cpp",
+] as const satisfies readonly Language[];
 
 /**
  * Narrower than `Language` on purpose. `satisfies` still rejects an entry that

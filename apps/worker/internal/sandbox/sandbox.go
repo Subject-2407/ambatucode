@@ -34,7 +34,7 @@ const (
 	sandboxUser   = "65534:65534"
 	sandboxUID    = 65534
 	workspaceDir  = "/workspace"
-	workspaceSize = "8m"
+	workspaceSize = "64m"
 
 	// tmpfsTmp caps the general scratch path. noexec stops a program from
 	// writing a payload and executing it; the size cap stops it from filling
@@ -50,31 +50,36 @@ const (
 	keeperMargin = 30 * time.Second
 )
 
-// File is one workspace entry written into the container before the run.
+// File is one workspace entry written into the container before a run.
 type File struct {
 	Name    string
 	Content []byte
 }
 
-// RunSpec fully describes one execution. There is no field here that can turn
-// off a security control — those are not configurable.
-type RunSpec struct {
+// SessionSpec describes the container one job runs in. There is no field here
+// that can turn off a security control — those are not configurable.
+type SessionSpec struct {
 	JobID string
 	Image string
-	// Cmd is an argument vector. Participant source code is never part of it,
-	// and it is never handed to a shell.
-	Cmd []string
-	// Workspace is written into the scratch mount before Cmd runs.
-	Workspace []File
-	Stdin     string
 
+	// WallTimeout is the budget for the entire job: the compile step plus
+	// every test case. The keeper process outlives it by a fixed margin.
 	WallTimeout    time.Duration
 	MemoryLimitMb  int64
 	MaxProcesses   int64
 	MaxOutputBytes int64
 }
 
-// RunOutcome is the raw result of one container run. Classifying it into a
+// ExecSpec is one command inside an open session.
+type ExecSpec struct {
+	// Cmd is an argument vector. Participant source code is never part of it,
+	// and it is never handed to a shell.
+	Cmd     []string
+	Stdin   string
+	Timeout time.Duration
+}
+
+// RunOutcome is the raw result of one execution. Classifying it into a
 // submission status is the runner's job, not the sandbox's.
 type RunOutcome struct {
 	ExitCode        int
@@ -85,7 +90,7 @@ type RunOutcome struct {
 	// OOMKilled comes from the daemon's own accounting. An exit code alone
 	// cannot distinguish a memory kill from an ordinary crash.
 	OOMKilled bool
-	// TimedOut means our wall deadline fired before the program exited.
+	// TimedOut means our deadline fired before the program exited.
 	TimedOut bool
 	Duration time.Duration
 }
@@ -131,63 +136,80 @@ func (s *Sandbox) EnsureImages(ctx context.Context, images []string) error {
 	return nil
 }
 
-// Run executes one job in a single-use container and returns its raw outcome.
+// Session is one container, held open for the duration of one job.
 //
-// The container is removed on every path out of this function, including
-// panic, timeout, and a daemon error mid-run. The reaper is the safety net for
-// a crashed worker, not the primary mechanism.
+// One container per *execution* rather than per test case is a deliberate
+// choice and the only shape in which a compile step can exist: a compiled
+// artifact lives in the container's scratch mount, so compiling in one
+// container and running in another would mean carrying binaries between them.
+// Reuse is confined to a single submission's own cases, so nothing can travel
+// from one participant to another — which is the isolation that matters.
 //
-// The shape here is dictated by a hard constraint: Docker refuses to copy into
-// a container whose root filesystem is read-only, and the read-only root is
-// non-negotiable. So the workspace is delivered the only remaining way that
-// does not bind-mount a host path — written into a writable scratch tmpfs
-// through an exec whose stdin carries the content. Participant source is never
-// part of an argument vector and never reaches a shell.
-func (s *Sandbox) Run(ctx context.Context, spec RunSpec) (RunOutcome, error) {
-	created, err := s.create(ctx, spec)
-	if err != nil {
-		return RunOutcome{}, err
-	}
-
-	defer func() {
-		// A fresh context: the run context may already be cancelled, and
-		// cleanup must not be skipped because the job timed out.
-		removeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := s.client.ContainerRemove(removeCtx, created, container.RemoveOptions{
-			Force:         true,
-			RemoveVolumes: true,
-		}); err != nil && !client.IsErrNotFound(err) {
-			// Losing a container is a leak, not a grading failure — the job's
-			// result still stands. Log it so the reaper's work is visible.
-			s.logger.Error("remove container failed",
-				slog.String("jobId", spec.JobID),
-				slog.String("containerId", created),
-				slog.String("error", err.Error()))
-		}
-	}()
-
-	if err := s.client.ContainerStart(ctx, created, container.StartOptions{}); err != nil {
-		return RunOutcome{}, fmt.Errorf("start container: %w", err)
-	}
-
-	for _, file := range spec.Workspace {
-		if err := s.writeWorkspaceFile(ctx, created, file); err != nil {
-			return RunOutcome{}, err
-		}
-	}
-
-	return s.execute(ctx, created, spec)
+// The container is created fresh here and destroyed in Close, on every path
+// out including panic and timeout. The reaper is the safety net for a crashed
+// worker, not the primary mechanism.
+type Session struct {
+	box            *Sandbox
+	id             string
+	jobID          string
+	maxOutputBytes int64
 }
 
-func (s *Sandbox) create(ctx context.Context, spec RunSpec) (string, error) {
+// Open creates the container and starts its keeper process.
+func (s *Sandbox) Open(ctx context.Context, spec SessionSpec) (*Session, error) {
+	id, err := s.create(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+		s.remove(id, spec.JobID)
+		return nil, fmt.Errorf("start container: %w", err)
+	}
+
+	return &Session{box: s, id: id, jobID: spec.JobID, maxOutputBytes: spec.MaxOutputBytes}, nil
+}
+
+// ContainerID is diagnostic only; it appears in structured logs.
+func (sn *Session) ContainerID() string { return sn.id }
+
+// Close removes the container. Safe to call twice.
+func (sn *Session) Close() {
+	if sn.id == "" {
+		return
+	}
+	sn.box.remove(sn.id, sn.jobID)
+	sn.id = ""
+}
+
+func (s *Sandbox) remove(id, jobID string) {
+	// A fresh context: the job's context may already be cancelled, and cleanup
+	// must not be skipped because the job timed out.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err := s.client.ContainerRemove(ctx, id, container.RemoveOptions{
+		Force:         true,
+		RemoveVolumes: true,
+	})
+	if err != nil && !client.IsErrNotFound(err) {
+		// Losing a container is a leak, not a grading failure — the job's
+		// result still stands. Log it so the reaper's work is visible.
+		s.logger.Error("remove container failed",
+			slog.String("jobId", jobID),
+			slog.String("containerId", id),
+			slog.String("error", err.Error()))
+	}
+}
+
+func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) {
 	pids := spec.MaxProcesses
 	memoryBytes := spec.MemoryLimitMb * 1024 * 1024
 
 	// The container's own process is a keeper that outlives the job's wall
-	// clock, so the deadline that fires is always ours. The participant's
-	// program runs as an exec inside it, sharing the same cgroup — which is
-	// what keeps the memory and pid limits meaningful.
+	// clock, so the deadline that fires is always ours. Participant code runs
+	// as an exec inside it, sharing the same cgroup — which is what keeps the
+	// memory and pid limits meaningful.
 	keeperSeconds := int64((spec.WallTimeout + keeperMargin).Seconds())
 
 	config := &container.Config{
@@ -209,12 +231,22 @@ func (s *Sandbox) create(ctx context.Context, spec RunSpec) (string, error) {
 		ReadonlyRootfs: true,
 		Tmpfs: map[string]string{
 			"/tmp": tmpfsTmp,
-			// Owned by the sandbox user so the workspace can be written, and
-			// noexec so a program cannot drop a binary here and run it. The
+			// Owned by the sandbox user so the workspace can be written; the
 			// mountpoint's own mode in the image would otherwise win and leave
-			// this unwritable.
+			// this unwritable under the read-only root.
+			//
+			// `exec` is stated explicitly because Docker mounts a tmpfs noexec
+			// by default, and a compiled language has to run the binary it just
+			// produced. This is the one writable path in the container that can
+			// execute, and it is a real narrowing of defence in depth — so /tmp,
+			// where a running program naturally writes, keeps its noexec. What
+			// it does not weaken is the boundary that matters: participant code
+			// already runs arbitrary logic here by design, and the controls that
+			// stop it going further — no network, no capabilities, non-root,
+			// no-new-privileges, a read-only root, and the cgroup limits — are
+			// all untouched by whether this mount can exec.
 			workspaceDir: fmt.Sprintf(
-				"rw,noexec,nosuid,size=%s,uid=%d,gid=%d,mode=0700",
+				"rw,exec,nosuid,size=%s,uid=%d,gid=%d,mode=0700",
 				workspaceSize, sandboxUID, sandboxUID,
 			),
 		},
@@ -225,8 +257,8 @@ func (s *Sandbox) create(ctx context.Context, spec RunSpec) (string, error) {
 		// work.
 		SecurityOpt: []string{"no-new-privileges"},
 		// AutoRemove is deliberately off. It would delete the container before
-		// the OOMKilled flag could be read, and that flag is the only reliable
-		// way to tell a memory kill from an ordinary crash.
+		// the OOMKilled state could be read, and that state is the only
+		// reliable way to tell a memory kill from an ordinary crash.
 		AutoRemove: false,
 		Resources: container.Resources{
 			Memory: memoryBytes,
@@ -237,7 +269,7 @@ func (s *Sandbox) create(ctx context.Context, spec RunSpec) (string, error) {
 			PidsLimit:  &pids,
 			Ulimits: []*units.Ulimit{
 				{Name: "nofile", Soft: nofileLimit, Hard: nofileLimit},
-				{Name: "fsize", Soft: spec.MaxOutputBytes, Hard: spec.MaxOutputBytes},
+				{Name: "fsize", Soft: maxFileSize(spec), Hard: maxFileSize(spec)},
 			},
 		},
 	}
@@ -251,15 +283,32 @@ func (s *Sandbox) create(ctx context.Context, spec RunSpec) (string, error) {
 	return created.ID, nil
 }
 
-// writeWorkspaceFile streams one file into the scratch mount.
+// maxFileSize bounds any single file the job can write.
 //
-// The content travels on the exec's stdin, never in the argument vector, so
-// participant source is not exposed to any parsing on the way in.
-func (s *Sandbox) writeWorkspaceFile(ctx context.Context, containerID string, file File) error {
+// It cannot simply be maxOutputBytes: a compiler writes an object file and a
+// binary far larger than any program's stdout, and an fsize ulimit at the
+// output cap would fail every C++ and Java compile with a truncated artifact.
+// The tmpfs size cap is what bounds total disk use; this bounds one file.
+func maxFileSize(spec SessionSpec) int64 {
+	const compileArtifactCeiling = 64 * 1024 * 1024
+	if spec.MaxOutputBytes > compileArtifactCeiling {
+		return spec.MaxOutputBytes
+	}
+	return compileArtifactCeiling
+}
+
+// Write streams one file into the scratch mount.
+//
+// The content travels on an exec's stdin, never in the argument vector, so
+// participant source is not exposed to any parsing on the way in. Docker
+// refuses to copy into a container whose root filesystem is read-only, and
+// that read-only root is not negotiable, so this is how a workspace gets in
+// without ever bind-mounting a host path.
+func (sn *Session) Write(ctx context.Context, file File) error {
 	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	result, err := s.exec(writeCtx, containerID, execRequest{
+	result, err := sn.box.exec(writeCtx, sn.id, execRequest{
 		cmd:       []string{"tee", workspaceDir + "/" + file.Name},
 		stdin:     string(file.Content),
 		outputCap: 4096,
@@ -275,15 +324,16 @@ func (s *Sandbox) writeWorkspaceFile(ctx context.Context, containerID string, fi
 	return nil
 }
 
-func (s *Sandbox) execute(ctx context.Context, containerID string, spec RunSpec) (RunOutcome, error) {
-	runCtx, cancel := context.WithTimeout(ctx, spec.WallTimeout)
+// Run executes one command in the session and reports its raw outcome.
+func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
+	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 
 	startedAt := time.Now()
-	result, err := s.exec(runCtx, containerID, execRequest{
+	result, err := sn.box.exec(runCtx, sn.id, execRequest{
 		cmd:       spec.Cmd,
 		stdin:     spec.Stdin,
-		outputCap: spec.MaxOutputBytes,
+		outputCap: sn.maxOutputBytes,
 	})
 	duration := time.Since(startedAt)
 
@@ -299,10 +349,10 @@ func (s *Sandbox) execute(ctx context.Context, containerID string, spec RunSpec)
 		outcome.TimedOut = true
 		killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer killCancel()
-		if killErr := s.client.ContainerKill(killCtx, containerID, "SIGKILL"); killErr != nil &&
+		if killErr := sn.box.client.ContainerKill(killCtx, sn.id, "SIGKILL"); killErr != nil &&
 			!client.IsErrNotFound(killErr) {
-			s.logger.Warn("kill timed-out container failed",
-				slog.String("jobId", spec.JobID),
+			sn.box.logger.Warn("kill timed-out container failed",
+				slog.String("jobId", sn.jobID),
 				slog.String("error", killErr.Error()))
 		}
 	} else {
@@ -311,20 +361,31 @@ func (s *Sandbox) execute(ctx context.Context, containerID string, spec RunSpec)
 
 	outcome.Stdout, outcome.StdoutTruncated = result.stdout, result.stdoutTruncated
 	outcome.Stderr, outcome.StderrTruncated = result.stderr, result.stderrTruncated
-
-	// Read the memory verdict from the daemon rather than inferring it. The
-	// flag is set on the container even when the OOM killer took the exec'd
-	// process and left the keeper running. A fresh context: runCtx may already
-	// be past its deadline.
-	inspectCtx, inspectCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer inspectCancel()
-	if inspected, err := s.client.ContainerInspect(inspectCtx, containerID); err == nil {
-		if inspected.State != nil {
-			outcome.OOMKilled = inspected.State.OOMKilled
-		}
-	}
+	outcome.OOMKilled = sn.oomKilled()
 
 	return outcome, nil
+}
+
+// oomKilled reads the memory verdict from the daemon rather than inferring it.
+//
+// The flag is set on the container even when the OOM killer took an exec'd
+// process and left the keeper running, and an exit code alone cannot tell a
+// memory kill from an ordinary SIGKILL — both surface as 137.
+//
+// It is also sticky: once the cgroup has OOMed the flag stays set for the life
+// of the container. That is why the runner stops the job at the first memory
+// kill rather than continuing to later cases, whose outcome this could no
+// longer describe honestly.
+func (sn *Session) oomKilled() bool {
+	// A fresh context: the run context may already be past its deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	inspected, err := sn.box.client.ContainerInspect(ctx, sn.id)
+	if err != nil || inspected.State == nil {
+		return false
+	}
+	return inspected.State.OOMKilled
 }
 
 type execRequest struct {
