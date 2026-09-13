@@ -29,12 +29,19 @@ producer's own library runs removes that entire class of bug.
 | `moveJobFromActiveToWait-9.lua` | return an unfinished job on shutdown |
 | `moveToDelayed-12.lua`          | retry a failed job after its backoff |
 | `retryJob-11.lua`               | retry a failed job with no backoff   |
+| `extendLock-2.lua`              | renew a running job's lock           |
+| `moveStalledJobsToWait-9.lua`   | recover jobs from a dead worker      |
 
 A failure is not always a `moveToFinished` to `failed`. BullMQ decides on the
 Node side, in `Job.moveToFailed`, whether a job still has attempts left and
 which of the two retry scripts to run. The worker mirrors that decision in
 `consumer.go`; finishing straight to `failed` would silently ignore the
 `attempts` and `backoff` the producer set.
+
+A job that stalls more than `maxStalledCount` times is likewise not failed by
+the stalled check itself: the script marks it with `defa` and moves it back to
+wait, and whichever worker claims it next must fail it without running it.
+`Job.DeferredFailure` carries that mark.
 
 The `-N` suffix is the number of KEYS the script expects, taken from BullMQ's
 own declaration rather than counted by hand. `loader.go` parses it back out, so

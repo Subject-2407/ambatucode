@@ -37,6 +37,11 @@ type Job struct {
 	// AttemptsMade counts finished attempts before this one, from the hash's
 	// `atm` field. It is what decides whether a failure is retried.
 	AttemptsMade int
+	// DeferredFailure is set when the stalled check gave up on this job — it
+	// stalled more often than the limit allows, usually because it keeps
+	// taking its worker down. BullMQ leaves failing it to whoever claims it
+	// next, and the job must not be processed again.
+	DeferredFailure string
 
 	opts jobOpts
 }
@@ -62,6 +67,18 @@ type FailOutcome struct {
 	Delay time.Duration
 }
 
+// Settings are the BullMQ worker options this consumer honours.
+type Settings struct {
+	// LockDuration is how long a claim or a renewal keeps a job owned.
+	LockDuration time.Duration
+	// StalledInterval is both how often the stalled check may run and how long
+	// the queue-wide guard stops another worker repeating it sooner.
+	StalledInterval time.Duration
+	// MaxStalledCount is how many times a job may be recovered from a dead
+	// worker before it is failed instead. BullMQ's default is 1.
+	MaxStalledCount int
+}
+
 // Consumer claims and finishes jobs on one BullMQ queue.
 type Consumer struct {
 	client    redis.UniversalClient
@@ -69,21 +86,23 @@ type Consumer struct {
 	queueName string
 	// workerName is recorded on the job as `pb` (processed by), which is what
 	// BullMQ's UI shows. Purely diagnostic.
-	workerName   string
-	lockDuration time.Duration
+	workerName string
+	settings   Settings
 
 	moveToActive     script
 	moveToFinished   script
 	moveActiveToWait script
 	moveToDelayed    script
 	retryJob         script
+	extendLock       script
+	moveStalled      script
 }
 
 // NewConsumer loads the vendored scripts and binds them to one queue.
 func NewConsumer(
 	client redis.UniversalClient,
 	prefix, queueName, workerName string,
-	lockDuration time.Duration,
+	settings Settings,
 ) (*Consumer, error) {
 	moveToActive, err := loadScript("moveToActive-11.lua")
 	if err != nil {
@@ -105,19 +124,80 @@ func NewConsumer(
 	if err != nil {
 		return nil, err
 	}
+	extendLock, err := loadScript("extendLock-2.lua")
+	if err != nil {
+		return nil, err
+	}
+	moveStalled, err := loadScript("moveStalledJobsToWait-9.lua")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Consumer{
 		client:           client,
 		keys:             newKeys(prefix, queueName),
 		queueName:        queueName,
 		workerName:       workerName,
-		lockDuration:     lockDuration,
+		settings:         settings,
 		moveToActive:     moveToActive,
 		moveToFinished:   moveToFinished,
 		moveActiveToWait: moveActiveToWait,
 		moveToDelayed:    moveToDelayed,
 		retryJob:         retryJob,
+		extendLock:       extendLock,
+		moveStalled:      moveStalled,
 	}, nil
+}
+
+// ExtendLock renews this worker's ownership of a running job.
+//
+// It returns false, without an error, when the lock is no longer ours: it
+// expired and another worker may already have reclaimed the job. That is the
+// failure mode renewal exists to prevent — a long compile outliving its lock
+// and the same submission graded twice.
+func (c *Consumer) ExtendLock(ctx context.Context, job *Job) (bool, error) {
+	result, err := c.eval(ctx, c.extendLock, []string{
+		c.keys.lock(job.ID),
+		c.keys.stalled(),
+	}, job.Token, c.settings.LockDuration.Milliseconds(), job.ID)
+	if err != nil {
+		return false, fmt.Errorf("extend lock for job %s on %s: %w", job.ID, c.queueName, err)
+	}
+	extended, _ := result.(int64)
+	return extended == 1, nil
+}
+
+// RecoverStalled moves jobs whose worker died back to the wait list.
+//
+// BullMQ's check is two-phase: each pass recovers jobs that were marked on the
+// previous pass and still hold no lock, then marks every active job for the
+// next pass. A live worker's renewal clears its mark in between. The script
+// itself guards against running more than once per StalledInterval across all
+// workers, so calling it from every worker is safe.
+func (c *Consumer) RecoverStalled(ctx context.Context) ([]string, error) {
+	result, err := c.eval(ctx, c.moveStalled, []string{
+		c.keys.stalled(),
+		c.keys.wait(),
+		c.keys.active(),
+		c.keys.stalledCheck(),
+		c.keys.meta(),
+		c.keys.paused(),
+		c.keys.marker(),
+		c.keys.events(),
+		c.keys.repeat(),
+	}, c.settings.MaxStalledCount, c.keys.prefix(), nowMillis(), c.settings.StalledInterval.Milliseconds())
+	if err != nil {
+		return nil, fmt.Errorf("recover stalled jobs on %s: %w", c.queueName, err)
+	}
+
+	raw, _ := result.([]any)
+	recovered := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		if id, ok := entry.(string); ok {
+			recovered = append(recovered, id)
+		}
+	}
+	return recovered, nil
 }
 
 func (c *Consumer) QueueName() string { return c.queueName }
@@ -157,7 +237,7 @@ func (c *Consumer) Claim(ctx context.Context) (*Job, error) {
 
 	opts, err := msgpack.Marshal(map[string]any{
 		"token":        token,
-		"lockDuration": c.lockDuration.Milliseconds(),
+		"lockDuration": c.settings.LockDuration.Milliseconds(),
 		"name":         c.workerName,
 	})
 	if err != nil {
@@ -229,6 +309,7 @@ func (c *Consumer) decodeClaim(result any, token string) (*Job, error) {
 	if atm, err := strconv.Atoi(hash["atm"]); err == nil {
 		job.AttemptsMade = atm
 	}
+	job.DeferredFailure = hash["defa"]
 	return job, nil
 }
 
@@ -321,7 +402,7 @@ func (c *Consumer) finish(ctx context.Context, job *Job, target, propName, value
 		"token":        job.Token,
 		"name":         c.workerName,
 		"keepJobs":     keepJobs(retention),
-		"lockDuration": c.lockDuration.Milliseconds(),
+		"lockDuration": c.settings.LockDuration.Milliseconds(),
 		"attempts":     job.opts.Attempts,
 		// Metrics collection is off; an empty string is what BullMQ sends when
 		// no maxDataPoints is configured.

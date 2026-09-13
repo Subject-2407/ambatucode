@@ -38,6 +38,12 @@ type Config struct {
 	// LockDuration is how long a claimed job stays owned by this worker before
 	// BullMQ considers it stalled and lets another worker take it.
 	LockDuration time.Duration
+	// StalledInterval is how often jobs abandoned by a dead worker are moved
+	// back to their wait list.
+	StalledInterval time.Duration
+	// MaxStalledCount is how many times one job may be recovered that way
+	// before it is failed as poisonous instead.
+	MaxStalledCount int
 	// ShutdownGrace is how long in-flight jobs get to finish on SIGTERM.
 	ShutdownGrace time.Duration
 
@@ -51,6 +57,10 @@ const (
 	defaultHealthAddr    = ":3002"
 	defaultLockDuration  = 30 * time.Second
 	defaultShutdownGrace = 30 * time.Second
+	// BullMQ's own worker defaults, so a Go worker and a Node worker sharing a
+	// queue would treat a stalled job identically.
+	defaultStalledInterval = 30 * time.Second
+	defaultMaxStalledCount = 1
 )
 
 // Load reads the environment and returns a validated config.
@@ -89,6 +99,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.ShutdownGrace, err = durationEnv("WORKER_SHUTDOWN_GRACE_MS", defaultShutdownGrace); err != nil {
+		return Config{}, err
+	}
+	if cfg.StalledInterval, err = durationEnv("WORKER_STALLED_INTERVAL_MS", defaultStalledInterval); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxStalledCount, err = intEnv("WORKER_MAX_STALLED_COUNT", defaultMaxStalledCount); err != nil {
 		return Config{}, err
 	}
 
@@ -136,6 +152,12 @@ func (c Config) validate() error {
 	}
 	if c.LockDuration < time.Second {
 		return fmt.Errorf("WORKER_LOCK_DURATION_MS must be at least 1000ms, got %s", c.LockDuration)
+	}
+	if c.StalledInterval < time.Second {
+		return fmt.Errorf("WORKER_STALLED_INTERVAL_MS must be at least 1000ms, got %s", c.StalledInterval)
+	}
+	if c.MaxStalledCount < 0 {
+		return fmt.Errorf("WORKER_MAX_STALLED_COUNT must not be negative, got %d", c.MaxStalledCount)
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

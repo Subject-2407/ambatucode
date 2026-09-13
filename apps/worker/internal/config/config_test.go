@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -104,6 +105,30 @@ func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected an error for an unknown log level")
+	}
+}
+
+// The stalled defaults match BullMQ's own worker, so a Go worker and a Node
+// worker sharing a queue treat an abandoned job the same way.
+func TestLoadAppliesBullMQStalledDefaults(t *testing.T) {
+	t.Setenv("WORKER_STALLED_INTERVAL_MS", "")
+	t.Setenv("WORKER_MAX_STALLED_COUNT", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.StalledInterval != 30*time.Second || cfg.MaxStalledCount != 1 {
+		t.Fatalf("stalled interval %s and max count %d, want 30s and 1",
+			cfg.StalledInterval, cfg.MaxStalledCount)
+	}
+}
+
+func TestLoadRejectsANegativeMaxStalledCount(t *testing.T) {
+	t.Setenv("WORKER_MAX_STALLED_COUNT", "-1")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a negative max stalled count")
 	}
 }
 

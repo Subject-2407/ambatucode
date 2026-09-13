@@ -1,7 +1,8 @@
 //go:build redis
 
-// Integration tests for the retry path against a real Redis, running the
-// vendored BullMQ scripts rather than asserting on argument lists.
+// Integration tests for retries, lock renewal, and stalled recovery against a
+// real Redis, running the vendored BullMQ scripts rather than asserting on
+// argument lists.
 //
 // Opt-in, like the Docker-tagged tests, because a plain `go test ./...` must
 // not need infrastructure:
@@ -59,7 +60,11 @@ func newRedisFixture(t *testing.T) *redisFixture {
 	_, _ = rand.Read(suffix)
 	prefix := "ambatucode-test-" + hex.EncodeToString(suffix)
 
-	consumer, err := NewConsumer(client, prefix, testQueue, "retry-test", 30*time.Second)
+	consumer, err := NewConsumer(client, prefix, testQueue, "redis-test", Settings{
+		LockDuration:    30 * time.Second,
+		StalledInterval: 30 * time.Second,
+		MaxStalledCount: 1,
+	})
 	if err != nil {
 		t.Fatalf("new consumer: %v", err)
 	}
@@ -233,6 +238,121 @@ func TestFailSkipsRetriesForAnUnrecoverableCause(t *testing.T) {
 	}
 	if !f.inSortedSet(t, f.keys.failed(), "sub-3") {
 		t.Fatal("unrecoverable job is not in the failed set")
+	}
+}
+
+// runStalledCheck runs one pass of the stalled check. The script refuses to run
+// twice inside StalledInterval across the whole queue, so the guard key is
+// cleared first to let a test drive consecutive passes.
+func (f *redisFixture) runStalledCheck(t *testing.T) []string {
+	t.Helper()
+	ctx := context.Background()
+	if err := f.client.Del(ctx, f.keys.stalledCheck()).Err(); err != nil {
+		t.Fatalf("clear stalled-check guard: %v", err)
+	}
+	recovered, err := f.consumer.RecoverStalled(ctx)
+	if err != nil {
+		t.Fatalf("recover stalled: %v", err)
+	}
+	return recovered
+}
+
+// dropLock simulates a worker that died: its lock simply expires.
+func (f *redisFixture) dropLock(t *testing.T, jobID string) {
+	t.Helper()
+	if err := f.client.Del(context.Background(), f.keys.lock(jobID)).Err(); err != nil {
+		t.Fatalf("drop lock: %v", err)
+	}
+}
+
+func (f *redisFixture) inList(t *testing.T, key, member string) bool {
+	t.Helper()
+	members, err := f.client.LRange(context.Background(), key, 0, -1).Result()
+	if err != nil {
+		t.Fatalf("lrange %s: %v", key, err)
+	}
+	for _, candidate := range members {
+		if candidate == member {
+			return true
+		}
+	}
+	return false
+}
+
+// A renewing worker keeps its job through any number of stalled checks.
+func TestExtendedLockSurvivesTheStalledCheck(t *testing.T) {
+	f := newRedisFixture(t)
+	f.add(t, "long-1", `{"attempts":3}`)
+	job := f.claim(t, "long-1")
+
+	for pass := 0; pass < 3; pass++ {
+		if recovered := f.runStalledCheck(t); len(recovered) != 0 {
+			t.Fatalf("pass %d recovered %v from a live worker", pass, recovered)
+		}
+		extended, err := f.consumer.ExtendLock(context.Background(), job)
+		if err != nil || !extended {
+			t.Fatalf("pass %d: extend = %v, %v", pass, extended, err)
+		}
+	}
+	if !f.inList(t, f.keys.active(), "long-1") {
+		t.Fatal("a renewed job left the active list")
+	}
+
+	ttl, err := f.client.PTTL(context.Background(), f.keys.lock("long-1")).Result()
+	if err != nil || ttl <= 0 {
+		t.Fatalf("lock TTL = %v, %v; renewal did not set an expiry", ttl, err)
+	}
+}
+
+// A dead worker's job goes back to wait after two passes: marked, then moved.
+func TestStalledCheckRecoversAJobWhoseWorkerDied(t *testing.T) {
+	f := newRedisFixture(t)
+	f.add(t, "orphan-1", `{"attempts":3}`)
+	job := f.claim(t, "orphan-1")
+
+	if recovered := f.runStalledCheck(t); len(recovered) != 0 {
+		t.Fatalf("first pass only marks, but recovered %v", recovered)
+	}
+	f.dropLock(t, "orphan-1")
+
+	recovered := f.runStalledCheck(t)
+	if len(recovered) != 1 || recovered[0] != "orphan-1" {
+		t.Fatalf("recovered %v, want [orphan-1]", recovered)
+	}
+	if !f.inList(t, f.keys.wait(), "orphan-1") || f.inList(t, f.keys.active(), "orphan-1") {
+		t.Fatal("recovered job is not back on the wait list")
+	}
+
+	// The dead worker's lock is gone, so renewing it must report the loss.
+	extended, err := f.consumer.ExtendLock(context.Background(), job)
+	if err != nil || extended {
+		t.Fatalf("extend on a reclaimed job = %v, %v; want false", extended, err)
+	}
+
+	again := f.claim(t, "orphan-1")
+	if again.DeferredFailure != "" {
+		t.Fatalf("a first stall must not defer failure, got %q", again.DeferredFailure)
+	}
+}
+
+// Past MaxStalledCount the job is still moved back, but marked so whoever
+// claims it fails it instead of running it again.
+func TestRepeatedStallsDeferFailureToTheNextClaim(t *testing.T) {
+	f := newRedisFixture(t)
+	f.add(t, "poison-1", `{"attempts":3}`)
+
+	for stall := 1; stall <= 2; stall++ {
+		f.claim(t, "poison-1")
+		f.runStalledCheck(t)
+		f.dropLock(t, "poison-1")
+		if recovered := f.runStalledCheck(t); len(recovered) != 1 {
+			t.Fatalf("stall %d: recovered %v", stall, recovered)
+		}
+	}
+
+	job := f.claim(t, "poison-1")
+	if job.DeferredFailure == "" {
+		t.Fatal("a job stalled past the limit was not marked for failure")
 	}
 }
 

@@ -33,6 +33,9 @@ const SCRIPTS = [
   // moveToFinished, exactly as BullMQ's own Job.moveToFailed does.
   "moveToDelayed",
   "retryJob",
+  // Lock renewal while a job runs, and recovery of jobs whose worker died.
+  "extendLock",
+  "moveStalledJobsToWait",
 ];
 
 const pkgJson = require.resolve("bullmq/package.json", {

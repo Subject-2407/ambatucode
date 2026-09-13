@@ -35,6 +35,8 @@ type Queue interface {
 	Complete(ctx context.Context, job *queue.Job, returnValue string) error
 	Fail(ctx context.Context, job *queue.Job, cause error) (queue.FailOutcome, error)
 	Release(ctx context.Context, job *queue.Job) error
+	ExtendLock(ctx context.Context, job *queue.Job) (bool, error)
+	RecoverStalled(ctx context.Context) ([]string, error)
 }
 
 type Options struct {
@@ -47,6 +49,12 @@ type Options struct {
 	// occupy. Claim order alone does not protect submissions: once every slot
 	// holds a long run, a submission waits behind all of them.
 	ReservedForSubmit int
+	// LockRenewInterval is how often a running job's lock is extended. It must
+	// be well inside the lock duration; BullMQ uses half of it.
+	LockRenewInterval time.Duration
+	// StalledInterval is how often jobs abandoned by a dead worker are moved
+	// back to their wait list.
+	StalledInterval time.Duration
 }
 
 type Pool struct {
@@ -63,8 +71,10 @@ type Pool struct {
 	// MaxContainers minus the submission reserve.
 	runSlots chan struct{}
 
-	concurrency int
-	active      atomic.Int64
+	concurrency       int
+	lockRenewInterval time.Duration
+	stalledInterval   time.Duration
+	active            atomic.Int64
 
 	// inFlight tracks claimed-but-unfinished jobs so shutdown can hand back any
 	// whose goroutine never returned.
@@ -92,10 +102,12 @@ func New(
 		await: func(ctx context.Context, markers []string) error {
 			return queue.AwaitAny(ctx, client, awaitTimeout, markers...)
 		},
-		containers:  make(chan struct{}, opts.MaxContainers),
-		runSlots:    make(chan struct{}, runCapacity),
-		concurrency: opts.Concurrency,
-		inFlight:    make(map[*queue.Job]Queue),
+		containers:        make(chan struct{}, opts.MaxContainers),
+		runSlots:          make(chan struct{}, runCapacity),
+		concurrency:       opts.Concurrency,
+		lockRenewInterval: opts.LockRenewInterval,
+		stalledInterval:   opts.StalledInterval,
+		inFlight:          make(map[*queue.Job]Queue),
 	}
 }
 
@@ -113,6 +125,13 @@ func (p *Pool) Saturated() bool { return len(p.containers) == cap(p.containers) 
 // A single context would make every SIGTERM kill running submissions at once.
 func (p *Pool) Run(accept, work context.Context) {
 	var wg sync.WaitGroup
+	if p.stalledInterval > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.recoverStalledLoop(accept)
+		}()
+	}
 	for i := 0; i < p.concurrency; i++ {
 		wg.Add(1)
 		go func(index int) {
@@ -215,7 +234,19 @@ func (p *Pool) execute(ctx context.Context, lane Queue, job *queue.Job) {
 		p.active.Add(-1)
 	}()
 
+	renewCtx, stopRenewing := context.WithCancel(ctx)
+	renewed := make(chan struct{})
+	go func() {
+		defer close(renewed)
+		p.keepLocked(renewCtx, lane, job)
+	}()
+
 	err := p.processGuarded(ctx, job)
+
+	// Stop renewing before finishing: a renewal racing the finish script could
+	// recreate the lock the finish just removed.
+	stopRenewing()
+	<-renewed
 
 	// Finish against a context that outlives cancellation. The work is done;
 	// failing to record that would hand the job to another worker to redo.
@@ -262,6 +293,88 @@ func (p *Pool) execute(ctx context.Context, lane Queue, job *queue.Job) {
 		p.logger.Error("marking job complete did not stick",
 			slog.String("jobId", job.ID),
 			slog.String("error", err.Error()))
+	}
+}
+
+// keepLocked extends a running job's lock until ctx is cancelled.
+//
+// Without it a job that runs longer than the lock duration — a slow compile, a
+// submission with many cases — loses its lock mid-run: the stalled check hands
+// it to another worker, the submission is graded twice, and this worker's own
+// finish is refused.
+func (p *Pool) keepLocked(ctx context.Context, lane Queue, job *queue.Job) {
+	if p.lockRenewInterval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(p.lockRenewInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		extended, err := lane.ExtendLock(ctx, job)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			// Transient: the next tick tries again while the lock still holds.
+			p.logger.Warn("lock renewal failed",
+				slog.String("jobId", job.ID),
+				slog.String("queue", job.Queue),
+				slog.String("error", err.Error()))
+		case err == nil && !extended:
+			// Not retried: the lock is gone and cannot be won back, so the job
+			// may already be running elsewhere. Ingest is idempotent, which is
+			// what keeps a duplicate from doing harm.
+			p.logger.Error("lock lost while the job was running; it may be processed twice",
+				slog.String("jobId", job.ID),
+				slog.String("queue", job.Queue))
+			return
+		}
+	}
+}
+
+// recoverStalledLoop periodically returns jobs abandoned by a dead worker to
+// their wait lists. It is the only thing that rescues a job whose worker was
+// killed outright: nothing else ever moves it out of the active list.
+func (p *Pool) recoverStalledLoop(ctx context.Context) {
+	recoverAll := func() {
+		for _, lane := range []Queue{p.submit, p.run} {
+			if lane == nil {
+				continue
+			}
+			recovered, err := lane.RecoverStalled(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					p.logger.Warn("stalled job check failed",
+						slog.String("queue", lane.QueueName()),
+						slog.String("error", err.Error()))
+				}
+				continue
+			}
+			for _, jobID := range recovered {
+				p.logger.Warn("recovered a stalled job from a dead worker",
+					slog.String("jobId", jobID),
+					slog.String("queue", lane.QueueName()))
+			}
+		}
+	}
+
+	// Once at startup: a worker restarting after a crash is exactly when there
+	// are stalled jobs, and the first mark-and-recover cycle takes two passes.
+	recoverAll()
+
+	ticker := time.NewTicker(p.stalledInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			recoverAll()
+		}
 	}
 }
 

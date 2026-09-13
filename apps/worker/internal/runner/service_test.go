@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -108,6 +109,42 @@ func TestProcessCompletesWhenTheResultIsDelivered(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("callback hit %d times, want 1", hits.Load())
+	}
+}
+
+// A job the stalled check gave up on is not run again, but the Coder still
+// hears about it: failing the queue job silently would leave the Submission
+// QUEUED forever.
+func TestProcessReportsAnAbandonedJobAndFailsItWithoutRunning(t *testing.T) {
+	var received atomic.Value
+	var hits atomic.Int64
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		var result contract.Result
+		_ = json.NewDecoder(r.Body).Decode(&result)
+		received.Store(result)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(callback.Close)
+	service := newServiceWithoutDocker(callback.URL)
+
+	job := queueJob(t, contract.KindSubmit)
+	job.DeferredFailure = "job stalled more than allowable limit"
+
+	err := service.Process(context.Background(), job)
+
+	if !errors.Is(err, queue.ErrUnrecoverable) {
+		t.Fatalf("error = %v, want the abandoned job failed without retries", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("callback hit %d times, want 1", hits.Load())
+	}
+	result, _ := received.Load().(contract.Result)
+	if result.Status != contract.StatusSystemError || result.SystemError == nil {
+		t.Fatalf("reported %+v, want SYSTEM_ERROR with a reason", result)
+	}
+	if strings.Contains(*result.SystemError, "stalled more than allowable limit") {
+		t.Fatal("BullMQ's internal failure reason leaked into the Coder-visible message")
 	}
 }
 

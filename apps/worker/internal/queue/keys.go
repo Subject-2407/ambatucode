@@ -37,6 +37,11 @@ func (k keys) priorityCounter() string { return k.of("pc") }
 func (k keys) marker() string          { return k.of("marker") }
 func (k keys) completed() string       { return k.of("completed") }
 func (k keys) failed() string          { return k.of("failed") }
+func (k keys) stalledCheck() string    { return k.of("stalled-check") }
+func (k keys) repeat() string          { return k.of("repeat") }
+
+// lock is the per-job lock key holding the owning worker's token.
+func (k keys) lock(jobID string) string { return k.job(jobID) + ":lock" }
 
 // metrics is split per outcome, matching `toKey('metrics:' + target)`.
 func (k keys) metrics(target string) string { return k.of("metrics:" + target) }

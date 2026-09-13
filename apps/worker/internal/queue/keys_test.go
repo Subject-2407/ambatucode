@@ -23,6 +23,9 @@ func TestKeyLayoutMatchesBullMQ(t *testing.T) {
 		"marker":      "bull:execution-submit:marker",
 		"completed":   "bull:execution-submit:completed",
 		"failed":      "bull:execution-submit:failed",
+		"stalled-chk": "bull:execution-submit:stalled-check",
+		"repeat":      "bull:execution-submit:repeat",
+		"lock":        "bull:execution-submit:abc123:lock",
 	}
 
 	got := map[string]string{
@@ -40,6 +43,9 @@ func TestKeyLayoutMatchesBullMQ(t *testing.T) {
 		"marker":      k.marker(),
 		"completed":   k.completed(),
 		"failed":      k.failed(),
+		"stalled-chk": k.stalledCheck(),
+		"repeat":      k.repeat(),
+		"lock":        k.lock("abc123"),
 	}
 
 	for name, want := range cases {

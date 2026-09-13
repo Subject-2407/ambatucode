@@ -102,14 +102,19 @@ func run() error {
 	}
 	logger.Info("startup container sweep complete", slog.Int("removed", swept))
 
+	queueSettings := queue.Settings{
+		LockDuration:    cfg.LockDuration,
+		StalledInterval: cfg.StalledInterval,
+		MaxStalledCount: cfg.MaxStalledCount,
+	}
 	submitConsumer, err := queue.NewConsumer(
-		redisClient, cfg.QueuePrefix, submitQueue, workerName, cfg.LockDuration,
+		redisClient, cfg.QueuePrefix, submitQueue, workerName, queueSettings,
 	)
 	if err != nil {
 		return err
 	}
 	runConsumer, err := queue.NewConsumer(
-		redisClient, cfg.QueuePrefix, runQueue, workerName, cfg.LockDuration,
+		redisClient, cfg.QueuePrefix, runQueue, workerName, queueSettings,
 	)
 	if err != nil {
 		return err
@@ -126,6 +131,10 @@ func run() error {
 		Concurrency:       cfg.Concurrency,
 		MaxContainers:     cfg.MaxContainers,
 		ReservedForSubmit: cfg.ReservedSubmitContainers,
+		// Half the lock duration, as BullMQ does: one missed renewal still
+		// leaves the lock standing until the next.
+		LockRenewInterval: cfg.LockDuration / 2,
+		StalledInterval:   cfg.StalledInterval,
 	}, logger)
 
 	health := observability.NewHealthServer(

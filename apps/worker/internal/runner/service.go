@@ -30,6 +30,10 @@ func NewService(r *Runner, reporter *report.Client, logger *slog.Logger) *Servic
 func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 	startedAt := time.Now()
 
+	if queueJob.DeferredFailure != "" {
+		return s.reportAbandoned(ctx, queueJob)
+	}
+
 	job, err := contract.ParseJob(queueJob.Data)
 	if err != nil {
 		return s.reportUnparseable(ctx, queueJob, err)
@@ -92,6 +96,28 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 	return nil
 }
 
+// reportAbandoned closes out a job the stalled check gave up on.
+//
+// It stalled more times than allowed — its worker kept dying under it — so it
+// is not run again: a job that takes workers down would take this one down
+// too. It is reported as SYSTEM_ERROR first, because failing the queue job
+// alone would leave the Submission in QUEUED with nothing ever arriving.
+func (s *Service) reportAbandoned(ctx context.Context, queueJob *queue.Job) error {
+	cause := fmt.Errorf("job abandoned by the stalled check: %s", queueJob.DeferredFailure)
+	s.logger.Error("refusing to run a job that repeatedly stalled its worker",
+		slog.String("jobId", queueJob.ID),
+		slog.String("queue", queueJob.Queue),
+		slog.String("reason", queueJob.DeferredFailure))
+
+	if err := s.reportSystemError(ctx, queueJob, cause,
+		"execution failed inside the platform: grading was interrupted too many times"); err != nil {
+		return err
+	}
+	// Delivered, but the queue job still belongs in the failed set, where an
+	// operator looking for poisonous jobs will find it.
+	return queue.Unrecoverable(cause)
+}
+
 // reportUnparseable turns a contract violation into a SYSTEM_ERROR the Coder
 // can see, when enough of the payload survives to address the callback.
 func (s *Service) reportUnparseable(ctx context.Context, queueJob *queue.Job, cause error) error {
@@ -100,15 +126,28 @@ func (s *Service) reportUnparseable(ctx context.Context, queueJob *queue.Job, ca
 		slog.String("queue", queueJob.Queue),
 		slog.String("error", cause.Error()))
 
+	// Once delivered the queue job is done; retrying would only re-derive the
+	// same contract error.
+	return s.reportSystemError(ctx, queueJob, fmt.Errorf("unparseable job payload: %w", cause),
+		"execution failed inside the platform: the job payload did not match the execution contract")
+}
+
+// reportSystemError reports a job that will never run as SYSTEM_ERROR.
+//
+// It works from the leniently probed identity, so it still reaches the
+// callback when the payload itself is what is wrong. With no identity at all
+// there is nothing to report to, and the job is failed without retries — a
+// redelivery would reach the same verdict.
+func (s *Service) reportSystemError(
+	ctx context.Context, queueJob *queue.Job, cause error, message string,
+) error {
 	identity, ok := contract.ProbeIdentity(queueJob.Data)
 	if !ok {
-		// Nothing to report to and nothing to retry — a redelivery would fail
-		// identically. Fail the job so it lands in BullMQ's failed set where
-		// an operator can see it.
-		return queue.Unrecoverable(fmt.Errorf("unparseable job payload: %w", cause))
+		// Nothing to report to. Fail the job so it lands in BullMQ's failed
+		// set where an operator can see it.
+		return queue.Unrecoverable(cause)
 	}
 
-	message := "execution failed inside the platform: the job payload did not match the execution contract"
 	result := contract.Result{
 		ContractVersion: contract.Version,
 		JobID:           identity.JobID,
@@ -119,12 +158,9 @@ func (s *Service) reportUnparseable(ctx context.Context, queueJob *queue.Job, ca
 	}
 	if err := s.reporter.Send(ctx, result, identity.CallbackToken); err != nil {
 		if errors.Is(err, report.ErrRejected) {
-			return queue.Unrecoverable(fmt.Errorf("report unparseable job: %w", err))
+			return queue.Unrecoverable(fmt.Errorf("report system error: %w", err))
 		}
-		return fmt.Errorf("report unparseable job: %w", err)
+		return fmt.Errorf("report system error: %w", err)
 	}
-
-	// The result was delivered, so the queue job is done. Retrying would only
-	// re-derive the same contract error.
 	return nil
 }

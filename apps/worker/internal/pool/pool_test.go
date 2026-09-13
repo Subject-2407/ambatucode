@@ -37,6 +37,12 @@ type fakeQueue struct {
 	completed []string
 	failed    map[string]error
 	released  []string
+
+	extensions      atomic.Int64
+	lockLost        atomic.Bool
+	stalledChecks   atomic.Int64
+	extensionsAfter atomic.Int64 // extensions seen after the job finished
+	finished        atomic.Bool
 }
 
 func newFakeQueue(name string) *fakeQueue {
@@ -66,10 +72,24 @@ func (q *fakeQueue) Claim(context.Context) (*queue.Job, error) {
 }
 
 func (q *fakeQueue) Complete(_ context.Context, job *queue.Job, _ string) error {
+	q.finished.Store(true)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.completed = append(q.completed, job.ID)
 	return nil
+}
+
+func (q *fakeQueue) ExtendLock(context.Context, *queue.Job) (bool, error) {
+	q.extensions.Add(1)
+	if q.finished.Load() {
+		q.extensionsAfter.Add(1)
+	}
+	return !q.lockLost.Load(), nil
+}
+
+func (q *fakeQueue) RecoverStalled(context.Context) ([]string, error) {
+	q.stalledChecks.Add(1)
+	return nil, nil
 }
 
 func (q *fakeQueue) Fail(_ context.Context, job *queue.Job, cause error) (queue.FailOutcome, error) {
@@ -354,6 +374,79 @@ func TestFailedJobIsHandedToTheRetryPolicy(t *testing.T) {
 	if len(released) != 0 {
 		t.Fatalf("a failed job was released: %v", released)
 	}
+}
+
+// A job outliving the lock duration must keep its lock, or the stalled check
+// hands it to another worker and the submission is graded twice. Renewal must
+// also stop before the finish, or it could recreate the lock the finish removed.
+func TestRunningJobKeepsItsLockAndStopsRenewingWhenDone(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.push("slow-compile")
+
+	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error {
+		time.Sleep(120 * time.Millisecond)
+		return nil
+	}}
+
+	p := newTestPool(submit, nil, processor,
+		Options{Concurrency: 1, MaxContainers: 1, LockRenewInterval: 20 * time.Millisecond})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "the job to complete", submit.finished.Load)
+	time.Sleep(60 * time.Millisecond)
+	stopAccepting()
+	wait(t)
+
+	if got := submit.extensions.Load(); got < 3 {
+		t.Fatalf("lock extended %d times during a 120ms job at a 20ms interval", got)
+	}
+	if got := submit.extensionsAfter.Load(); got != 0 {
+		t.Fatalf("lock extended %d times after the job finished", got)
+	}
+}
+
+// A lost lock cannot be won back, so renewal gives up rather than hammering.
+func TestLockRenewalStopsOnceTheLockIsLost(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.lockLost.Store(true)
+	submit.push("reclaimed")
+
+	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error {
+		time.Sleep(150 * time.Millisecond)
+		return nil
+	}}
+
+	p := newTestPool(submit, nil, processor,
+		Options{Concurrency: 1, MaxContainers: 1, LockRenewInterval: 10 * time.Millisecond})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "the job to complete", submit.finished.Load)
+	stopAccepting()
+	wait(t)
+
+	if got := submit.extensions.Load(); got != 1 {
+		t.Fatalf("renewal attempted %d times after the lock was lost, want 1", got)
+	}
+}
+
+// The stalled check runs once immediately — a restart after a crash is when
+// abandoned jobs exist — and then on its interval, on both queues.
+func TestStalledCheckRunsAtStartupAndOnItsInterval(t *testing.T) {
+	submit := newFakeQueue("submit")
+	run := newFakeQueue("run")
+
+	p := newTestPool(submit, run, &stubProcessor{fn: func(context.Context, *queue.Job) error { return nil }},
+		Options{Concurrency: 1, MaxContainers: 2, ReservedForSubmit: 1, StalledInterval: 20 * time.Millisecond})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "repeated stalled checks on both queues", func() bool {
+		return submit.stalledChecks.Load() >= 3 && run.stalledChecks.Load() >= 3
+	})
+	stopAccepting()
+	wait(t)
 }
 
 func TestReleaseInFlightIsSafeWithNothingRunning(t *testing.T) {
