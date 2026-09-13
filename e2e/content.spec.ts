@@ -279,12 +279,25 @@ test.describe("module builder", () => {
     await page.waitForTimeout(200);
     await page.keyboard.press("ArrowDown");
     await page.waitForTimeout(200);
+
+    /**
+     * Armed before the keypress that commits the drop, because the request
+     * leaves as soon as the drop lands. The list reorders optimistically, so
+     * the accessible name below flips before the server has heard anything —
+     * reloading on that alone races the PATCH and, on a cold dev server that
+     * still has to compile the route, loses often enough to look like a
+     * persistence bug rather than a test getting ahead of itself.
+     */
+    const persisted = page.waitForResponse(
+      (response) =>
+        response.url().includes("/sections/reorder") && response.request().method() === "PATCH",
+    );
     await page.keyboard.press("Space");
-    await page.waitForTimeout(200);
 
     await expect(grips.nth(0)).toHaveAccessibleName("Reorder Beta");
 
     // The order is only real once the server has it.
+    expect((await persisted).ok()).toBe(true);
     await page.reload();
     await expect(page.getByRole("button", { name: /^Reorder / }).nth(0)).toHaveAccessibleName(
       "Reorder Beta",
