@@ -31,8 +31,6 @@ export type DraftSaveState =
 
 export type UseAttemptDraftResult = {
   saveState: DraftSaveState;
-  /** Forces a save now, ahead of the debounce. */
-  flush: () => void;
 };
 
 type Confirmed = { language: Language; sourceCode: string; atMs: number };
@@ -152,12 +150,7 @@ export function useAttemptDraft(input: {
     return () => window.removeEventListener("pagehide", onHide);
   }, [attemptId, enabled, save]);
 
-  const flush = useCallback(() => {
-    if (debounceTimer.current !== null) clearTimeout(debounceTimer.current);
-    void save();
-  }, [save]);
-
-  return { saveState: describeSave({ confirmed, saving, failure, language, sourceCode }), flush };
+  return { saveState: describeSave({ confirmed, saving, failure, language, sourceCode }) };
 }
 
 /**

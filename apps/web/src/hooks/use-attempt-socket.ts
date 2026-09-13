@@ -9,7 +9,6 @@ import {
   type AnticheatFocusPayload,
   type AttemptStatePayload,
   type AttemptWarningPayload,
-  type SessionStatePayload,
 } from "@ambatucode/shared";
 import { measureSkew } from "@/lib/attempt-clock";
 import { getSocket } from "@/lib/socket";
@@ -47,7 +46,6 @@ export type AttemptTimerState = {
 
 export type UseAttemptSocketResult = {
   state: AttemptStatePayload | null;
-  sessionState: SessionStatePayload | null;
   connection: AttemptConnection;
   timer: AttemptTimerState;
   warning: AttemptWarningPayload | null;
@@ -70,7 +68,6 @@ export function useAttemptSocket(input: {
     input;
 
   const [state, setState] = useState<AttemptStatePayload | null>(null);
-  const [sessionState, setSessionState] = useState<SessionStatePayload | null>(null);
   const [connection, setConnection] = useState<AttemptConnection>("CONNECTING");
   const [warning, setWarning] = useState<AttemptWarningPayload | null>(null);
   const [terminal, setTerminal] = useState<AttemptTerminal>({ kind: "NONE" });
@@ -171,7 +168,6 @@ export function useAttemptSocket(input: {
     };
 
     const onWarning = (payload: AttemptWarningPayload) => setWarning(payload);
-    const onSessionState = (payload: SessionStatePayload) => setSessionState(payload);
     const onDisconnect = () => setConnection("OFFLINE");
 
     socket.on("connect", join);
@@ -183,7 +179,6 @@ export function useAttemptSocket(input: {
     socket.on(SERVER_EVENTS.ATTEMPT_AUTO_SUBMITTED, onAutoSubmitted);
     socket.on(SERVER_EVENTS.ATTEMPT_SUPERSEDED, onSuperseded);
     socket.on(SERVER_EVENTS.ATTEMPT_WARNING, onWarning);
-    socket.on(SERVER_EVENTS.SESSION_STATE, onSessionState);
 
     // The session provider owns connecting; if it already has, `connect` will
     // not fire again and the join has to be made here.
@@ -204,7 +199,6 @@ export function useAttemptSocket(input: {
       socket.off(SERVER_EVENTS.ATTEMPT_AUTO_SUBMITTED, onAutoSubmitted);
       socket.off(SERVER_EVENTS.ATTEMPT_SUPERSEDED, onSuperseded);
       socket.off(SERVER_EVENTS.ATTEMPT_WARNING, onWarning);
-      socket.off(SERVER_EVENTS.SESSION_STATE, onSessionState);
     };
   }, [attemptId]);
 
@@ -229,7 +223,6 @@ export function useAttemptSocket(input: {
 
   return {
     state,
-    sessionState,
     connection,
     timer,
     warning,
