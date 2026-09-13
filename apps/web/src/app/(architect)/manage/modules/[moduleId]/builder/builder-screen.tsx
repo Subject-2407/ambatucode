@@ -15,6 +15,7 @@ import { useModule } from "@/hooks/use-modules";
 import { useCreateSection } from "@/hooks/use-sections";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
+import { AssessmentList } from "./assessment-list";
 import { MaterialEditor } from "./material-editor";
 import { MaterialList } from "./material-list";
 import { SectionList } from "./section-list";
@@ -119,13 +120,20 @@ export function BuilderScreen({ moduleId }: { moduleId: string }) {
           </Pane>
 
           <Pane>
-            <MaterialList
-              moduleId={moduleId}
-              sectionId={selectedSection?.id ?? null}
-              materials={selectedSection?.materials ?? []}
-              selectedId={selectedMaterialId}
-              onSelect={setMaterialId}
-            />
+            <Stack gap="6">
+              <MaterialList
+                moduleId={moduleId}
+                sectionId={selectedSection?.id ?? null}
+                materials={selectedSection?.materials ?? []}
+                selectedId={selectedMaterialId}
+                onSelect={setMaterialId}
+              />
+              <AssessmentList
+                moduleId={moduleId}
+                sectionId={selectedSection?.id ?? null}
+                assessments={selectedSection?.assessments ?? []}
+              />
+            </Stack>
           </Pane>
 
           <Pane>
