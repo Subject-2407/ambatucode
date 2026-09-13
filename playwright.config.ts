@@ -47,6 +47,20 @@ export default defineConfig({
       url: BASE_URL,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
+      /**
+       * The suite signs the same seeded Coder in dozens of times inside one
+       * five-minute window — every spec starts from a clean session on purpose
+       * — which is far past the production-shaped login limit in .env. Left
+       * alone, the limit fires partway through and the failure lands on
+       * whichever spec happened to run last, which reads as a broken login
+       * rather than as the rate limiter doing its job.
+       *
+       * Raised only for this server, so the real default stays in force
+       * everywhere else. The integration suite solves the same problem the
+       * other way, by randomising usernames; e2e cannot, because it drives the
+       * real login form as a real person against seeded accounts.
+       */
+      env: { LOGIN_RATE_LIMIT_MAX: "1000" },
     },
     {
       command: "pnpm --filter realtime dev",
