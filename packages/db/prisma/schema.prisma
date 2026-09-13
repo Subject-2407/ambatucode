@@ -274,7 +274,9 @@ model AssessmentTestScript {
 
   assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
 
-  @@index([assessmentId])
+  // One script per language: a submission job carries exactly one, chosen by
+  // the language the Coder submitted in.
+  @@unique([assessmentId, language])
 }
 
 enum AssessmentSessionStatus {
@@ -324,6 +326,11 @@ model AssessmentParticipant {
   id                 String          @id @default(cuid())
   sessionId          String
   userId             String
+  // True for a Coder the Architect put on the participant list. A Coder who
+  // joins an open Individual or Untimed session gets a row too, so their
+  // connection can be tracked, but that row must not turn the session into a
+  // restricted one — a session is restricted only while a listed row exists.
+  isListed           Boolean         @default(true)
   readyState         ReadyState      @default(NOT_READY)
   connectionState    ConnectionState @default(OFFLINE)
   activeConnectionId String?
@@ -336,6 +343,7 @@ model AssessmentParticipant {
 
   @@unique([sessionId, userId])
   @@index([sessionId, connectionState])
+  @@index([sessionId, isListed])
 }
 
 enum AttemptStatus {
@@ -462,6 +470,9 @@ enum AssessmentEventType {
   ATTEMPT_STARTED
   ATTEMPT_SUBMITTED
   ATTEMPT_AUTO_SUBMITTED
+  // The deadline or the session end arrived with no draft on the server, so
+  // there was no code to submit on the Coder's behalf.
+  ATTEMPT_EXPIRED
   CONNECTED
   DISCONNECTED
   RECONNECTED
