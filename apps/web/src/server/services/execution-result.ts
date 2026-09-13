@@ -9,6 +9,7 @@ import {
 import { getRedis } from "../redis";
 import { runOwnerKey } from "../queue/producer";
 import { publishExecutionStatus } from "../realtime/publish";
+import { computeScore } from "./scoring";
 
 export type IngestOutcome = {
   /** False when the callback was a retry of an already-finalised submission. */
@@ -25,9 +26,9 @@ export type IngestOutcome = {
  * repeat for a submission that already reached a terminal status is a
  * successful no-op rather than a duplicate write.
  *
- * Scoring strategies, leaderboard refresh, and achievement evaluation belong
- * to the assessment pipeline and are wired in a later phase. This records what
- * actually ran and tells the Coder waiting on it.
+ * A formal submission is scored here, by the Assessment's grading strategy,
+ * in the same write that records its per-case results. Leaderboard refresh and
+ * achievement evaluation are wired in a later phase.
  */
 export async function ingestExecutionResult(result: ExecutionResult): Promise<IngestOutcome> {
   return result.submissionId === null ? ingestRun(result) : ingestSubmission(result);
@@ -78,7 +79,13 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
 
   const submission = await prisma.submission.findUnique({
     where: { id: submissionId },
-    select: { id: true, status: true, userId: true, score: true },
+    select: {
+      id: true,
+      status: true,
+      userId: true,
+      score: true,
+      assessment: { select: { gradingStrategy: true } },
+    },
   });
 
   if (!submission) {
@@ -101,6 +108,37 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
     });
     return { persisted: false, delivered: true };
   }
+
+  if (!isTerminalSubmissionStatus(result.status)) {
+    // Progress, not a result: QUEUED to RUNNING. Nothing to score and no rows
+    // to write — and a late progress report must never drag a graded
+    // submission backwards, which the terminal check above already prevents.
+    const progressed = await prisma.submission.update({
+      where: { id: submission.id },
+      data: { status: result.status },
+      select: { status: true, score: true },
+    });
+    await publishExecutionStatus({
+      userId: submission.userId,
+      payload: {
+        kind: "SUBMIT",
+        jobId: result.jobId,
+        submissionId: submission.id,
+        status: progressed.status,
+        score: progressed.score,
+      },
+    });
+    return { persisted: true, delivered: true };
+  }
+
+  const score = computeScore(
+    submission.assessment.gradingStrategy,
+    result.status,
+    result.testResults.map((testResult) => ({
+      passed: testResult.passed,
+      weight: testResult.weight,
+    })),
+  );
 
   // Only a case marked PUBLIC on the Assessment may be shown to a Coder.
   // Anything unlinked (a custom test script row) stays private.
@@ -141,6 +179,7 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
         systemError: result.systemError,
         executionTimeMs: Math.round(result.executionTimeMs),
         memoryUsedKb: result.memoryUsedKb === null ? null : Math.round(result.memoryUsedKb),
+        score,
         gradedAt: new Date(),
       },
     }),
