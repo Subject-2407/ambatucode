@@ -41,6 +41,7 @@ function fabricateResult(job: ExecutionJob): ExecutionResult {
     testResults: job.testCases.map((testCase) => ({
       testCaseId: testCase.id,
       name: testCase.name,
+      status: "GRADED",
       passed: true,
       weight: testCase.weight,
       executionTimeMs: 4,

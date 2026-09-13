@@ -2,6 +2,7 @@
 
 import { Box, HStack, Spinner, Stack, Text } from "@chakra-ui/react";
 import { Badge } from "@/components/ui/badge";
+import { describeCaseOutcome } from "@/components/content/run-status";
 import { ConsoleFrame } from "@/components/editor/run-results";
 import type { AttemptSubmissionState } from "@/hooks/use-attempt-submission";
 import { describeSubmission } from "./submission-status";
@@ -73,7 +74,7 @@ export function SubmissionPanel({ state }: { state: AttemptSubmissionState }) {
                   {result.name}
                 </Text>
                 <Badge tone={result.passed ? "success" : "danger"}>
-                  {result.passed ? "Passed" : "Failed"}
+                  {describeCaseOutcome(result)}
                 </Badge>
               </HStack>
             ))}

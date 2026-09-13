@@ -1,4 +1,4 @@
-import type { RunTestResultView, SubmissionStatus } from "@ambatucode/shared";
+import type { RunTestResultView, SubmissionStatus, TestResultStatus } from "@ambatucode/shared";
 import type { BadgeTone } from "@/components/ui/badge";
 
 /**
@@ -39,7 +39,13 @@ export function describeRun(status: SubmissionStatus, results: RunTestResultView
   }
 
   if (status !== "GRADED") {
-    return { label: STATUS_LABEL[status], tone: "danger", passed, total, allPassed: false };
+    // A limit or crash on one case no longer stops the rest, so a run can end
+    // badly and still have passed cases worth counting.
+    const label =
+      total === 0 || status === "COMPILE_ERROR" || status === "SYSTEM_ERROR"
+        ? STATUS_LABEL[status]
+        : `${STATUS_LABEL[status]} · ${String(passed)} of ${String(total)} passed`;
+    return { label, tone: "danger", passed, total, allPassed: false };
   }
 
   // The program ran. Whether that is good news is a question about the cases.
@@ -50,6 +56,19 @@ export function describeRun(status: SubmissionStatus, results: RunTestResultView
     total,
     allPassed,
   };
+}
+
+/**
+ * The word shown beside one case. A case that failed because it hit a limit
+ * says which, rather than a bare "Failed" that reads like a wrong answer.
+ */
+export function describeCaseOutcome(result: {
+  passed: boolean;
+  status: TestResultStatus | null;
+}): string {
+  if (result.passed) return "Passed";
+  if (result.status === null || result.status === "GRADED") return "Failed";
+  return STATUS_LABEL[result.status];
 }
 
 /** True when the panel should show the compiler's own words instead of cases. */

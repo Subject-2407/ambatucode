@@ -41,6 +41,7 @@ const SUBMISSION_SELECT = {
     select: {
       testCaseId: true,
       name: true,
+      status: true,
       passed: true,
       weight: true,
       executionTimeMs: true,

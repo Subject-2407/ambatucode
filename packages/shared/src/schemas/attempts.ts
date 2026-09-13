@@ -5,6 +5,7 @@ import {
   type ExecutionMode,
   type Language,
   type SubmissionStatus,
+  type TestResultStatus,
 } from "../enums";
 import type { AssessmentWorkspaceView } from "./assessments";
 
@@ -86,6 +87,8 @@ export type SubmitAttemptResponse = { submission: SubmissionSummary };
 /** A per-case row a Coder may see. Public cases only; no expected output. */
 export type SubmissionTestResultCoderView = {
   name: string;
+  /** Null only on rows graded before per-case statuses were recorded. */
+  status: TestResultStatus | null;
   passed: boolean;
   executionTimeMs: number | null;
   stdoutExcerpt: string;

@@ -21,7 +21,7 @@ import (
 // payload shape. Without this check a renamed field would surface as a
 // silently mis-graded submission; with it the worker refuses the job and says
 // exactly why.
-const Version = 1
+const Version = 2
 
 type Kind string
 
@@ -87,6 +87,26 @@ type TestCase struct {
 	Weight         float64        `json:"weight"`
 	IsPublic       bool           `json:"isPublic"`
 	Comparison     ComparisonMode `json:"comparison"`
+	// TimeLimitMs and MemoryLimitMb override the job's run limits for this
+	// case alone. Nil means the job's own limit applies.
+	TimeLimitMs   *int64 `json:"timeLimitMs"`
+	MemoryLimitMb *int64 `json:"memoryLimitMb"`
+}
+
+// RunTimeout is the time limit this case runs under.
+func (c TestCase) RunTimeout(limits Limits) int64 {
+	if c.TimeLimitMs != nil {
+		return *c.TimeLimitMs
+	}
+	return limits.RunTimeoutMs
+}
+
+// MemoryLimit is the memory limit this case runs under.
+func (c TestCase) MemoryLimit(limits Limits) int64 {
+	if c.MemoryLimitMb != nil {
+		return *c.MemoryLimitMb
+	}
+	return limits.MemoryLimitMb
 }
 
 type TestScriptFile struct {
@@ -98,6 +118,8 @@ type TestScript struct {
 	Framework  TestScriptFramework `json:"framework"`
 	Entrypoint string              `json:"entrypoint"`
 	Files      []TestScriptFile    `json:"files"`
+	// Weight is given to every test the script reports.
+	Weight float64 `json:"weight"`
 }
 
 // Job is one unit of execution. It carries no user id and no personal data;
@@ -116,9 +138,13 @@ type Job struct {
 	CallbackToken   string      `json:"callbackToken"`
 }
 
+// TestResult is one case or one script test. Status is how that case alone
+// ended, and is only ever GRADED, RUNTIME_ERROR, TIME_LIMIT_EXCEEDED or
+// MEMORY_LIMIT_EXCEEDED: compiling and platform failure describe a whole job.
 type TestResult struct {
 	TestCaseID      *string  `json:"testCaseId"`
 	Name            string   `json:"name"`
+	Status          Status   `json:"status"`
 	Passed          bool     `json:"passed"`
 	Weight          float64  `json:"weight"`
 	ExecutionTimeMs float64  `json:"executionTimeMs"`
@@ -228,6 +254,15 @@ func ParseJob(raw []byte) (Job, error) {
 		default:
 			return Job{}, fmt.Errorf("test case %d has unknown comparison mode %q", i, testCase.Comparison)
 		}
+		if testCase.TimeLimitMs != nil && *testCase.TimeLimitMs <= 0 {
+			return Job{}, fmt.Errorf("test case %d has a non-positive time limit %d", i, *testCase.TimeLimitMs)
+		}
+		if testCase.MemoryLimitMb != nil && *testCase.MemoryLimitMb <= 0 {
+			return Job{}, fmt.Errorf("test case %d has a non-positive memory limit %d", i, *testCase.MemoryLimitMb)
+		}
+	}
+	if job.TestScript != nil && job.TestScript.Weight < 0 {
+		return Job{}, fmt.Errorf("test script has a negative weight %v", job.TestScript.Weight)
 	}
 
 	// The producer refuses to put hidden cases or a test script on a RUN job.

@@ -2,12 +2,14 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@ambatucode/db";
 import {
+  EXECUTION_CONTRACT_VERSION,
   QUEUE_NAMES,
   deadlineJobId,
   isAppError,
   type AssessmentArchitectView,
   type AuthenticatedUser,
   type ErrorCode,
+  type ExecutionResult,
   type SessionView,
 } from "@ambatucode/shared";
 import {
@@ -650,11 +652,13 @@ describe("grading ingestion", () => {
     const hiddenCase = detail.assessment.testCases.find((testCase) => testCase.kind === "HIDDEN");
     if (!publicCase || !hiddenCase) throw new Error("fixture cases missing");
 
-    const result = {
-      contractVersion: 1 as const,
+    const result: ExecutionResult = {
+      contractVersion: EXECUTION_CONTRACT_VERSION,
       jobId: submission.id,
       submissionId: submission.id,
-      status: "GRADED" as const,
+      // One case hit its time limit and the rest still ran: the most severe
+      // case status is the submission's, and the passed cases still score.
+      status: "TIME_LIMIT_EXCEEDED" as const,
       compilerOutput: null,
       systemError: "worker internals",
       executionTimeMs: 42,
@@ -663,6 +667,7 @@ describe("grading ingestion", () => {
         {
           testCaseId: publicCase.id,
           name: "Sample",
+          status: "GRADED" as const,
           passed: true,
           weight: 1,
           executionTimeMs: 10,
@@ -673,6 +678,7 @@ describe("grading ingestion", () => {
         {
           testCaseId: hiddenCase.id,
           name: "Hidden",
+          status: "TIME_LIMIT_EXCEEDED" as const,
           passed: false,
           weight: 3,
           executionTimeMs: 10,
@@ -683,6 +689,7 @@ describe("grading ingestion", () => {
         {
           testCaseId: null,
           name: "pytest",
+          status: "GRADED" as const,
           passed: true,
           weight: 1,
           executionTimeMs: 22,
@@ -697,16 +704,22 @@ describe("grading ingestion", () => {
     // (1 + 1) of (1 + 3 + 1) weight passed.
     const graded = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
     expect(graded.score).toBe(40);
-    expect(graded.status).toBe("GRADED");
+    expect(graded.status).toBe("TIME_LIMIT_EXCEEDED");
 
     const coderView = await getSubmission(coderA, submission.id);
     expect(coderView.testResults).toHaveLength(1);
+    expect(coderView.testResults[0]?.status).toBe("GRADED");
     expect(JSON.stringify(coderView)).not.toContain("HIDDEN_SECRET");
     expect(JSON.stringify(coderView)).not.toContain("SCRIPT_SECRET");
     expect(JSON.stringify(coderView)).not.toContain("worker internals");
 
     const architectView = await getSubmission(owner, submission.id);
     expect(architectView.testResults).toHaveLength(3);
+    expect(architectView.testResults.map((row) => row.status)).toEqual([
+      "GRADED",
+      "TIME_LIMIT_EXCEEDED",
+      "GRADED",
+    ]);
 
     expect(await refusalCode(() => getSubmission(root, submission.id))).toBe("FORBIDDEN");
     expect(await refusalCode(() => getSubmission(coderB, submission.id))).toBe("NOT_FOUND");

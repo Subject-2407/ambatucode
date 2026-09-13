@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { COMPARISON_MODES, LANGUAGES, SUBMISSION_STATUSES, TEST_SCRIPT_FRAMEWORKS } from "../enums";
+import {
+  COMPARISON_MODES,
+  LANGUAGES,
+  SUBMISSION_STATUSES,
+  TEST_RESULT_STATUSES,
+  TEST_SCRIPT_FRAMEWORKS,
+} from "../enums";
 
 /**
  * The wire contract between the queue producer (apps/web) and the Go worker.
@@ -23,7 +29,7 @@ import { COMPARISON_MODES, LANGUAGES, SUBMISSION_STATUSES, TEST_SCRIPT_FRAMEWORK
  * Bump it whenever a field is added, removed, renamed, or changes meaning, and
  * update `apps/worker/internal/contract` in the same commit.
  */
-export const EXECUTION_CONTRACT_VERSION = 1;
+export const EXECUTION_CONTRACT_VERSION = 2;
 
 export const executionKindSchema = z.enum(["RUN", "SUBMIT"]);
 export type ExecutionKind = z.infer<typeof executionKindSchema>;
@@ -46,6 +52,10 @@ export const executionTestCaseSchema = z.object({
   weight: z.number().nonnegative(),
   isPublic: z.boolean(),
   comparison: z.enum(COMPARISON_MODES),
+  /** Overrides `limits.runTimeoutMs` for this case alone. */
+  timeLimitMs: z.number().int().positive().nullable(),
+  /** Overrides `limits.memoryLimitMb` for this case alone. */
+  memoryLimitMb: z.number().int().positive().nullable(),
 });
 export type ExecutionTestCase = z.infer<typeof executionTestCaseSchema>;
 
@@ -53,6 +63,8 @@ export const executionTestScriptSchema = z.object({
   framework: z.enum(TEST_SCRIPT_FRAMEWORKS),
   entrypoint: z.string().min(1),
   files: z.array(z.object({ path: z.string().min(1), content: z.string() })),
+  /** The weight every test the script reports is given, like a test case's. */
+  weight: z.number().nonnegative(),
 });
 export type ExecutionTestScript = z.infer<typeof executionTestScriptSchema>;
 
@@ -70,9 +82,17 @@ export const executionJobSchema = z.object({
 });
 export type ExecutionJob = z.infer<typeof executionJobSchema>;
 
+/**
+ * One test case or one script test.
+ *
+ * `status` is how that case alone ended. A case that ran past its limit is a
+ * failed case, not the end of the job: the remaining cases still run, and the
+ * submission's own status is the most severe of its cases.
+ */
 export const executionTestResultSchema = z.object({
   testCaseId: z.string().min(1).nullable(),
   name: z.string(),
+  status: z.enum(TEST_RESULT_STATUSES),
   passed: z.boolean(),
   weight: z.number().nonnegative(),
   executionTimeMs: z.number().nonnegative(),

@@ -35,6 +35,74 @@ function validResult(): unknown {
   };
 }
 
+describe("execution contract v2 shapes", () => {
+  it("carries per-case limit overrides, null meaning the job's own limit", () => {
+    const job = {
+      ...(validJob() as Record<string, unknown>),
+      testCases: [
+        {
+          id: "case-1",
+          name: "slow case",
+          input: "",
+          expectedOutput: "",
+          weight: 1,
+          isPublic: true,
+          comparison: "TRIMMED",
+          timeLimitMs: 9_000,
+          memoryLimitMb: null,
+        },
+      ],
+    };
+    const parsed = executionJobSchema.parse(job);
+    expect(parsed.testCases[0]?.timeLimitMs).toBe(9_000);
+    expect(parsed.testCases[0]?.memoryLimitMb).toBeNull();
+  });
+
+  it("rejects a case missing its limit overrides", () => {
+    const job = {
+      ...(validJob() as Record<string, unknown>),
+      testCases: [
+        {
+          id: "case-1",
+          name: "v1 case",
+          input: "",
+          expectedOutput: "",
+          weight: 1,
+          isPublic: true,
+          comparison: "TRIMMED",
+        },
+      ],
+    };
+    expect(() => executionJobSchema.parse(job)).toThrow();
+  });
+
+  it("requires a status on every test result", () => {
+    const row = {
+      testCaseId: "case-1",
+      name: "case",
+      passed: false,
+      weight: 1,
+      executionTimeMs: 5_000,
+      memoryUsedKb: null,
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+    const result = (testResult: unknown) => ({
+      ...(validResult() as Record<string, unknown>),
+      testResults: [testResult],
+    });
+    expect(() => executionResultSchema.parse(result(row))).toThrow();
+    expect(
+      executionResultSchema.parse(result({ ...row, status: "TIME_LIMIT_EXCEEDED" })).testResults[0]
+        ?.status,
+    ).toBe("TIME_LIMIT_EXCEEDED");
+    // Compiling and platform failure describe a job, never one case.
+    expect(() =>
+      executionResultSchema.parse(result({ ...row, status: "COMPILE_ERROR" })),
+    ).toThrow();
+  });
+});
+
 describe("execution contract version", () => {
   it("accepts a job stamped with the current version", () => {
     expect(executionJobSchema.parse(validJob()).contractVersion).toBe(EXECUTION_CONTRACT_VERSION);

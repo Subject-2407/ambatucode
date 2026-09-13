@@ -243,6 +243,9 @@ function toExecutionTestCases(cases: PracticeTestCase[]): ExecutionTestCase[] {
     weight: 1,
     isPublic: true,
     comparison: testCase.comparison,
+    // Practice cases have no per-case limits; the activity's own apply.
+    timeLimitMs: null,
+    memoryLimitMb: null,
   }));
 }
 

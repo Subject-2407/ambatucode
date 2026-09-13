@@ -35,17 +35,22 @@ describe("computeScore", () => {
     });
   });
 
-  it.each([
-    "QUEUED",
-    "RUNNING",
-    "COMPILE_ERROR",
-    "RUNTIME_ERROR",
-    "TIME_LIMIT_EXCEEDED",
-    "MEMORY_LIMIT_EXCEEDED",
-    "SYSTEM_ERROR",
-  ] as const)("scores %s as 0 even when rows passed", (status) => {
-    expect(computeScore("WEIGHTED_AVERAGE", status, [pass(), pass()])).toBe(0);
-  });
+  it.each(["QUEUED", "RUNNING", "COMPILE_ERROR", "SYSTEM_ERROR"] as const)(
+    "scores %s as 0 even when rows passed",
+    (status) => {
+      expect(computeScore("WEIGHTED_AVERAGE", status, [pass(), pass()])).toBe(0);
+    },
+  );
+
+  // One case over its limit, or crashing, fails that case. The rest still ran
+  // and still count.
+  it.each(["RUNTIME_ERROR", "TIME_LIMIT_EXCEEDED", "MEMORY_LIMIT_EXCEEDED"] as const)(
+    "gives partial credit when the submission status is %s",
+    (status) => {
+      expect(computeScore("WEIGHTED_AVERAGE", status, [pass(), pass(), pass(), fail()])).toBe(75);
+      expect(computeScore("ALL_OR_NOTHING", status, [pass(), fail()])).toBe(0);
+    },
+  );
 
   it("scores a graded result with no rows as 0", () => {
     expect(computeScore("WEIGHTED_AVERAGE", "GRADED", [])).toBe(0);

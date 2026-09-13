@@ -27,9 +27,9 @@ const STATUS_DETAIL: Readonly<Record<SubmissionStatus, string>> = {
   RUNNING: "Your submission is being graded.",
   GRADED: "Grading finished.",
   COMPILE_ERROR: "Your program did not compile, so no cases could run.",
-  RUNTIME_ERROR: "Your program stopped with an error while running.",
-  TIME_LIMIT_EXCEEDED: "Your program ran past the time limit.",
-  MEMORY_LIMIT_EXCEEDED: "Your program used more memory than allowed.",
+  RUNTIME_ERROR: "Your program stopped with an error on at least one case.",
+  TIME_LIMIT_EXCEEDED: "Your program ran past the time limit on at least one case.",
+  MEMORY_LIMIT_EXCEEDED: "Your program used more memory than allowed on at least one case.",
   SYSTEM_ERROR: "Something went wrong on the platform's side, not in your code.",
 };
 
@@ -58,9 +58,16 @@ export function describeSubmission(
     return { ...base, tone: status === "RUNNING" ? "info" : "neutral", settled };
   }
 
-  if (status !== "GRADED") return { ...base, tone: "danger", settled };
+  if (status === "COMPILE_ERROR" || status === "SYSTEM_ERROR") {
+    return { ...base, tone: "danger", settled };
+  }
 
-  if (score === null) return { ...base, tone: "neutral", settled };
+  if (score === null) {
+    return { ...base, tone: status === "GRADED" ? "neutral" : "danger", settled };
+  }
+
+  // A case over its limit fails that case alone, so these statuses can still
+  // carry a partial score — and it has to be shown next to what went wrong.
   const tone: BadgeTone = score >= 100 ? "success" : score > 0 ? "warning" : "danger";
-  return { label: `Graded — ${String(score)}/100`, detail: base.detail, tone, settled };
+  return { label: `${base.label} — ${String(score)}/100`, detail: base.detail, tone, settled };
 }

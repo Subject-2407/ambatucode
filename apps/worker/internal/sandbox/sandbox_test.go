@@ -12,6 +12,20 @@ import (
 // production import from sandbox to language would invert the layering — so
 // the agreement is asserted instead. A silent drift would leave every job
 // unable to find its own source file.
+func TestParseOOMKillsReadsTheCgroupCounter(t *testing.T) {
+	events := "low 0\nhigh 0\nmax 12\noom 3\noom_kill 2\noom_group_kill 0\n"
+	if count, ok := parseOOMKills(events); !ok || count != 2 {
+		t.Fatalf("parsed %d, %v; want 2, true", count, ok)
+	}
+	// oom_group_kill must not be mistaken for oom_kill.
+	if _, ok := parseOOMKills("oom_group_kill 5\n"); ok {
+		t.Fatal("read a count from a file with no oom_kill line")
+	}
+	if _, ok := parseOOMKills("oom_kill many\n"); ok {
+		t.Fatal("read a count from an unparseable value")
+	}
+}
+
 func TestWorkspaceDirMatchesTheLanguageRegistry(t *testing.T) {
 	if workspaceDir != language.WorkspaceDir {
 		t.Fatalf(

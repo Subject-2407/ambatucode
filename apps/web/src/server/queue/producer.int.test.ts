@@ -53,6 +53,8 @@ function buildRunJob(overrides: Partial<ExecutionJobInput> = {}): ExecutionJobIn
         weight: 1,
         isPublic: true,
         comparison: "TRIMMED",
+        timeLimitMs: null,
+        memoryLimitMb: null,
       },
     ],
     testScript: null,
@@ -106,6 +108,8 @@ describe("enqueueExecutionJob", () => {
           weight: 1,
           isPublic: false,
           comparison: "EXACT",
+          timeLimitMs: null,
+          memoryLimitMb: null,
         },
       ],
     });
@@ -117,7 +121,7 @@ describe("enqueueExecutionJob", () => {
 
   it("refuses to put a test script in a RUN payload", async () => {
     const input = buildRunJob({
-      testScript: { framework: "PYTEST", entrypoint: "test_main.py", files: [] },
+      testScript: { framework: "PYTEST", entrypoint: "test_main.py", files: [], weight: 1 },
     });
 
     await expect(enqueueExecutionJob(input, OWNER)).rejects.toThrow(

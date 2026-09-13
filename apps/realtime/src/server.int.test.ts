@@ -243,6 +243,7 @@ describe("execution:status", () => {
         testResults: [
           {
             name: "echoes its input",
+            status: "GRADED",
             passed: true,
             executionTimeMs: 12,
             stdoutExcerpt: "hello",

@@ -5,7 +5,11 @@ import { Box, HStack, Stack, Text } from "@chakra-ui/react";
 import { Check, X } from "lucide-react";
 import type { RunTestResultView } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
-import { describeRun, shouldShowCompilerOutput } from "@/components/content/run-status";
+import {
+  describeCaseOutcome,
+  describeRun,
+  shouldShowCompilerOutput,
+} from "@/components/content/run-status";
 import type { RunJobState } from "@/hooks/use-run-job";
 
 /**
@@ -52,7 +56,7 @@ export function TestResultRow({ result }: { result: RunTestResultView }) {
             {result.name}
           </Text>
           <Text fontSize="xs" color="fg.muted">
-            {result.passed ? "Passed" : "Failed"}
+            {describeCaseOutcome(result)}
           </Text>
         </HStack>
         <Text fontSize="xs" color="fg.muted" flexShrink="0">

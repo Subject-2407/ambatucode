@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,20 @@ import (
 const excerptLimit = 4096
 
 const truncationMarker = "\n… output truncated …"
+
+// backstopMargin is how much longer than a case's own limit the worker waits
+// before killing the whole container.
+//
+// A case's limit is enforced inside the container by `timeout`, which kills the
+// case alone and leaves the container for the next case. The worker's deadline
+// only fires when that fails — typically a process that escaped the case's
+// process group and holds its output open — and then the container goes too.
+const backstopMargin = 2 * time.Second
+
+// notRunExcerpt explains a case that never started because the job's time ran
+// out first. It is reported rather than omitted: leaving it out would score
+// the submission on only the cases that happened to fit.
+const notRunExcerpt = "not run: the submission's time budget was spent before this case"
 
 type Runner struct {
 	sandbox *sandbox.Sandbox
@@ -43,6 +58,11 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 	// Java needs the file named after the public class the program declares.
 	// Every other language ignores its source here.
 	spec := base.For(job.SourceCode)
+
+	// The whole job — compile, every case — shares one wall clock. The
+	// container's keeper outlives it by a margin, so running out of this budget
+	// is a time limit, never a container that vanished mid-case.
+	deadline := time.Now().Add(time.Duration(job.Limits.WallTimeoutMs) * time.Millisecond)
 
 	session, err := r.sandbox.Open(ctx, sandbox.SessionSpec{
 		JobID:          job.JobID,
@@ -69,7 +89,7 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 	if spec.Compiled() {
 		outcome, err := session.Run(ctx, sandbox.ExecSpec{
 			Cmd:     spec.CompileCmd,
-			Timeout: time.Duration(job.Limits.CompileTimeoutMs) * time.Millisecond,
+			Timeout: capToDeadline(time.Duration(job.Limits.CompileTimeoutMs)*time.Millisecond, deadline),
 		})
 		if err != nil {
 			return r.systemError(job, err)
@@ -92,53 +112,71 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 		}
 	}
 
-	return r.runCases(ctx, job, spec, session, result)
+	return r.runCases(ctx, job, spec, session, deadline, result)
+}
+
+// caseRun is one case's execution, classified.
+type caseRun struct {
+	status   contract.Status
+	outcome  sandbox.RunOutcome
+	duration time.Duration
 }
 
 // runCases executes every test case in the already-prepared session.
+//
+// A case that crashes, runs out of time, or runs out of memory fails that case
+// alone. The remaining cases still run, and the job's status is the most
+// severe any case reached — so a submission is scored on every case it was
+// given, not cut off at the first slow one.
 func (r *Runner) runCases(
 	ctx context.Context,
 	job contract.Job,
 	spec language.Spec,
 	session *sandbox.Session,
+	deadline time.Time,
 	result contract.Result,
 ) contract.Result {
-	caseTimeout := time.Duration(job.Limits.RunTimeoutMs) * time.Millisecond
+	meter := newOOMMeter(ctx, session)
 
 	// A job with no cases still runs once, so a program that cannot start is
 	// reported as a runtime failure instead of a silent pass.
 	if len(job.TestCases) == 0 {
-		outcome, err := session.Run(ctx, sandbox.ExecSpec{Cmd: spec.RunCmd, Timeout: caseTimeout})
+		run, err := r.runCase(ctx, session, spec, meter, "", job.Limits.RunTimeoutMs, job.Limits.MemoryLimitMb, deadline)
 		if err != nil {
 			return r.systemError(job, err)
 		}
-		result.Status = classify(outcome)
-		result.ExecutionTimeMs = float64(outcome.Duration.Milliseconds())
+		result.Status = run.status
+		result.ExecutionTimeMs = float64(run.duration.Milliseconds())
 		return result
 	}
 
 	worst := contract.StatusGraded
 	var totalDuration time.Duration
+	// Set when a case's outcome made every later one unknowable: the container
+	// was killed, or a memory kill could not be attributed to one case.
+	var stoppedBy contract.Status
 
 	for _, testCase := range job.TestCases {
-		outcome, err := session.Run(ctx, sandbox.ExecSpec{
-			Cmd:     spec.RunCmd,
-			Stdin:   testCase.Input,
-			Timeout: caseTimeout,
-		})
+		if stoppedBy == "" && (!session.Alive() || !time.Now().Before(deadline)) {
+			stoppedBy = contract.StatusTimeLimitExceeded
+		}
+		if stoppedBy != "" {
+			result.TestResults = append(result.TestResults, notRun(testCase, stoppedBy))
+			worst = escalate(worst, stoppedBy)
+			continue
+		}
+
+		run, err := r.runCase(ctx, session, spec, meter, testCase.Input,
+			testCase.RunTimeout(job.Limits), testCase.MemoryLimit(job.Limits), deadline)
 		if err != nil {
 			return r.systemError(job, err)
 		}
-		totalDuration += outcome.Duration
-
-		status := classify(outcome)
-		worst = escalate(worst, status)
+		totalDuration += run.duration
+		worst = escalate(worst, run.status)
 
 		passed := false
-		if status == contract.StatusGraded {
-			matched, compareErr := grader.Compare(
-				testCase.Comparison, testCase.ExpectedOutput, outcome.Stdout,
-			)
+		if run.status == contract.StatusGraded {
+			matched, compareErr := grader.Compare(testCase.Comparison, testCase.ExpectedOutput, run.outcome.Stdout)
 			if compareErr != nil {
 				return r.systemError(job, compareErr)
 			}
@@ -148,27 +186,144 @@ func (r *Runner) runCases(
 		result.TestResults = append(result.TestResults, contract.TestResult{
 			TestCaseID:      stringPtr(testCase.ID),
 			Name:            testCase.Name,
+			Status:          run.status,
 			Passed:          passed,
 			Weight:          testCase.Weight,
-			ExecutionTimeMs: float64(outcome.Duration.Milliseconds()),
-			MemoryUsedKb:    nil, // per-case memory accounting arrives with the limits work
-			StdoutExcerpt:   excerpt(outcome.Stdout, outcome.StdoutTruncated),
-			StderrExcerpt:   excerpt(outcome.Stderr, outcome.StderrTruncated),
+			ExecutionTimeMs: float64(run.duration.Milliseconds()),
+			MemoryUsedKb:    nil,
+			StdoutExcerpt:   excerpt(run.outcome.Stdout, run.outcome.StdoutTruncated),
+			StderrExcerpt:   excerpt(run.outcome.Stderr, run.outcome.StderrTruncated),
 		})
 
-		// A memory kill or a timeout ends the job rather than rolling on to the
-		// next case. The container's OOM state is sticky once its cgroup has
-		// fired, so every later case would inherit a verdict that is no longer
-		// about it — and a wall-clock kill has already destroyed the container
-		// the remaining cases would need.
-		if status == contract.StatusMemoryLimitExceeded || status == contract.StatusTimeLimitExceeded {
-			break
+		// Without a readable kill counter, the daemon's memory flag stays set
+		// once raised, so no later case's memory verdict could be trusted.
+		if run.status == contract.StatusMemoryLimitExceeded && !meter.available {
+			stoppedBy = contract.StatusMemoryLimitExceeded
 		}
 	}
 
 	result.Status = worst
 	result.ExecutionTimeMs = float64(totalDuration.Milliseconds())
 	return result
+}
+
+// runCase runs the program once under one case's limits and classifies it.
+func (r *Runner) runCase(
+	ctx context.Context,
+	session *sandbox.Session,
+	spec language.Spec,
+	meter *oomMeter,
+	stdin string,
+	timeLimitMs, memoryLimitMb int64,
+	deadline time.Time,
+) (caseRun, error) {
+	if err := session.SetMemoryLimit(ctx, memoryLimitMb); err != nil {
+		return caseRun{}, err
+	}
+
+	budget := capToDeadline(time.Duration(timeLimitMs)*time.Millisecond, deadline)
+	outcome, err := session.Run(ctx, sandbox.ExecSpec{
+		Cmd:     withTimeout(budget, spec.RunCmd),
+		Stdin:   stdin,
+		Timeout: budget + backstopMargin,
+	})
+	if err != nil {
+		return caseRun{}, err
+	}
+
+	return caseRun{
+		status:   classifyCase(outcome, meter.killedDuring(ctx, outcome), budget),
+		outcome:  outcome,
+		duration: outcome.Duration,
+	}, nil
+}
+
+// withTimeout bounds a command inside the container with GNU timeout.
+//
+// SIGKILL, because a program that traps SIGTERM must not get extra time.
+// timeout signals its whole process group, so children the program forked die
+// with it; only a process that deliberately left the group survives, and the
+// worker's own deadline on the exec catches that one by killing the container.
+func withTimeout(budget time.Duration, cmd []string) []string {
+	seconds := strconv.FormatFloat(budget.Seconds(), 'f', 3, 64)
+	return append([]string{"timeout", "--signal=KILL", seconds + "s"}, cmd...)
+}
+
+// capToDeadline shrinks a step's budget to what remains of the job's.
+func capToDeadline(budget time.Duration, deadline time.Time) time.Duration {
+	if remaining := time.Until(deadline); remaining < budget {
+		if remaining < time.Millisecond {
+			return time.Millisecond
+		}
+		return remaining
+	}
+	return budget
+}
+
+// timeoutKillExit is timeout's exit status when it had to SIGKILL the command:
+// 128 plus the signal number.
+const timeoutKillExit = 137
+
+// classifyCase maps one case's outcome to a status, in the documented
+// precedence.
+//
+// Exit 137 alone is ambiguous — the program killed by timeout, by the OOM
+// killer, or by a signal of its own. The memory verdict comes from the kernel's
+// counter, and a timeout kill is one that also lasted the whole budget.
+func classifyCase(outcome sandbox.RunOutcome, oomKilled bool, budget time.Duration) contract.Status {
+	switch {
+	case outcome.TimedOut:
+		return contract.StatusTimeLimitExceeded
+	case outcome.ExitCode == timeoutKillExit && !oomKilled && outcome.Duration >= budget:
+		return contract.StatusTimeLimitExceeded
+	case oomKilled:
+		return contract.StatusMemoryLimitExceeded
+	case outcome.ExitCode != 0:
+		return contract.StatusRuntimeError
+	default:
+		return contract.StatusGraded
+	}
+}
+
+// oomMeter attributes memory kills to the case that caused them.
+type oomMeter struct {
+	session   *sandbox.Session
+	available bool
+	count     int64
+}
+
+func newOOMMeter(ctx context.Context, session *sandbox.Session) *oomMeter {
+	count, ok := session.OOMKills(ctx)
+	return &oomMeter{session: session, available: ok, count: count}
+}
+
+// killedDuring reports whether a memory kill happened during the run that just
+// produced outcome.
+func (m *oomMeter) killedDuring(ctx context.Context, outcome sandbox.RunOutcome) bool {
+	if !m.available || !m.session.Alive() {
+		// The daemon's flag: correct for the first kill, sticky afterwards —
+		// the caller stops trusting later cases once it has fired.
+		return outcome.OOMKilled
+	}
+	count, ok := m.session.OOMKills(ctx)
+	if !ok {
+		return outcome.OOMKilled
+	}
+	killed := count > m.count
+	m.count = count
+	return killed
+}
+
+// notRun reports a case that never started.
+func notRun(testCase contract.TestCase, status contract.Status) contract.TestResult {
+	return contract.TestResult{
+		TestCaseID:    stringPtr(testCase.ID),
+		Name:          testCase.Name,
+		Status:        status,
+		Passed:        false,
+		Weight:        testCase.Weight,
+		StderrExcerpt: notRunExcerpt,
+	}
 }
 
 // classifyCompile maps a build step's outcome, and reports whether it failed.
@@ -186,22 +341,6 @@ func classifyCompile(outcome sandbox.RunOutcome) (contract.Status, bool) {
 		return contract.StatusCompileError, true
 	default:
 		return contract.StatusGraded, false
-	}
-}
-
-// classify maps one execution outcome to a status, in the documented
-// precedence. OOM is read from the daemon's state rather than guessed from an
-// exit code, because a memory kill and an ordinary SIGKILL both surface as 137.
-func classify(outcome sandbox.RunOutcome) contract.Status {
-	switch {
-	case outcome.TimedOut:
-		return contract.StatusTimeLimitExceeded
-	case outcome.OOMKilled:
-		return contract.StatusMemoryLimitExceeded
-	case outcome.ExitCode != 0:
-		return contract.StatusRuntimeError
-	default:
-		return contract.StatusGraded
 	}
 }
 

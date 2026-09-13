@@ -31,8 +31,10 @@ import {
   type TestCaseKind,
   type TestCaseView,
   type TestScriptFramework,
+  type TestResultStatus,
   type TestScriptView,
   type TimeMode,
+  TEST_RESULT_STATUSES,
 } from "@ambatucode/shared";
 
 /**
@@ -419,6 +421,7 @@ export function toAttemptView(input: {
 export type SubmissionResultRow = {
   testCaseId: string | null;
   name: string;
+  status: SubmissionStatus | null;
   passed: boolean;
   weight: number;
   executionTimeMs: number | null;
@@ -441,6 +444,15 @@ export type SubmissionRow = SubmissionSummaryRow & {
 };
 
 /**
+ * The column shares the submission status enum, but ingest only ever writes a
+ * per-case status there. Anything else would be a corrupted row, and reads as
+ * "not recorded" rather than a status no case can have.
+ */
+function toTestResultStatus(status: SubmissionStatus | null): TestResultStatus | null {
+  return TEST_RESULT_STATUSES.find((candidate) => candidate === status) ?? null;
+}
+
+/**
  * Hidden rows are dropped before anything is copied — not blanked — because
  * their stdout and stderr excerpts can echo the input the case was hiding.
  * `systemError` is never copied: it describes the platform, not the program.
@@ -456,6 +468,7 @@ export function toSubmissionCoderView(row: SubmissionRow): SubmissionCoderView {
       .filter((result) => result.isPublic)
       .map((result) => ({
         name: result.name,
+        status: toTestResultStatus(result.status),
         passed: result.passed,
         executionTimeMs: result.executionTimeMs,
         stdoutExcerpt: result.stdoutExcerpt,
@@ -478,6 +491,7 @@ export function toSubmissionArchitectView(row: SubmissionRow): SubmissionArchite
     testResults: row.results.map((result) => ({
       testCaseId: result.testCaseId,
       name: result.name,
+      status: toTestResultStatus(result.status),
       passed: result.passed,
       weight: result.weight,
       isPublic: result.isPublic,

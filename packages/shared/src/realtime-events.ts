@@ -6,6 +6,7 @@ import {
   LANGUAGES,
   READY_STATES,
   SUBMISSION_STATUSES,
+  TEST_RESULT_STATUSES,
 } from "./enums";
 import type { AttemptStatus, Language } from "./enums";
 
@@ -151,6 +152,8 @@ export type SessionStartedPayload = z.infer<typeof sessionStartedPayloadSchema>;
  */
 export const runTestResultViewSchema = z.object({
   name: z.string(),
+  /** How this case ended — a time limit on one case does not stop the others. */
+  status: z.enum(TEST_RESULT_STATUSES),
   passed: z.boolean(),
   executionTimeMs: z.number().nonnegative(),
   stdoutExcerpt: z.string(),

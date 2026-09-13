@@ -48,9 +48,14 @@ chmod 0555 /workspace
 #           read-only root filesystem, and that read-only root is not
 #           negotiable, so this is how a workspace gets in without ever
 #           bind-mounting a host path.
+#   timeout — bounds each test case inside the container, so a case that runs
+#           past its limit is killed alone and the remaining cases still run
+#           in the same container, next to the program they compiled.
+#   cat   — reads the cgroup's memory.events, whose oom_kill counter is the
+#           only way to tell which of several cases ran out of memory.
 #
 # Removing coreutils from a language image will break execution, not harden it.
-for required in sleep tee; do
+for required in sleep tee timeout cat; do
   command -v "$required" > /dev/null || {
     echo "sandbox image is missing required binary: $required" >&2
     exit 1

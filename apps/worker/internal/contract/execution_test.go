@@ -97,6 +97,7 @@ func TestParseJobRejectsTestScriptOnRunJob(t *testing.T) {
 		"framework":  "PYTEST",
 		"entrypoint": "test_main.py",
 		"files":      []any{},
+		"weight":     1,
 	}
 
 	_, err := ParseJob(encode(t, payload))
@@ -146,6 +147,58 @@ func TestParseJobRejectsUnknownComparisonMode(t *testing.T) {
 
 	if _, err := ParseJob(encode(t, payload)); err == nil {
 		t.Fatal("expected an error for an unknown comparison mode")
+	}
+}
+
+func publicCase(overrides map[string]any) map[string]any {
+	testCase := map[string]any{
+		"id":             "case-1",
+		"name":           "public",
+		"input":          "",
+		"expectedOutput": "42",
+		"weight":         1,
+		"isPublic":       true,
+		"comparison":     "TRIMMED",
+		"timeLimitMs":    nil,
+		"memoryLimitMb":  nil,
+	}
+	for key, value := range overrides {
+		testCase[key] = value
+	}
+	return testCase
+}
+
+// A case's own limits win; a null falls back to the job's.
+func TestParseJobReadsPerCaseLimitOverrides(t *testing.T) {
+	payload := validJobMap()
+	payload["testCases"] = []any{
+		publicCase(map[string]any{"id": "slow", "timeLimitMs": 9000, "memoryLimitMb": 512}),
+		publicCase(map[string]any{"id": "default"}),
+	}
+
+	job, err := ParseJob(encode(t, payload))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	slow, fallback := job.TestCases[0], job.TestCases[1]
+	if slow.RunTimeout(job.Limits) != 9000 || slow.MemoryLimit(job.Limits) != 512 {
+		t.Fatalf("override ignored: %d ms, %d MB", slow.RunTimeout(job.Limits), slow.MemoryLimit(job.Limits))
+	}
+	if fallback.RunTimeout(job.Limits) != 5000 || fallback.MemoryLimit(job.Limits) != 256 {
+		t.Fatalf("null did not fall back to the job limits: %d ms, %d MB",
+			fallback.RunTimeout(job.Limits), fallback.MemoryLimit(job.Limits))
+	}
+}
+
+func TestParseJobRejectsNonPositivePerCaseLimits(t *testing.T) {
+	for _, field := range []string{"timeLimitMs", "memoryLimitMb"} {
+		payload := validJobMap()
+		payload["testCases"] = []any{publicCase(map[string]any{field: 0})}
+
+		if _, err := ParseJob(encode(t, payload)); err == nil {
+			t.Fatalf("expected a zero %s to be rejected", field)
+		}
 	}
 }
 

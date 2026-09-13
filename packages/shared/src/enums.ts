@@ -72,6 +72,19 @@ export const SUBMISSION_STATUSES = [
 ] as const;
 export type SubmissionStatus = (typeof SUBMISSION_STATUSES)[number];
 
+/**
+ * How one test case or one script test ended. A subset of the submission
+ * statuses: compiling happens once per submission and a platform failure ends
+ * the whole job, so neither can describe a single case.
+ */
+export const TEST_RESULT_STATUSES = [
+  "GRADED",
+  "RUNTIME_ERROR",
+  "TIME_LIMIT_EXCEEDED",
+  "MEMORY_LIMIT_EXCEEDED",
+] as const satisfies readonly SubmissionStatus[];
+export type TestResultStatus = (typeof TEST_RESULT_STATUSES)[number];
+
 /** Statuses the pipeline may still move away from. Everything else is final. */
 export const NON_TERMINAL_SUBMISSION_STATUSES: readonly SubmissionStatus[] = ["QUEUED", "RUNNING"];
 

@@ -444,19 +444,21 @@ model Submission {
 }
 
 model SubmissionTestResult {
-  id              String   @id @default(cuid())
+  id              String            @id @default(cuid())
   submissionId    String
   testCaseId      String?
   name            String
+  // How this case alone ended. Null on rows graded before it was recorded.
+  status          SubmissionStatus?
   passed          Boolean
-  weight          Int      @default(1)
+  weight          Int               @default(1)
   executionTimeMs Int?
   memoryUsedKb    Int?
-  stdoutExcerpt   String   @default("")
-  stderrExcerpt   String   @default("")
+  stdoutExcerpt   String            @default("")
+  stderrExcerpt   String            @default("")
   // Rows with isPublic = false are stripped before any Coder-facing response.
-  isPublic        Boolean  @default(false)
-  createdAt       DateTime @default(now())
+  isPublic        Boolean           @default(false)
+  createdAt       DateTime          @default(now())
 
   submission Submission          @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   testCase   AssessmentTestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)

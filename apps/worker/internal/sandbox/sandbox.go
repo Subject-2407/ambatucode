@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -159,6 +160,10 @@ type Session struct {
 	id             string
 	jobID          string
 	maxOutputBytes int64
+	memoryLimitMb  int64
+	// killed is set once a deadline forced the whole container down. Nothing
+	// further can run in the session after that.
+	killed bool
 }
 
 // Open creates the container and starts its keeper process.
@@ -173,11 +178,78 @@ func (s *Sandbox) Open(ctx context.Context, spec SessionSpec) (*Session, error) 
 		return nil, fmt.Errorf("start container: %w", err)
 	}
 
-	return &Session{box: s, id: id, jobID: spec.JobID, maxOutputBytes: spec.MaxOutputBytes}, nil
+	return &Session{
+		box:            s,
+		id:             id,
+		jobID:          spec.JobID,
+		maxOutputBytes: spec.MaxOutputBytes,
+		memoryLimitMb:  spec.MemoryLimitMb,
+	}, nil
 }
 
 // ContainerID is diagnostic only; it appears in structured logs.
 func (sn *Session) ContainerID() string { return sn.id }
+
+// Alive reports whether commands can still run in the session.
+func (sn *Session) Alive() bool { return sn.id != "" && !sn.killed }
+
+// SetMemoryLimit changes the container's memory ceiling for what runs next.
+//
+// Swap moves with it, equal to the limit, so it stays disabled: a limit raised
+// on memory alone would let the difference spill into swap. A no-op when the
+// limit is already in force, which is the common case of a job with no
+// per-case overrides.
+func (sn *Session) SetMemoryLimit(ctx context.Context, memoryLimitMb int64) error {
+	if memoryLimitMb == sn.memoryLimitMb {
+		return nil
+	}
+	bytes := memoryLimitMb * 1024 * 1024
+	_, err := sn.box.client.ContainerUpdate(ctx, sn.id, container.UpdateConfig{
+		Resources: container.Resources{Memory: bytes, MemorySwap: bytes},
+	})
+	if err != nil {
+		return fmt.Errorf("set memory limit to %d MB: %w", memoryLimitMb, err)
+	}
+	sn.memoryLimitMb = memoryLimitMb
+	return nil
+}
+
+// OOMKills returns how many processes the kernel has killed for exceeding the
+// container's memory limit so far. The second return is false when the count
+// cannot be read, which happens on a host without cgroup v2.
+//
+// Unlike the daemon's OOMKilled flag, which is set once and never cleared, the
+// counter can be compared before and after each case — the only way to tell
+// which case of several ran out of memory.
+func (sn *Session) OOMKills(ctx context.Context) (int64, bool) {
+	readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	result, err := sn.box.exec(readCtx, sn.id, execRequest{
+		cmd:       []string{"cat", "/sys/fs/cgroup/memory.events"},
+		outputCap: 4096,
+	})
+	if err != nil || result.exitCode != 0 {
+		return 0, false
+	}
+	return parseOOMKills(result.stdout)
+}
+
+// parseOOMKills reads the oom_kill counter from a cgroup v2 memory.events file.
+func parseOOMKills(events string) (int64, bool) {
+	for _, line := range strings.Split(events, "\n") {
+		name, value, found := strings.Cut(strings.TrimSpace(line), " ")
+		if !found || name != "oom_kill" {
+			continue
+		}
+		count, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return count, true
+	}
+	return 0, false
+}
 
 // Close removes the container. Safe to call twice.
 func (sn *Session) Close() {
@@ -367,6 +439,7 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 		// program that ignores signals must not get extra time, and the
 		// container is being destroyed regardless.
 		outcome.TimedOut = true
+		sn.killed = true
 		killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer killCancel()
 		if killErr := sn.box.client.ContainerKill(killCtx, sn.id, "SIGKILL"); killErr != nil &&
@@ -393,9 +466,9 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 // memory kill from an ordinary SIGKILL — both surface as 137.
 //
 // It is also sticky: once the cgroup has OOMed the flag stays set for the life
-// of the container. That is why the runner stops the job at the first memory
-// kill rather than continuing to later cases, whose outcome this could no
-// longer describe honestly.
+// of the container, so it describes a single step honestly only until the
+// first memory kill. The runner attributes kills to cases with OOMKills and
+// falls back to this flag only where that counter cannot be read.
 func (sn *Session) oomKilled() bool {
 	// A fresh context: the run context may already be past its deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

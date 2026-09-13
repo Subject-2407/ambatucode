@@ -52,6 +52,8 @@ async function main(): Promise<void> {
           weight: 1,
           isPublic: true,
           comparison: "TRIMMED",
+          timeLimitMs: null,
+          memoryLimitMb: null,
         },
       ],
       testScript: null,

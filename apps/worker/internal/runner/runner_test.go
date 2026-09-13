@@ -5,34 +5,80 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/contract"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/language"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/sandbox"
 )
 
-func TestClassifyFollowsDocumentedPrecedence(t *testing.T) {
+func TestClassifyCaseFollowsDocumentedPrecedence(t *testing.T) {
+	budget := 2 * time.Second
 	cases := []struct {
 		name    string
 		outcome sandbox.RunOutcome
+		oom     bool
 		want    contract.Status
 	}{
-		{"clean exit", sandbox.RunOutcome{ExitCode: 0}, contract.StatusGraded},
-		{"non-zero exit", sandbox.RunOutcome{ExitCode: 1}, contract.StatusRuntimeError},
-		{"oom", sandbox.RunOutcome{ExitCode: 137, OOMKilled: true}, contract.StatusMemoryLimitExceeded},
-		{"timeout", sandbox.RunOutcome{ExitCode: 137, TimedOut: true}, contract.StatusTimeLimitExceeded},
-		// A memory kill and a timeout kill both surface as 137. Timeout wins
-		// because our deadline fired first; OOM is read from the daemon flag.
-		{"timeout outranks oom", sandbox.RunOutcome{TimedOut: true, OOMKilled: true}, contract.StatusTimeLimitExceeded},
-		{"oom outranks a plain crash", sandbox.RunOutcome{ExitCode: 137, OOMKilled: true}, contract.StatusMemoryLimitExceeded},
+		{"clean exit", sandbox.RunOutcome{ExitCode: 0, Duration: time.Second}, false, contract.StatusGraded},
+		{"non-zero exit", sandbox.RunOutcome{ExitCode: 1, Duration: time.Second}, false, contract.StatusRuntimeError},
+		// timeout's SIGKILL: exit 137, having used the whole budget.
+		{"killed by timeout", sandbox.RunOutcome{ExitCode: 137, Duration: budget + 10*time.Millisecond}, false, contract.StatusTimeLimitExceeded},
+		// The worker's own backstop fired and took the container.
+		{"killed by the backstop", sandbox.RunOutcome{TimedOut: true}, false, contract.StatusTimeLimitExceeded},
+		// 137 from the OOM killer, well inside the budget.
+		{"memory kill", sandbox.RunOutcome{ExitCode: 137, Duration: 300 * time.Millisecond}, true, contract.StatusMemoryLimitExceeded},
+		// A memory kill that happens to land at the limit is still memory: the
+		// kernel's counter is the evidence, the clock only a heuristic.
+		{"memory kill at the limit", sandbox.RunOutcome{ExitCode: 137, Duration: budget}, true, contract.StatusMemoryLimitExceeded},
+		// A program that SIGKILLs itself early is its own crash, not a timeout.
+		{"early self-kill", sandbox.RunOutcome{ExitCode: 137, Duration: 100 * time.Millisecond}, false, contract.StatusRuntimeError},
+		{"backstop outranks oom", sandbox.RunOutcome{TimedOut: true}, true, contract.StatusTimeLimitExceeded},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := classify(testCase.outcome); got != testCase.want {
-				t.Fatalf("classify = %s, want %s", got, testCase.want)
+			if got := classifyCase(testCase.outcome, testCase.oom, budget); got != testCase.want {
+				t.Fatalf("classifyCase = %s, want %s", got, testCase.want)
 			}
 		})
+	}
+}
+
+// The limit is enforced inside the container by an argument vector, never a
+// shell string, and the program's own vector is passed through untouched.
+func TestWithTimeoutPrefixesTheCommandWithoutAShell(t *testing.T) {
+	got := withTimeout(2500*time.Millisecond, []string{"python3", "/workspace/main.py"})
+	want := []string{"timeout", "--signal=KILL", "2.500s", "python3", "/workspace/main.py"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+}
+
+// A case never gets more time than the job has left.
+func TestCapToDeadlineShrinksToTheRemainingBudget(t *testing.T) {
+	if got := capToDeadline(5*time.Second, time.Now().Add(time.Minute)); got != 5*time.Second {
+		t.Fatalf("budget with time to spare = %s, want 5s", got)
+	}
+	if got := capToDeadline(5*time.Second, time.Now().Add(time.Second)); got > time.Second {
+		t.Fatalf("budget near the deadline = %s, want at most 1s", got)
+	}
+	if got := capToDeadline(5*time.Second, time.Now().Add(-time.Second)); got <= 0 {
+		t.Fatalf("budget past the deadline = %s, want a small positive value", got)
+	}
+}
+
+// A case that never started is still reported, failed, so the submission is
+// scored on every case it was given.
+func TestNotRunReportsTheCaseAsFailed(t *testing.T) {
+	testCase := contract.TestCase{ID: "case-9", Name: "late", Weight: 3}
+	got := notRun(testCase, contract.StatusTimeLimitExceeded)
+
+	if got.Passed || got.Status != contract.StatusTimeLimitExceeded || got.Weight != 3 {
+		t.Fatalf("not-run result = %+v", got)
+	}
+	if got.TestCaseID == nil || *got.TestCaseID != "case-9" {
+		t.Fatal("a not-run result lost its case id, so it could not be scored")
 	}
 }
 

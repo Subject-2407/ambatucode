@@ -347,9 +347,19 @@ export async function saveDraft(
 
 function limitsFor(
   assessment: { timeLimitMs: number; memoryLimitMb: number },
-  caseCount: number,
+  testCases: ReadonlyArray<{ timeLimitMs: number | null }>,
   hasScript: boolean,
 ): ExecutionLimits {
+  // Each case runs for its own limit when it has one, so the budget is the sum
+  // of what every case may actually take.
+  const caseBudgetMs =
+    testCases.length === 0
+      ? assessment.timeLimitMs
+      : testCases.reduce(
+          (total, testCase) => total + (testCase.timeLimitMs ?? assessment.timeLimitMs),
+          0,
+        );
+
   return {
     ...DEFAULT_EXECUTION_LIMITS,
     runTimeoutMs: assessment.timeLimitMs,
@@ -360,7 +370,7 @@ function limitsFor(
     wallTimeoutMs: Math.max(
       DEFAULT_EXECUTION_LIMITS.wallTimeoutMs,
       DEFAULT_EXECUTION_LIMITS.compileTimeoutMs +
-        assessment.timeLimitMs * Math.max(1, caseCount) +
+        caseBudgetMs +
         (hasScript ? DEFAULT_EXECUTION_LIMITS.wallTimeoutMs : 0),
     ),
   };
@@ -393,7 +403,15 @@ export async function runAttempt(
         testCases: {
           where: { kind: "PUBLIC" },
           orderBy: { orderIndex: "asc" },
-          select: { id: true, name: true, input: true, expectedOutput: true, comparison: true },
+          select: {
+            id: true,
+            name: true,
+            input: true,
+            expectedOutput: true,
+            comparison: true,
+            timeLimitMs: true,
+            memoryLimitMb: true,
+          },
         },
       },
     }),
@@ -426,6 +444,9 @@ export async function runAttempt(
     weight: 1,
     isPublic: true,
     comparison: testCase.comparison,
+    // A Run respects the same per-case limits the formal submission will.
+    timeLimitMs: testCase.timeLimitMs,
+    memoryLimitMb: testCase.memoryLimitMb,
   }));
 
   const jobId = await enqueueExecutionJob(
@@ -435,7 +456,7 @@ export async function runAttempt(
       submissionId: null,
       language: input.language,
       sourceCode: input.sourceCode,
-      limits: limitsFor(assessment, testCases.length, false),
+      limits: limitsFor(assessment, testCases, false),
       testCases,
       testScript: null,
     },
@@ -475,10 +496,18 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
               weight: true,
               comparison: true,
               kind: true,
+              timeLimitMs: true,
+              memoryLimitMb: true,
             },
           },
           testScripts: {
-            select: { language: true, framework: true, entrypoint: true, filesJson: true },
+            select: {
+              language: true,
+              framework: true,
+              entrypoint: true,
+              filesJson: true,
+              weight: true,
+            },
           },
         },
       },
@@ -501,6 +530,8 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
       weight: testCase.weight,
       isPublic: testCase.kind === "PUBLIC",
       comparison: testCase.comparison,
+      timeLimitMs: testCase.timeLimitMs,
+      memoryLimitMb: testCase.memoryLimitMb,
     }));
 
     await enqueueExecutionJob(
@@ -512,7 +543,7 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
         submissionId: submission.id,
         language,
         sourceCode: submission.sourceCode,
-        limits: limitsFor(submission.assessment, testCases.length, script !== null),
+        limits: limitsFor(submission.assessment, testCases, script !== null),
         testCases,
         testScript:
           script === null
@@ -521,6 +552,7 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
                 framework: script.framework,
                 entrypoint: script.entrypoint,
                 files: readScriptFiles(script.filesJson),
+                weight: script.weight,
               },
       },
       { userId: submission.userId },

@@ -61,6 +61,7 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
     // and no expected output ever reaches the browser.
     testResults: result.testResults.map((testResult) => ({
       name: testResult.name,
+      status: testResult.status,
       passed: testResult.passed,
       executionTimeMs: testResult.executionTimeMs,
       stdoutExcerpt: testResult.stdoutExcerpt,
@@ -162,6 +163,7 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
         submissionId: submission.id,
         testCaseId: testResult.testCaseId,
         name: testResult.name,
+        status: testResult.status,
         passed: testResult.passed,
         weight: Math.round(testResult.weight),
         executionTimeMs: Math.round(testResult.executionTimeMs),
