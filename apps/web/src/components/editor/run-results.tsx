@@ -83,7 +83,8 @@ export function TestResultRow({ result }: { result: RunTestResultView }) {
  * leaving a spinner turning.
  */
 export function RunOutcome({ state, idle }: { state: RunJobState; idle?: ReactNode }) {
-  if (state.phase === "idle") return idle === undefined ? null : <ConsoleFrame>{idle}</ConsoleFrame>;
+  if (state.phase === "idle")
+    return idle === undefined ? null : <ConsoleFrame>{idle}</ConsoleFrame>;
 
   if (state.phase === "waiting") {
     return (

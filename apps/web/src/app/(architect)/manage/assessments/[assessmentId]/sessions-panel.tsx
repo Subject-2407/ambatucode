@@ -150,9 +150,7 @@ function CreateSessionDialog({
       name,
       // An untimed Assessment only ever produces untimed sessions, and the
       // server refuses timing sent for one rather than ignoring it.
-      ...(timed
-        ? { executionMode, durationMinutes: Number.parseInt(durationMinutes, 10) }
-        : {}),
+      ...(timed ? { executionMode, durationMinutes: Number.parseInt(durationMinutes, 10) } : {}),
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Check the fields above.");

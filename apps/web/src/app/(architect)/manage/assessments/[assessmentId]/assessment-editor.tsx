@@ -154,7 +154,12 @@ function EditorBody({
             >
               {draft.isPublished ? "Unpublish" : "Publish"}
             </Button>
-            <Button size="sm" onClick={() => void save()} disabled={!dirty} loading={update.isPending}>
+            <Button
+              size="sm"
+              onClick={() => void save()}
+              disabled={!dirty}
+              loading={update.isPending}
+            >
               <Save aria-hidden />
               Save changes
             </Button>
@@ -163,7 +168,12 @@ function EditorBody({
       />
 
       <Stack gap="5">
-        <TabBar aria-label="Assessment editor" items={TABS} value={tab} onValueChange={onTabChange} />
+        <TabBar
+          aria-label="Assessment editor"
+          items={TABS}
+          value={tab}
+          onValueChange={onTabChange}
+        />
 
         <Box
           borderWidth="1px"

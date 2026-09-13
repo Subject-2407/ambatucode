@@ -44,8 +44,7 @@ export function useSessions(assessmentId: string) {
 export function useSession(sessionId: string) {
   return useQuery({
     queryKey: sessionKeys.detail(sessionId),
-    queryFn: ({ signal }) =>
-      apiClient.get<SessionView>(`/api/sessions/${sessionId}`, { signal }),
+    queryFn: ({ signal }) => apiClient.get<SessionView>(`/api/sessions/${sessionId}`, { signal }),
   });
 }
 

@@ -73,8 +73,8 @@ export function ProblemTab({ draft, onChange }: TabProps) {
           })}
         </HStack>
         <Text fontSize="xs" color="fg.muted">
-          Only languages with a sandbox image are offered. A language nothing can execute would
-          fail as a system error at the worst possible moment.
+          Only languages with a sandbox image are offered. A language nothing can execute would fail
+          as a system error at the worst possible moment.
         </Text>
       </Stack>
     </Stack>
@@ -105,7 +105,8 @@ function toggleLanguage(
 export function StarterCodeTab({ draft, onChange }: TabProps) {
   const languages = draft.allowedLanguages;
   const [selected, setSelected] = useState<Language | null>(languages[0] ?? null);
-  const active = selected !== null && languages.includes(selected) ? selected : (languages[0] ?? null);
+  const active =
+    selected !== null && languages.includes(selected) ? selected : (languages[0] ?? null);
 
   if (active === null) {
     return (
@@ -132,9 +133,7 @@ export function StarterCodeTab({ draft, onChange }: TabProps) {
           monacoLanguage={MONACO_LANGUAGE_ID[active]}
           tabSize={TAB_SIZE[active]}
           value={draft.starterCode[active] ?? ""}
-          onChange={(value) =>
-            onChange({ starterCode: { ...draft.starterCode, [active]: value } })
-          }
+          onChange={(value) => onChange({ starterCode: { ...draft.starterCode, [active]: value } })}
           height="24rem"
           ariaLabel={`Starter code for ${LANGUAGE_LABEL[active]}`}
         />

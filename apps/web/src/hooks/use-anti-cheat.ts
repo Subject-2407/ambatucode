@@ -36,8 +36,7 @@ export function useAntiCheat(input: {
 
     const handle = (action: AnticheatClipboardPayload["action"]) => (event: Event) => {
       const target = event.target;
-      const insideEditor =
-        target instanceof Node && (editorRef.current?.contains(target) ?? false);
+      const insideEditor = target instanceof Node && (editorRef.current?.contains(target) ?? false);
       if (!blocksClipboardEvent({ action, insideEditor })) return;
       event.preventDefault();
       onClipboard(action);

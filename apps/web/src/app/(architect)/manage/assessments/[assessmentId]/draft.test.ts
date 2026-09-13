@@ -47,9 +47,9 @@ describe("diffAssessment", () => {
 
   it("treats the allowed languages as a set, not a list", () => {
     const draft = { ...draftFrom(saved), allowedLanguages: ["javascript", "python"] as const };
-    expect(diffAssessment(saved, { ...draft, allowedLanguages: [...draft.allowedLanguages] })).toEqual(
-      {},
-    );
+    expect(
+      diffAssessment(saved, { ...draft, allowedLanguages: [...draft.allowedLanguages] }),
+    ).toEqual({});
   });
 
   it("notices a language being added", () => {

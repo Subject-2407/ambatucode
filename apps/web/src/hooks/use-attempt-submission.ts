@@ -153,21 +153,18 @@ export function useAttemptSubmission(input: {
    * Adopts a submission this browser did not create — an auto-submit at the
    * deadline, or the one a rejected Submit told us already exists.
    */
-  const adopt = useCallback(
-    async (submissionId: string) => {
-      try {
-        const detail = await apiClient.get<SubmissionCoderView>(`/api/submissions/${submissionId}`);
-        if (isTerminalSubmissionStatus(detail.status)) {
-          setState({ phase: "settled", submission: detail, detail });
-        } else {
-          setState({ phase: "tracking", submission: detail });
-        }
-      } catch {
-        // Nothing to show yet. The terminal modal still explains what happened.
+  const adopt = useCallback(async (submissionId: string) => {
+    try {
+      const detail = await apiClient.get<SubmissionCoderView>(`/api/submissions/${submissionId}`);
+      if (isTerminalSubmissionStatus(detail.status)) {
+        setState({ phase: "settled", submission: detail, detail });
+      } else {
+        setState({ phase: "tracking", submission: detail });
       }
-    },
-    [],
-  );
+    } catch {
+      // Nothing to show yet. The terminal modal still explains what happened.
+    }
+  }, []);
 
   return { state, submit, adopt };
 }

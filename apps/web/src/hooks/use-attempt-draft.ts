@@ -75,10 +75,10 @@ export function useAttemptDraft(input: {
     inFlight.current = true;
     setSaving(true);
     try {
-      const response = await apiClient.put<SaveDraftResponse>(
-        `/api/attempts/${attemptId}/draft`,
-        { language: draftLanguage, sourceCode: draftSource },
-      );
+      const response = await apiClient.put<SaveDraftResponse>(`/api/attempts/${attemptId}/draft`, {
+        language: draftLanguage,
+        sourceCode: draftSource,
+      });
       setConfirmed({
         language: draftLanguage,
         sourceCode: draftSource,

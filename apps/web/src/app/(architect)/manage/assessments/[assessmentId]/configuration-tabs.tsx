@@ -22,7 +22,9 @@ export function LimitsTab({ draft, onChange }: TabProps) {
         min={100}
         max={60_000}
         value={String(draft.timeLimitMs)}
-        onChange={(event) => onChange({ timeLimitMs: toInt(event.currentTarget.value, 100, 60_000) })}
+        onChange={(event) =>
+          onChange({ timeLimitMs: toInt(event.currentTarget.value, 100, 60_000) })
+        }
         helperText="Wall-clock time a single case may take before it is cut off."
       />
 
@@ -32,7 +34,9 @@ export function LimitsTab({ draft, onChange }: TabProps) {
         min={16}
         max={2_048}
         value={String(draft.memoryLimitMb)}
-        onChange={(event) => onChange({ memoryLimitMb: toInt(event.currentTarget.value, 16, 2_048) })}
+        onChange={(event) =>
+          onChange({ memoryLimitMb: toInt(event.currentTarget.value, 16, 2_048) })
+        }
         helperText="Applied to the sandbox container, not only to the program."
       />
 
@@ -199,8 +203,8 @@ export function AntiCheatTab({ draft, onChange }: TabProps) {
       />
 
       <Text fontSize="xs" color="fg.muted">
-        These controls deter and record. They are not a security boundary, and a disconnect is
-        never treated as cheating.
+        These controls deter and record. They are not a security boundary, and a disconnect is never
+        treated as cheating.
       </Text>
     </Stack>
   );

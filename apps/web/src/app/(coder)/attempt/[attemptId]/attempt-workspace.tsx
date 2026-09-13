@@ -90,7 +90,11 @@ export function AttemptWorkspace({
     submit,
     adopt,
   } = useAttemptSubmission({ attemptId: attempt.id, initial: attempt.submission });
-  const { state: runState, run: startRun, isRunning } = useRunJob(`/api/attempts/${attempt.id}/run`);
+  const {
+    state: runState,
+    run: startRun,
+    isRunning,
+  } = useRunJob(`/api/attempts/${attempt.id}/run`);
 
   const status = socket.state?.status ?? attempt.status;
   const terminal = socket.terminal;
@@ -372,10 +376,7 @@ export function AttemptWorkspace({
 
   return (
     <Flex ref={rootRef} direction="column" height="100dvh" minHeight="0" bg="bg.canvas">
-      <ConnectionBanner
-        connection={socket.connection}
-        executionMode={attempt.executionMode}
-      />
+      <ConnectionBanner connection={socket.connection} executionMode={attempt.executionMode} />
 
       <Flex
         align="center"

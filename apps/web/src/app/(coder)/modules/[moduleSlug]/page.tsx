@@ -136,10 +136,7 @@ function SectionBlock({
           ))}
 
           {section.assessments.map((assessment) => (
-            <ItemLink
-              key={assessment.id}
-              href={routes.assessment(moduleSlug, assessment.id)}
-            >
+            <ItemLink key={assessment.id} href={routes.assessment(moduleSlug, assessment.id)}>
               <HStack gap="3" minWidth="0">
                 <ClipboardCheck size={16} aria-hidden />
                 <Text truncate>{assessment.title}</Text>
@@ -185,7 +182,8 @@ function AssessmentTimingBadge({ assessment }: { assessment: AssessmentSummary }
   if (assessment.timeMode === "UNTIMED") return <Badge tone="neutral">Untimed</Badge>;
   return (
     <Badge tone="warning">
-      {assessment.durationMinutes} min · {assessment.executionMode === "LIVE" ? "Live" : "Individual"}
+      {assessment.durationMinutes} min ·{" "}
+      {assessment.executionMode === "LIVE" ? "Live" : "Individual"}
     </Badge>
   );
 }

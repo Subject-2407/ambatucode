@@ -19,11 +19,7 @@ import { TextField } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { SelectField } from "@/components/ui/select";
 import { toaster } from "@/components/ui/toaster";
-import {
-  useCreateTestCase,
-  useDeleteTestCase,
-  useUpdateTestCase,
-} from "@/hooks/use-assessments";
+import { useCreateTestCase, useDeleteTestCase, useUpdateTestCase } from "@/hooks/use-assessments";
 import { isApiError } from "@/lib/api-client";
 
 /**
@@ -88,11 +84,7 @@ export function TestCasesTab({ assessment }: { assessment: AssessmentArchitectVi
             {assessment.testCases.map((testCase) => (
               <Table.Row key={testCase.id}>
                 <Table.Cell>
-                  <Box
-                    asChild
-                    textAlign="start"
-                    _hover={{ textDecoration: "underline" }}
-                  >
+                  <Box asChild textAlign="start" _hover={{ textDecoration: "underline" }}>
                     <button type="button" onClick={() => setEditing(testCase)}>
                       {testCase.name}
                     </button>
@@ -210,9 +202,7 @@ function TestCaseDialog({
       toaster.success({ title: editing ? "Test case saved" : "Test case added" });
       onClose();
     } catch (saveError) {
-      setError(
-        isApiError(saveError) ? saveError.userMessage : "Could not save the test case.",
-      );
+      setError(isApiError(saveError) ? saveError.userMessage : "Could not save the test case.");
     }
   }
 

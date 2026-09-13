@@ -33,9 +33,7 @@ export type AttemptConnection = "CONNECTING" | "ONLINE" | "OFFLINE";
  * cannot dismiss their way back into an attempt that has ended.
  */
 export type AttemptTerminal =
-  | { kind: "NONE" }
-  | { kind: "SUPERSEDED" }
-  | { kind: "AUTO_SUBMITTED"; submissionId: string };
+  { kind: "NONE" } | { kind: "SUPERSEDED" } | { kind: "AUTO_SUBMITTED"; submissionId: string };
 
 export type AttemptTimerState = {
   /** Server epoch milliseconds. Compare only after adding `skewMs` to `Date.now()`. */
@@ -213,7 +211,8 @@ export function useAttemptSocket(input: {
   const reportFocus = useCallback(
     (focusState: AnticheatFocusPayload["state"]) => {
       const socket = getSocket();
-      if (socket.connected) socket.emit(CLIENT_EVENTS.ANTICHEAT_FOCUS, { attemptId, state: focusState });
+      if (socket.connected)
+        socket.emit(CLIENT_EVENTS.ANTICHEAT_FOCUS, { attemptId, state: focusState });
     },
     [attemptId],
   );
