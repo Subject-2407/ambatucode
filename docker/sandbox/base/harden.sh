@@ -52,10 +52,13 @@ chmod 0555 /workspace
 #           past its limit is killed alone and the remaining cases still run
 #           in the same container, next to the program they compiled.
 #   cat   — reads the cgroup's memory.events, whose oom_kill counter is the
-#           only way to tell which of several cases ran out of memory.
+#           only way to tell which of several cases ran out of memory, and a
+#           test framework's report once it has run.
+#   mkdir — creates the directories a test script's files are declared in,
+#           and the private directory its report is written to.
 #
 # Removing coreutils from a language image will break execution, not harden it.
-for required in sleep tee timeout cat; do
+for required in sleep tee timeout cat mkdir; do
   command -v "$required" > /dev/null || {
     echo "sandbox image is missing required binary: $required" >&2
     exit 1

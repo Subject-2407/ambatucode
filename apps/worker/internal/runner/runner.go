@@ -59,11 +59,44 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 	// Every other language ignores its source here.
 	spec := base.For(job.SourceCode)
 
-	// The whole job — compile, every case — shares one wall clock. The
-	// container's keeper outlives it by a margin, so running out of this budget
-	// is a time limit, never a container that vanished mid-case.
+	// The whole job — compile, every case, the script — shares one wall clock.
+	// The container's keeper outlives it by a margin, so running out of this
+	// budget is a time limit, never a container that vanished mid-case.
 	deadline := time.Now().Add(time.Duration(job.Limits.WallTimeoutMs) * time.Millisecond)
 
+	// A script with a bad path is refused before anything runs, rather than
+	// after every case has already spent its time.
+	if job.TestScript != nil {
+		if _, err := validateScriptPaths(job.TestScript, spec); err != nil {
+			return r.systemError(job, err)
+		}
+	}
+
+	result, compiled := r.runProgram(ctx, job, spec, deadline)
+	if !compiled || job.TestScript == nil || result.Status == contract.StatusSystemError {
+		return result
+	}
+
+	scriptStarted := time.Now()
+	scriptResults, scriptStatus, err := r.runScript(ctx, job, spec, deadline)
+	if err != nil {
+		return r.systemError(job, err)
+	}
+	result.TestResults = append(result.TestResults, scriptResults...)
+	result.Status = escalate(result.Status, scriptStatus)
+	result.ExecutionTimeMs += float64(time.Since(scriptStarted).Milliseconds())
+	return result
+}
+
+// runProgram compiles the submission and runs its stdin/stdout cases in one
+// container, closed before any script phase opens its own. The second return
+// is false when the program never built, so there is nothing left to test.
+func (r *Runner) runProgram(
+	ctx context.Context,
+	job contract.Job,
+	spec language.Spec,
+	deadline time.Time,
+) (contract.Result, bool) {
 	session, err := r.sandbox.Open(ctx, sandbox.SessionSpec{
 		JobID:          job.JobID,
 		Image:          spec.Image,
@@ -73,7 +106,7 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 		MaxOutputBytes: job.Limits.MaxOutputBytes,
 	})
 	if err != nil {
-		return r.systemError(job, err)
+		return r.systemError(job, err), false
 	}
 	defer session.Close()
 
@@ -81,7 +114,7 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 		Name:    spec.SourceFile,
 		Content: []byte(job.SourceCode),
 	}); err != nil {
-		return r.systemError(job, err)
+		return r.systemError(job, err), false
 	}
 
 	result := baseResult(job)
@@ -92,7 +125,7 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 			Timeout: capToDeadline(time.Duration(job.Limits.CompileTimeoutMs)*time.Millisecond, deadline),
 		})
 		if err != nil {
-			return r.systemError(job, err)
+			return r.systemError(job, err), false
 		}
 
 		// A compiler writes its diagnostics to stderr and says nothing useful
@@ -108,11 +141,11 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 			// the program never got as far as running.
 			result.Status = status
 			result.ExecutionTimeMs = float64(outcome.Duration.Milliseconds())
-			return result
+			return result, false
 		}
 	}
 
-	return r.runCases(ctx, job, spec, session, deadline, result)
+	return r.runCases(ctx, job, spec, session, deadline, result), true
 }
 
 // caseRun is one case's execution, classified.
@@ -137,6 +170,12 @@ func (r *Runner) runCases(
 	result contract.Result,
 ) contract.Result {
 	meter := newOOMMeter(ctx, session)
+
+	// A job with only a script has nothing to run here: the script exercises
+	// the program itself.
+	if len(job.TestCases) == 0 && job.TestScript != nil {
+		return result
+	}
 
 	// A job with no cases still runs once, so a program that cannot start is
 	// reported as a runtime failure instead of a silent pass.

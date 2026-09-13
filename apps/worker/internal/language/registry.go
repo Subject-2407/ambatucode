@@ -29,9 +29,11 @@ type Spec struct {
 	CompileCmd []string
 	// RunCmd is an argument vector, never a shell string.
 	RunCmd []string
-	// TestFramework is the runner used when a job carries a test script.
-	// Empty until test script support lands.
-	TestFramework string
+
+	// scripts maps each test framework this language can run to how it runs.
+	scripts map[contract.TestScriptFramework]scriptPlanner
+	// artifacts are build outputs a test script file must not overwrite.
+	artifacts []string
 
 	// adapt tailors the fixed spec to one program's source, for the languages
 	// whose toolchain refuses to be told where things are. Nil for the rest.
@@ -56,6 +58,10 @@ var registry = map[contract.Language]Spec{
 		SourceFile: "main.py",
 		CompileCmd: nil,
 		RunCmd:     []string{"python3", WorkspaceDir + "/main.py"},
+		scripts: map[contract.TestScriptFramework]scriptPlanner{
+			contract.FrameworkPytest: planPytest,
+			contract.FrameworkCustom: planPythonCustom,
+		},
 	},
 
 	contract.LanguageJavaScript: {
@@ -64,6 +70,10 @@ var registry = map[contract.Language]Spec{
 		SourceFile: "main.js",
 		CompileCmd: nil,
 		RunCmd:     []string{"node", WorkspaceDir + "/main.js"},
+		scripts: map[contract.TestScriptFramework]scriptPlanner{
+			contract.FrameworkJest:   planJest,
+			contract.FrameworkCustom: planNodeCustom,
+		},
 	},
 
 	contract.LanguageJava: {
@@ -73,6 +83,10 @@ var registry = map[contract.Language]Spec{
 		CompileCmd: []string{"javac", "-encoding", "UTF-8", "-d", WorkspaceDir, WorkspaceDir + "/Main.java"},
 		RunCmd:     []string{"java", "-XX:-UsePerfData", "-cp", WorkspaceDir, "Main"},
 		adapt:      adaptJava,
+		scripts: map[contract.TestScriptFramework]scriptPlanner{
+			contract.FrameworkJUnit:  planJUnit,
+			contract.FrameworkCustom: planJavaCustom,
+		},
 	},
 
 	contract.LanguageCPP: {
@@ -83,7 +97,11 @@ var registry = map[contract.Language]Spec{
 			"g++", "-std=c++20", "-O2", "-w",
 			"-o", WorkspaceDir + "/program", WorkspaceDir + "/main.cpp",
 		},
-		RunCmd: []string{WorkspaceDir + "/program"},
+		RunCmd:    []string{WorkspaceDir + "/program"},
+		artifacts: []string{"program"},
+		scripts: map[contract.TestScriptFramework]scriptPlanner{
+			contract.FrameworkCustom: planCppCustom,
+		},
 	},
 }
 

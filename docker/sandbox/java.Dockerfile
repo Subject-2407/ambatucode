@@ -24,6 +24,14 @@ FROM eclipse-temurin:21-jdk-noble
 ENV HOME=/tmp \
     JAVA_TOOL_OPTIONS="-Djava.awt.headless=true -Dfile.encoding=UTF-8"
 
+# The JUnit Platform console launcher runs Architect-authored JUnit Jupiter
+# scripts. Pinned by checksum and baked in: there is no network at execution
+# time, and a jar that changed upstream must fail the build, not a grading run.
+ADD --checksum=sha256:e62b96ac475dbcde8599ea905d088f65d90778f86e259b856a49fa5c4ea256ec \
+    https://repo1.maven.org/maven2/org/junit/platform/junit-platform-console-standalone/6.1.3/junit-platform-console-standalone-6.1.3.jar \
+    /opt/junit/junit-platform-console-standalone.jar
+RUN chmod 0444 /opt/junit/junit-platform-console-standalone.jar
+
 COPY docker/sandbox/base/harden.sh /tmp/harden.sh
 RUN sh /tmp/harden.sh && rm -f /tmp/harden.sh
 

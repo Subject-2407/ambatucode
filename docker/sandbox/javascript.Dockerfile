@@ -20,6 +20,11 @@ ENV HOME=/tmp \
     NO_UPDATE_NOTIFIER=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
+# The test framework for Architect-authored Jest scripts, pinned and baked in:
+# there is no network at execution time to install it then.
+RUN npm install --global --no-fund --no-audit jest@30.5.1 \
+    && npm cache clean --force
+
 COPY docker/sandbox/base/harden.sh /tmp/harden.sh
 RUN sh /tmp/harden.sh && rm -f /tmp/harden.sh
 

@@ -18,6 +18,11 @@ ENV HOME=/tmp \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# The test framework for Architect-authored pytest scripts, pinned and baked in:
+# there is no network at execution time to install it then. It goes in before
+# the hardening step, which removes pip.
+RUN pip install --no-cache-dir pytest==9.1.1
+
 COPY docker/sandbox/base/harden.sh /tmp/harden.sh
 RUN sh /tmp/harden.sh && rm -f /tmp/harden.sh
 

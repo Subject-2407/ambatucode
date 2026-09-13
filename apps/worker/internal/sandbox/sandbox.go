@@ -9,9 +9,11 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +85,9 @@ type ExecSpec struct {
 	Cmd     []string
 	Stdin   string
 	Timeout time.Duration
+	// Env adds KEY=value entries on top of the image's environment. Only the
+	// worker's own fixed values go here; nothing from the job payload does.
+	Env []string
 }
 
 // RunOutcome is the raw result of one execution. Classifying it into a
@@ -390,9 +395,19 @@ func maxFileSize(spec SessionSpec) int64 {
 // refuses to copy into a container whose root filesystem is read-only, and
 // that read-only root is not negotiable, so this is how a workspace gets in
 // without ever bind-mounting a host path.
+//
+// Name is relative to the workspace and may name subdirectories, which are
+// created first. It must already be validated: the sandbox confines where a
+// file lands only by prefixing the workspace, and trusts the name itself.
 func (sn *Session) Write(ctx context.Context, file File) error {
 	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+
+	if dir := path.Dir(file.Name); dir != "." {
+		if err := sn.makeDir(writeCtx, workspaceDir+"/"+dir, true); err != nil {
+			return fmt.Errorf("write workspace file %s: %w", file.Name, err)
+		}
+	}
 
 	result, err := sn.box.exec(writeCtx, sn.id, execRequest{
 		cmd:       []string{"tee", workspaceDir + "/" + file.Name},
@@ -410,6 +425,55 @@ func (sn *Session) Write(ctx context.Context, file File) error {
 	return nil
 }
 
+// MakePrivateDir creates a directory only the sandbox user can read, failing
+// if it already exists — so a name chosen by the worker cannot have been
+// prepared in advance by anything that ran earlier in the container.
+func (sn *Session) MakePrivateDir(ctx context.Context, dir string) error {
+	dirCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return sn.makeDir(dirCtx, dir, false)
+}
+
+func (sn *Session) makeDir(ctx context.Context, dir string, parents bool) error {
+	cmd := []string{"mkdir", "-m", "0700", dir}
+	if parents {
+		cmd = []string{"mkdir", "-p", dir}
+	}
+	result, err := sn.box.exec(ctx, sn.id, execRequest{cmd: cmd, outputCap: 4096})
+	if err != nil {
+		return fmt.Errorf("create directory %s: %w", dir, err)
+	}
+	if result.exitCode != 0 {
+		return fmt.Errorf("create directory %s: exit %d: %s", dir, result.exitCode, result.stderr)
+	}
+	return nil
+}
+
+// ErrFileTooLarge is returned by ReadFile for a file past its size cap.
+var ErrFileTooLarge = errors.New("file exceeds the read cap")
+
+// ReadFile returns a file from inside the container, at most maxBytes of it.
+// The second return is false when the file does not exist or cannot be read.
+func (sn *Session) ReadFile(ctx context.Context, name string, maxBytes int64) ([]byte, bool, error) {
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	result, err := sn.box.exec(readCtx, sn.id, execRequest{
+		cmd:       []string{"cat", name},
+		outputCap: maxBytes,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s: %w", name, err)
+	}
+	if result.exitCode != 0 {
+		return nil, false, nil
+	}
+	if result.stdoutTruncated {
+		return nil, true, fmt.Errorf("read %s: %w (%d bytes)", name, ErrFileTooLarge, maxBytes)
+	}
+	return []byte(result.stdout), true, nil
+}
+
 // Run executes one command in the session and reports its raw outcome.
 func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
@@ -418,6 +482,7 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 	startedAt := time.Now()
 	result, err := sn.box.exec(runCtx, sn.id, execRequest{
 		cmd:       spec.Cmd,
+		env:       spec.Env,
 		stdin:     spec.Stdin,
 		outputCap: sn.maxOutputBytes,
 	})
@@ -483,6 +548,7 @@ func (sn *Session) oomKilled() bool {
 
 type execRequest struct {
 	cmd       []string
+	env       []string
 	stdin     string
 	outputCap int64
 }
@@ -507,6 +573,7 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 		Tty:        false,
 		WorkingDir: workspaceDir,
 		User:       sandboxUser,
+		Env:        request.env,
 	})
 	if err != nil {
 		return execResult{}, fmt.Errorf("create exec: %w", err)
