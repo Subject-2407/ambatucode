@@ -90,7 +90,8 @@ type RunOutcome struct {
 	// OOMKilled comes from the daemon's own accounting. An exit code alone
 	// cannot distinguish a memory kill from an ordinary crash.
 	OOMKilled bool
-	// TimedOut means our deadline fired before the program exited.
+	// TimedOut means the exec's own deadline fired before the program exited.
+	// Cancellation of the caller's context is an error from Run, never this.
 	TimedOut bool
 	Duration time.Duration
 }
@@ -342,6 +343,12 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 	if err != nil {
 		if runCtx.Err() == nil {
 			return RunOutcome{}, err
+		}
+		if ctx.Err() != nil {
+			// The caller gave up, not the program's clock — a worker shutting
+			// down. Reporting that as TIME_LIMIT_EXCEEDED would grade a
+			// submission on the worker's lifecycle. Close removes the container.
+			return RunOutcome{}, fmt.Errorf("run interrupted: %w", ctx.Err())
 		}
 		// Our deadline fired. Kill the container rather than stopping it: a
 		// program that ignores signals must not get extra time, and the

@@ -27,6 +27,14 @@ producer's own library runs removes that entire class of bug.
 | `moveToActive-11.lua`           | claim the next job and lock it       |
 | `moveToFinished-14.lua`         | report a job completed or failed     |
 | `moveJobFromActiveToWait-9.lua` | return an unfinished job on shutdown |
+| `moveToDelayed-12.lua`          | retry a failed job after its backoff |
+| `retryJob-11.lua`               | retry a failed job with no backoff   |
+
+A failure is not always a `moveToFinished` to `failed`. BullMQ decides on the
+Node side, in `Job.moveToFailed`, whether a job still has attempts left and
+which of the two retry scripts to run. The worker mirrors that decision in
+`consumer.go`; finishing straight to `failed` would silently ignore the
+`attempts` and `backoff` the producer set.
 
 The `-N` suffix is the number of KEYS the script expects, taken from BullMQ's
 own declaration rather than counted by hand. `loader.go` parses it back out, so

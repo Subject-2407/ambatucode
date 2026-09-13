@@ -34,17 +34,32 @@ type Job struct {
 	// Token proves ownership. Every finishing call must present it or the
 	// script refuses with "missing lock".
 	Token string
+	// AttemptsMade counts finished attempts before this one, from the hash's
+	// `atm` field. It is what decides whether a failure is retried.
+	AttemptsMade int
 
 	opts jobOpts
 }
 
 // jobOpts is the subset of BullMQ's per-job options the worker has to honour
-// when finishing a job. Retention policy lives on the job, not the worker, so
-// it has to be read back out of the hash rather than assumed.
+// when finishing a job. Retention and retry policy live on the job, not the
+// worker, so they have to be read back out of the hash rather than assumed.
 type jobOpts struct {
 	Attempts         int             `json:"attempts"`
+	Backoff          json.RawMessage `json:"backoff"`
+	LIFO             bool            `json:"lifo"`
 	RemoveOnComplete json.RawMessage `json:"removeOnComplete"`
 	RemoveOnFail     json.RawMessage `json:"removeOnFail"`
+}
+
+// FailOutcome says what Fail did with a job.
+type FailOutcome struct {
+	// Retrying is true when the job went back to be attempted again rather
+	// than to the failed set.
+	Retrying bool
+	// Delay is the backoff before the retry becomes claimable. Zero with
+	// Retrying means it went straight back to the wait list.
+	Delay time.Duration
 }
 
 // Consumer claims and finishes jobs on one BullMQ queue.
@@ -60,6 +75,8 @@ type Consumer struct {
 	moveToActive     script
 	moveToFinished   script
 	moveActiveToWait script
+	moveToDelayed    script
+	retryJob         script
 }
 
 // NewConsumer loads the vendored scripts and binds them to one queue.
@@ -80,6 +97,14 @@ func NewConsumer(
 	if err != nil {
 		return nil, err
 	}
+	moveToDelayed, err := loadScript("moveToDelayed-12.lua")
+	if err != nil {
+		return nil, err
+	}
+	retryJob, err := loadScript("retryJob-11.lua")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Consumer{
 		client:           client,
@@ -90,6 +115,8 @@ func NewConsumer(
 		moveToActive:     moveToActive,
 		moveToFinished:   moveToFinished,
 		moveActiveToWait: moveActiveToWait,
+		moveToDelayed:    moveToDelayed,
+		retryJob:         retryJob,
 	}, nil
 }
 
@@ -194,10 +221,13 @@ func (c *Consumer) decodeClaim(result any, token string) (*Job, error) {
 		Data:  []byte(data),
 		Token: token,
 	}
-	// Absent or unparseable opts are not fatal: they only drive retention, and
-	// defaulting to "keep" is the safe direction for a graded submission.
+	// Absent or unparseable opts are not fatal: they only drive retention and
+	// retries, and defaulting to "keep, no retry" loses nothing already graded.
 	if rawOpts, hasOpts := hash["opts"]; hasOpts {
 		_ = json.Unmarshal([]byte(rawOpts), &job.opts)
+	}
+	if atm, err := strconv.Atoi(hash["atm"]); err == nil {
+		job.AttemptsMade = atm
 	}
 	return job, nil
 }
@@ -211,9 +241,74 @@ func (c *Consumer) Complete(ctx context.Context, job *Job, returnValue string) e
 	return c.finish(ctx, job, "completed", "returnvalue", returnValue)
 }
 
-// Fail marks a job failed so BullMQ applies its retry policy.
-func (c *Consumer) Fail(ctx context.Context, job *Job, reason string) error {
-	return c.finish(ctx, job, "failed", "failedReason", reason)
+// Fail applies the job's retry policy to a failure, as BullMQ's own
+// Job.moveToFailed does.
+//
+// With attempts left the job is moved to delayed (when its backoff yields a
+// delay) or straight back to wait; only once attempts are exhausted, or the
+// cause wraps ErrUnrecoverable, does it land in the failed set. Finishing to
+// failed unconditionally would ignore the `attempts: 3` the producer sets on
+// every formal submission and strand the Submission row in QUEUED.
+func (c *Consumer) Fail(ctx context.Context, job *Job, cause error) (FailOutcome, error) {
+	reason := cause.Error()
+	attempt := job.AttemptsMade + 1
+
+	if errors.Is(cause, ErrUnrecoverable) || attempt >= job.opts.Attempts {
+		return FailOutcome{}, c.finish(ctx, job, "failed", "failedReason", reason)
+	}
+
+	// BullMQ records the reason on the job even when it is retried, so tooling
+	// shows why an attempt was spent.
+	fields, err := msgpack.Marshal([]string{"failedReason", reason})
+	if err != nil {
+		return FailOutcome{}, fmt.Errorf("pack failed job fields: %w", err)
+	}
+
+	delay := retryDelay(job.opts.Backoff, attempt)
+	var result any
+	if delay > 0 {
+		// skipAttempt "0" counts this attempt. fetchNext "0" for the same
+		// backpressure reason as in finish, which leaves the trailing opts unread.
+		result, err = c.eval(ctx, c.moveToDelayed, []string{
+			c.keys.marker(),
+			c.keys.active(),
+			c.keys.prioritized(),
+			c.keys.delayed(),
+			c.keys.job(job.ID),
+			c.keys.events(),
+			c.keys.meta(),
+			c.keys.stalled(),
+			c.keys.wait(),
+			c.keys.limiter(),
+			c.keys.paused(),
+			c.keys.priorityCounter(),
+		}, c.keys.prefix(), nowMillis(), job.ID, job.Token, delay.Milliseconds(), "0", fields, "0", "")
+	} else {
+		pushCmd := "LPUSH"
+		if job.opts.LIFO {
+			pushCmd = "RPUSH"
+		}
+		result, err = c.eval(ctx, c.retryJob, []string{
+			c.keys.active(),
+			c.keys.wait(),
+			c.keys.paused(),
+			c.keys.job(job.ID),
+			c.keys.meta(),
+			c.keys.events(),
+			c.keys.delayed(),
+			c.keys.prioritized(),
+			c.keys.priorityCounter(),
+			c.keys.marker(),
+			c.keys.stalled(),
+		}, c.keys.prefix(), nowMillis(), pushCmd, job.ID, job.Token, fields)
+	}
+	if err != nil {
+		return FailOutcome{}, fmt.Errorf("retry job %s on %s: %w", job.ID, c.queueName, err)
+	}
+	if code, ok := result.(int64); ok && code < 0 {
+		return FailOutcome{}, fmt.Errorf("retry rejected job %s: %s", job.ID, finishError(code))
+	}
+	return FailOutcome{Retrying: true, Delay: delay}, nil
 }
 
 func (c *Consumer) finish(ctx context.Context, job *Job, target, propName, value string) error {

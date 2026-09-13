@@ -12,6 +12,8 @@ func TestKeyCountFromName(t *testing.T) {
 		"moveToActive-11.lua":           11,
 		"moveToFinished-14.lua":         14,
 		"moveJobFromActiveToWait-9.lua": 9,
+		"moveToDelayed-12.lua":          12,
+		"retryJob-11.lua":               11,
 	}
 	for filename, want := range cases {
 		got, err := keyCountFromName(filename)
@@ -33,6 +35,8 @@ func TestLoadScriptReadsEveryVendoredScript(t *testing.T) {
 		"moveToActive-11.lua",
 		"moveToFinished-14.lua",
 		"moveJobFromActiveToWait-9.lua",
+		"moveToDelayed-12.lua",
+		"retryJob-11.lua",
 	} {
 		loaded, err := loadScript(filename)
 		if err != nil {

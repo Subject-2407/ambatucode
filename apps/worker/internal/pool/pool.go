@@ -20,48 +20,82 @@ import (
 const awaitTimeout = 5 * time.Second
 
 // Processor executes one claimed job. A non-nil error fails the BullMQ job so
-// it is retried; nil completes it.
+// its retry policy applies; nil completes it.
 type Processor interface {
 	Process(ctx context.Context, job *queue.Job) error
 }
 
+// Queue is the part of a BullMQ consumer the pool drives. *queue.Consumer is
+// the only production implementation; the interface exists so claim order,
+// capacity, and shutdown behaviour can be tested without Redis.
+type Queue interface {
+	QueueName() string
+	MarkerKey() string
+	Claim(ctx context.Context) (*queue.Job, error)
+	Complete(ctx context.Context, job *queue.Job, returnValue string) error
+	Fail(ctx context.Context, job *queue.Job, cause error) (queue.FailOutcome, error)
+	Release(ctx context.Context, job *queue.Job) error
+}
+
+type Options struct {
+	// Concurrency is the number of goroutines.
+	Concurrency int
+	// MaxContainers caps concurrently running containers independently of the
+	// goroutine count, because a container costs far more than a goroutine.
+	MaxContainers int
+	// ReservedForSubmit is how many container slots practice runs may never
+	// occupy. Claim order alone does not protect submissions: once every slot
+	// holds a long run, a submission waits behind all of them.
+	ReservedForSubmit int
+}
+
 type Pool struct {
-	// consumers are polled in order, so the first is drained with priority.
-	// Formal submissions come first: a flood of practice runs must never
-	// starve grading.
-	consumers []*queue.Consumer
-	client    redis.UniversalClient
+	submit    Queue
+	run       Queue
 	processor Processor
 	logger    *slog.Logger
 
-	// containers caps concurrently running containers independently of the
-	// goroutine count, because a container costs far more than a goroutine.
+	// await sleeps until a queue marker fires or the timeout passes.
+	await func(ctx context.Context, markers []string) error
+
 	containers chan struct{}
+	// runSlots holds the container slots runs are allowed; its capacity is
+	// MaxContainers minus the submission reserve.
+	runSlots chan struct{}
 
 	concurrency int
 	active      atomic.Int64
 
-	// inFlight tracks claimed-but-unfinished jobs so shutdown can hand them
-	// back rather than leaving them to the stalled check.
+	// inFlight tracks claimed-but-unfinished jobs so shutdown can hand back any
+	// whose goroutine never returned.
 	inFlightMu sync.Mutex
-	inFlight   map[*queue.Job]*queue.Consumer
+	inFlight   map[*queue.Job]Queue
 }
 
+// New builds a pool. Either queue may be nil, which leaves that lane empty.
 func New(
 	client redis.UniversalClient,
-	consumers []*queue.Consumer,
+	submit, run Queue,
 	processor Processor,
-	concurrency, maxContainers int,
+	opts Options,
 	logger *slog.Logger,
 ) *Pool {
+	runCapacity := opts.MaxContainers - opts.ReservedForSubmit
+	if runCapacity < 0 {
+		runCapacity = 0
+	}
 	return &Pool{
-		consumers:   consumers,
-		client:      client,
-		processor:   processor,
-		logger:      logger,
-		containers:  make(chan struct{}, maxContainers),
-		concurrency: concurrency,
-		inFlight:    make(map[*queue.Job]*queue.Consumer),
+		submit:    submit,
+		run:       run,
+		processor: processor,
+		logger:    logger,
+		await: func(ctx context.Context, markers []string) error {
+			return queue.AwaitAny(ctx, client, awaitTimeout, markers...)
+		},
+		containers:  make(chan struct{}, opts.MaxContainers),
+		runSlots:    make(chan struct{}, runCapacity),
+		concurrency: opts.Concurrency,
+		inFlight:    make(map[*queue.Job]Queue),
 	}
 }
 
@@ -71,27 +105,34 @@ func (p *Pool) ActiveJobs() int64 { return p.active.Load() }
 // Saturated reports whether every container slot is taken.
 func (p *Pool) Saturated() bool { return len(p.containers) == cap(p.containers) }
 
-// Run blocks until ctx is cancelled and every goroutine has stopped.
-func (p *Pool) Run(ctx context.Context) {
+// Run blocks until accept is cancelled and every goroutine has stopped.
+//
+// Two contexts because shutdown has two stages. Cancelling accept stops new
+// claims while in-flight jobs keep running; cancelling work interrupts those
+// jobs, which are then handed back to their wait list rather than reported.
+// A single context would make every SIGTERM kill running submissions at once.
+func (p *Pool) Run(accept, work context.Context) {
 	var wg sync.WaitGroup
 	for i := 0; i < p.concurrency; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			p.loop(ctx, index)
+			p.loop(accept, work, index)
 		}(i)
 	}
 	wg.Wait()
 }
 
-func (p *Pool) loop(ctx context.Context, index int) {
-	markers := make([]string, 0, len(p.consumers))
-	for _, consumer := range p.consumers {
-		markers = append(markers, consumer.MarkerKey())
+func (p *Pool) loop(accept, work context.Context, index int) {
+	markers := make([]string, 0, 2)
+	for _, lane := range []Queue{p.submit, p.run} {
+		if lane != nil {
+			markers = append(markers, lane.MarkerKey())
+		}
 	}
 
 	for {
-		if ctx.Err() != nil {
+		if accept.Err() != nil {
 			return
 		}
 
@@ -100,19 +141,18 @@ func (p *Pool) loop(ctx context.Context, index int) {
 		// exactly the backpressure failure the design forbids.
 		select {
 		case p.containers <- struct{}{}:
-		case <-ctx.Done():
+		case <-accept.Done():
 			return
 		}
 
-		consumer, job := p.claim(ctx)
+		lane, job, heldRunSlot := p.claim(accept)
 		if job == nil {
 			<-p.containers
-			if ctx.Err() != nil {
+			if accept.Err() != nil {
 				return
 			}
 			// Nothing to do: sleep on the markers rather than spinning.
-			if err := queue.AwaitAny(ctx, p.client, awaitTimeout, markers...); err != nil &&
-				ctx.Err() == nil {
+			if err := p.await(accept, markers); err != nil && accept.Err() == nil {
 				p.logger.Warn("await queues failed",
 					slog.Int("worker", index),
 					slog.String("error", err.Error()))
@@ -120,34 +160,56 @@ func (p *Pool) loop(ctx context.Context, index int) {
 			continue
 		}
 
-		p.execute(ctx, consumer, job)
+		p.execute(work, lane, job)
+		if heldRunSlot {
+			<-p.runSlots
+		}
 		<-p.containers
 	}
 }
 
-// claim tries each queue in priority order.
-func (p *Pool) claim(ctx context.Context) (*queue.Consumer, *queue.Job) {
-	for _, consumer := range p.consumers {
-		job, err := consumer.Claim(ctx)
-		if err != nil {
-			if errors.Is(err, queue.ErrNoJob) || ctx.Err() != nil {
-				continue
-			}
-			p.logger.Error("claim failed",
-				slog.String("queue", consumer.QueueName()),
-				slog.String("error", err.Error()))
-			continue
-		}
-		if job != nil {
-			return consumer, job
-		}
+// claim takes a submission if one is waiting, and otherwise a run if the run
+// lane has a slot left. The third return reports whether a run slot is held.
+func (p *Pool) claim(ctx context.Context) (Queue, *queue.Job, bool) {
+	if job := p.claimFrom(ctx, p.submit); job != nil {
+		return p.submit, job, false
 	}
-	return nil, nil
+	if p.run == nil {
+		return nil, nil, false
+	}
+
+	select {
+	case p.runSlots <- struct{}{}:
+	default:
+		// Every slot runs may use is taken; the rest are held for submissions.
+		return nil, nil, false
+	}
+	if job := p.claimFrom(ctx, p.run); job != nil {
+		return p.run, job, true
+	}
+	<-p.runSlots
+	return nil, nil, false
 }
 
-func (p *Pool) execute(ctx context.Context, consumer *queue.Consumer, job *queue.Job) {
+func (p *Pool) claimFrom(ctx context.Context, lane Queue) *queue.Job {
+	if lane == nil {
+		return nil
+	}
+	job, err := lane.Claim(ctx)
+	if err != nil {
+		if !errors.Is(err, queue.ErrNoJob) && ctx.Err() == nil {
+			p.logger.Error("claim failed",
+				slog.String("queue", lane.QueueName()),
+				slog.String("error", err.Error()))
+		}
+		return nil
+	}
+	return job
+}
+
+func (p *Pool) execute(ctx context.Context, lane Queue, job *queue.Job) {
 	p.active.Add(1)
-	p.track(job, consumer)
+	p.track(job, lane)
 	defer func() {
 		p.untrack(job)
 		p.active.Add(-1)
@@ -160,20 +222,40 @@ func (p *Pool) execute(ctx context.Context, consumer *queue.Consumer, job *queue
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 
-	if err != nil {
-		p.logger.Error("job failed",
-			slog.String("jobId", job.ID),
-			slog.String("queue", job.Queue),
-			slog.String("error", err.Error()))
-		if failErr := consumer.Fail(finishCtx, job, err.Error()); failErr != nil {
-			p.logger.Error("marking job failed did not stick",
+	if err != nil && ctx.Err() != nil {
+		// Interrupted by shutdown. This is not an attempt the job made, so it
+		// goes back to waiting untouched instead of spending a retry.
+		if releaseErr := lane.Release(finishCtx, job); releaseErr != nil {
+			p.logger.Error("returning interrupted job to the wait list failed",
 				slog.String("jobId", job.ID),
-				slog.String("error", failErr.Error()))
+				slog.String("queue", job.Queue),
+				slog.String("error", releaseErr.Error()))
+			return
 		}
+		p.logger.Info("returned interrupted job to the wait list",
+			slog.String("jobId", job.ID),
+			slog.String("queue", job.Queue))
 		return
 	}
 
-	if err := consumer.Complete(finishCtx, job, ""); err != nil {
+	if err != nil {
+		outcome, failErr := lane.Fail(finishCtx, job, err)
+		if failErr != nil {
+			p.logger.Error("marking job failed did not stick",
+				slog.String("jobId", job.ID),
+				slog.String("error", failErr.Error()))
+			return
+		}
+		p.logger.Error("job failed",
+			slog.String("jobId", job.ID),
+			slog.String("queue", job.Queue),
+			slog.Bool("retrying", outcome.Retrying),
+			slog.Duration("retryDelay", outcome.Delay),
+			slog.String("error", err.Error()))
+		return
+	}
+
+	if err := lane.Complete(finishCtx, job, ""); err != nil {
 		// The result already reached the LMS, so this is a bookkeeping loss
 		// rather than a grading one. Ingest is idempotent, so a redelivery is
 		// harmless.
@@ -200,10 +282,10 @@ func (p *Pool) processGuarded(ctx context.Context, job *queue.Job) (err error) {
 	return p.processor.Process(ctx, job)
 }
 
-func (p *Pool) track(job *queue.Job, consumer *queue.Consumer) {
+func (p *Pool) track(job *queue.Job, lane Queue) {
 	p.inFlightMu.Lock()
 	defer p.inFlightMu.Unlock()
-	p.inFlight[job] = consumer
+	p.inFlight[job] = lane
 }
 
 func (p *Pool) untrack(job *queue.Job) {
@@ -212,21 +294,23 @@ func (p *Pool) untrack(job *queue.Job) {
 	delete(p.inFlight, job)
 }
 
-// ReleaseInFlight hands every still-running job back to its wait list.
+// ReleaseInFlight hands every still-tracked job back to its wait list.
 //
-// Called after the shutdown grace period has elapsed. Without it those jobs
-// sit in the active list until BullMQ's stalled check notices, which delays a
-// formal submission by far longer than a redelivery would.
+// An interrupted job normally releases itself when its goroutine returns, so
+// this only finds jobs whose goroutine is still stuck after the work context
+// was cancelled. Without it those jobs sit in the active list until BullMQ's
+// stalled check notices, which delays a formal submission far longer than a
+// redelivery would.
 func (p *Pool) ReleaseInFlight(ctx context.Context) {
 	p.inFlightMu.Lock()
-	pending := make(map[*queue.Job]*queue.Consumer, len(p.inFlight))
-	for job, consumer := range p.inFlight {
-		pending[job] = consumer
+	pending := make(map[*queue.Job]Queue, len(p.inFlight))
+	for job, lane := range p.inFlight {
+		pending[job] = lane
 	}
 	p.inFlightMu.Unlock()
 
-	for job, consumer := range pending {
-		if err := consumer.Release(ctx, job); err != nil {
+	for job, lane := range pending {
+		if err := lane.Release(ctx, job); err != nil {
 			p.logger.Error("returning job to the wait list failed",
 				slog.String("jobId", job.ID),
 				slog.String("error", err.Error()))

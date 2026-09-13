@@ -35,6 +35,11 @@ const (
 	submitQueue = "execution-submit"
 )
 
+// interruptTimeout bounds how long shutdown waits for jobs to unwind after
+// their context is cancelled. Unwinding removes a container and releases a
+// job, each already capped at 30 seconds.
+const interruptTimeout = 75 * time.Second
+
 func main() {
 	if err := run(); err != nil {
 		// The logger may not exist yet, so this one failure path uses stderr.
@@ -57,6 +62,7 @@ func run() error {
 		slog.Int("contractVersion", contract.Version),
 		slog.Int("concurrency", cfg.Concurrency),
 		slog.Int("maxContainers", cfg.MaxContainers),
+		slog.Int("reservedSubmitContainers", cfg.ReservedSubmitContainers),
 		slog.Any("languages", language.Supported()))
 
 	redisOptions, err := redis.ParseURL(cfg.RedisURL)
@@ -96,17 +102,17 @@ func run() error {
 	}
 	logger.Info("startup container sweep complete", slog.Int("removed", swept))
 
-	// Submissions are listed first so the pool drains them with priority — a
-	// flood of practice runs must never starve formal grading.
-	consumers := make([]*queue.Consumer, 0, 2)
-	for _, name := range []string{submitQueue, runQueue} {
-		consumer, err := queue.NewConsumer(
-			redisClient, cfg.QueuePrefix, name, workerName, cfg.LockDuration,
-		)
-		if err != nil {
-			return err
-		}
-		consumers = append(consumers, consumer)
+	submitConsumer, err := queue.NewConsumer(
+		redisClient, cfg.QueuePrefix, submitQueue, workerName, cfg.LockDuration,
+	)
+	if err != nil {
+		return err
+	}
+	runConsumer, err := queue.NewConsumer(
+		redisClient, cfg.QueuePrefix, runQueue, workerName, cfg.LockDuration,
+	)
+	if err != nil {
+		return err
 	}
 
 	service := runner.NewService(
@@ -114,9 +120,13 @@ func run() error {
 		report.New(cfg.CallbackURL, logger),
 		logger,
 	)
-	workerPool := pool.New(
-		redisClient, consumers, service, cfg.Concurrency, cfg.MaxContainers, logger,
-	)
+	// Submissions are claimed first and hold a reserve of container slots — a
+	// flood of practice runs must never starve formal grading.
+	workerPool := pool.New(redisClient, submitConsumer, runConsumer, service, pool.Options{
+		Concurrency:       cfg.Concurrency,
+		MaxContainers:     cfg.MaxContainers,
+		ReservedForSubmit: cfg.ReservedSubmitContainers,
+	}, logger)
 
 	health := observability.NewHealthServer(
 		cfg.HealthAddr,
@@ -128,26 +138,43 @@ func run() error {
 	health.Start()
 	logger.Info("health endpoint listening", slog.String("addr", cfg.HealthAddr))
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// The signal only stops new claims. Running jobs execute under work, which
+	// is cancelled separately once the grace period is spent — tying jobs to
+	// the signal would interrupt every in-flight submission the moment SIGTERM
+	// arrived.
+	accept, stopAccepting := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopAccepting()
+	work, interruptWork := context.WithCancel(context.Background())
+	defer interruptWork()
 
 	done := make(chan struct{})
 	go func() {
-		workerPool.Run(ctx)
+		workerPool.Run(accept, work)
 		close(done)
 	}()
 
-	<-ctx.Done()
+	<-accept.Done()
+	// Restore default signal handling, so a second SIGINT from an operator who
+	// will not wait out the grace period kills the process immediately.
+	stopAccepting()
 	logger.Info("shutdown signal received; draining",
 		slog.Duration("grace", cfg.ShutdownGrace))
 
-	// Stop accepting work, then give in-flight jobs the grace period to finish
-	// before their containers are killed and the jobs handed back.
 	select {
 	case <-done:
 		logger.Info("all workers stopped cleanly")
 	case <-time.After(cfg.ShutdownGrace):
-		logger.Warn("grace period elapsed with jobs still running")
+		// Interrupted jobs release themselves back to their wait list as their
+		// goroutines unwind; nothing about them is reported to the LMS.
+		logger.Warn("grace period elapsed; interrupting running jobs",
+			slog.Int64("activeJobs", workerPool.ActiveJobs()))
+		interruptWork()
+		select {
+		case <-done:
+			logger.Info("interrupted jobs returned to their queues")
+		case <-time.After(interruptTimeout):
+			logger.Error("workers did not stop after interruption; releasing their jobs directly")
+		}
 	}
 
 	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 30*time.Second)

@@ -26,6 +26,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -201,6 +202,51 @@ func TestRunEnforcesTheWallTimeout(t *testing.T) {
 	}
 	if outcome.Duration > 20*time.Second {
 		t.Fatalf("timeout took %s to fire", outcome.Duration)
+	}
+}
+
+// A worker shutting down cancels the caller's context. That is not the
+// program's time limit, and must not come back as a TimedOut outcome that the
+// runner would report as TIME_LIMIT_EXCEEDED.
+func TestRunReportsCallerCancellationAsAnErrorNotATimeout(t *testing.T) {
+	box := newTestSandbox(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	session, err := box.Open(ctx, SessionSpec{
+		JobID:          "integration",
+		Image:          testImage,
+		WallTimeout:    time.Minute,
+		MemoryLimitMb:  256,
+		MaxProcesses:   64,
+		MaxOutputBytes: 65536,
+	})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	defer session.Close()
+
+	if err := session.Write(ctx, File{Name: "main.py", Content: []byte("while True:\n    pass\n")}); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	runCtx, interrupt := context.WithCancel(ctx)
+	time.AfterFunc(2*time.Second, interrupt)
+
+	outcome, err := session.Run(runCtx, ExecSpec{
+		Cmd:     []string{"python3", workspaceDir + "/main.py"},
+		Timeout: time.Minute,
+	})
+
+	if err == nil {
+		t.Fatalf("expected an interruption error, got outcome %+v", outcome)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want it to wrap context.Canceled", err)
+	}
+	if outcome.TimedOut {
+		t.Fatal("a cancelled caller was reported as a program timeout")
 	}
 }
 

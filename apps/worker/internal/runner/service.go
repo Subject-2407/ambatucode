@@ -44,6 +44,16 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 
 	result := s.runner.Run(ctx, job)
 
+	// A cancelled context means the worker is shutting down, and whatever the
+	// runner produced describes the interruption rather than the program.
+	// Reporting it would make that verdict final — ingest ignores a second
+	// result for a submission already in a terminal status. The error hands
+	// the job back so another worker grades it from scratch.
+	if ctx.Err() != nil {
+		logger.Warn("job interrupted before its result was reported")
+		return fmt.Errorf("job interrupted by shutdown: %w", ctx.Err())
+	}
+
 	// The pass count is the one thing a GRADED status does not tell you, and
 	// without it a submission that ran perfectly and failed every case looks
 	// identical in the logs to one that passed.
@@ -61,10 +71,18 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 		slog.Int64("durationMs", time.Since(startedAt).Milliseconds()))
 
 	if err := s.reporter.Send(ctx, result, job.CallbackToken); err != nil {
+		if errors.Is(err, report.ErrRejected) {
+			// The LMS refused the shape. A retry would send the same payload
+			// and be refused the same way.
+			return queue.Unrecoverable(fmt.Errorf("deliver result: %w", err))
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("job interrupted by shutdown while reporting: %w", err)
+		}
 		// A run is discardable — the Coder can press Run again. A formal
 		// submission is not: fail the queue job so it is retried rather than
 		// leaving a graded submission that never reached the database.
-		if job.Kind == contract.KindRun && !errors.Is(err, report.ErrRejected) {
+		if job.Kind == contract.KindRun {
 			logger.Warn("run result not delivered; dropping", slog.String("error", err.Error()))
 			return nil
 		}
@@ -87,7 +105,7 @@ func (s *Service) reportUnparseable(ctx context.Context, queueJob *queue.Job, ca
 		// Nothing to report to and nothing to retry — a redelivery would fail
 		// identically. Fail the job so it lands in BullMQ's failed set where
 		// an operator can see it.
-		return fmt.Errorf("unparseable job payload: %w", cause)
+		return queue.Unrecoverable(fmt.Errorf("unparseable job payload: %w", cause))
 	}
 
 	message := "execution failed inside the platform: the job payload did not match the execution contract"
@@ -100,6 +118,9 @@ func (s *Service) reportUnparseable(ctx context.Context, queueJob *queue.Job, ca
 		TestResults:     []contract.TestResult{},
 	}
 	if err := s.reporter.Send(ctx, result, identity.CallbackToken); err != nil {
+		if errors.Is(err, report.ErrRejected) {
+			return queue.Unrecoverable(fmt.Errorf("report unparseable job: %w", err))
+		}
 		return fmt.Errorf("report unparseable job: %w", err)
 	}
 

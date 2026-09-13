@@ -38,6 +38,41 @@ func TestLoadRejectsMoreContainersThanGoroutines(t *testing.T) {
 	}
 }
 
+func TestDefaultSubmitReserveKeepsASlotForRuns(t *testing.T) {
+	cases := map[int]int{1: 0, 2: 1, 4: 1, 8: 2, 16: 4}
+	for maxContainers, want := range cases {
+		if got := defaultReservedSubmit(maxContainers); got != want {
+			t.Errorf("reserve for %d containers = %d, want %d", maxContainers, got, want)
+		}
+	}
+}
+
+// Reserving every slot would leave practice runs no capacity at all.
+func TestLoadRejectsAReserveThatStarvesRuns(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "4")
+	t.Setenv("WORKER_MAX_CONTAINERS", "4")
+	t.Setenv("WORKER_SUBMIT_RESERVED_CONTAINERS", "4")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "WORKER_SUBMIT_RESERVED_CONTAINERS") {
+		t.Fatalf("expected a reserve error, got %v", err)
+	}
+}
+
+func TestLoadAcceptsAnExplicitReserve(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "4")
+	t.Setenv("WORKER_MAX_CONTAINERS", "4")
+	t.Setenv("WORKER_SUBMIT_RESERVED_CONTAINERS", "3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ReservedSubmitContainers != 3 {
+		t.Fatalf("reserve = %d, want 3", cfg.ReservedSubmitContainers)
+	}
+}
+
 func TestLoadRejectsRelativeCallbackURL(t *testing.T) {
 	t.Setenv("EXECUTION_CALLBACK_URL", "/api/internal/execution/result")
 

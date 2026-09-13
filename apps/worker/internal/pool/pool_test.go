@@ -2,9 +2,11 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,13 +28,124 @@ func (s *stubProcessor) Process(ctx context.Context, job *queue.Job) error {
 	return s.fn(ctx, job)
 }
 
+// fakeQueue stands in for a BullMQ consumer and records how each job finished.
+type fakeQueue struct {
+	name string
+
+	mu        sync.Mutex
+	pending   []*queue.Job
+	completed []string
+	failed    map[string]error
+	released  []string
+}
+
+func newFakeQueue(name string) *fakeQueue {
+	return &fakeQueue{name: name, failed: map[string]error{}}
+}
+
+func (q *fakeQueue) push(ids ...string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, id := range ids {
+		q.pending = append(q.pending, &queue.Job{ID: id, Queue: q.name})
+	}
+}
+
+func (q *fakeQueue) QueueName() string { return q.name }
+func (q *fakeQueue) MarkerKey() string { return q.name + ":marker" }
+
+func (q *fakeQueue) Claim(context.Context) (*queue.Job, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.pending) == 0 {
+		return nil, queue.ErrNoJob
+	}
+	job := q.pending[0]
+	q.pending = q.pending[1:]
+	return job, nil
+}
+
+func (q *fakeQueue) Complete(_ context.Context, job *queue.Job, _ string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.completed = append(q.completed, job.ID)
+	return nil
+}
+
+func (q *fakeQueue) Fail(_ context.Context, job *queue.Job, cause error) (queue.FailOutcome, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.failed[job.ID] = cause
+	return queue.FailOutcome{Retrying: true}, nil
+}
+
+func (q *fakeQueue) Release(_ context.Context, job *queue.Job) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.released = append(q.released, job.ID)
+	return nil
+}
+
+func (q *fakeQueue) snapshot() (completed []string, failed map[string]error, released []string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	failedCopy := make(map[string]error, len(q.failed))
+	for id, cause := range q.failed {
+		failedCopy[id] = cause
+	}
+	return append([]string(nil), q.completed...), failedCopy, append([]string(nil), q.released...)
+}
+
+// newTestPool builds a pool whose idle wait is a short sleep instead of a
+// blocking pop on Redis.
+func newTestPool(submit, run Queue, processor Processor, opts Options) *Pool {
+	p := New(nil, submit, run, processor, opts, discardLogger())
+	p.await = func(ctx context.Context, _ []string) error {
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * time.Millisecond):
+		}
+		return nil
+	}
+	return p
+}
+
+// start runs the pool and returns a function that waits for Run to return.
+func start(p *Pool, accept, work context.Context) (wait func(t *testing.T)) {
+	stopped := make(chan struct{})
+	go func() {
+		p.Run(accept, work)
+		close(stopped)
+	}()
+	return func(t *testing.T) {
+		t.Helper()
+		select {
+		case <-stopped:
+		case <-time.After(10 * time.Second):
+			t.Fatal("Run did not return")
+		}
+	}
+}
+
+func eventually(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
 // A panicking job must become a failed job, never a dead worker. Recovery
 // happens at the pool boundary so the guarantee lives in one place.
 func TestProcessGuardedTurnsAPanicIntoAnError(t *testing.T) {
 	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error {
 		panic("participant code broke the runner")
 	}}
-	p := New(nil, nil, processor, 1, 1, discardLogger())
+	p := newTestPool(nil, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
 
 	err := p.processGuarded(context.Background(), &queue.Job{ID: "job-1"})
 
@@ -46,7 +159,7 @@ func TestProcessGuardedTurnsAPanicIntoAnError(t *testing.T) {
 
 func TestProcessGuardedPassesThroughOrdinaryResults(t *testing.T) {
 	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error { return nil }}
-	p := New(nil, nil, processor, 1, 1, discardLogger())
+	p := newTestPool(nil, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
 
 	if err := p.processGuarded(context.Background(), &queue.Job{ID: "job-1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -56,35 +169,24 @@ func TestProcessGuardedPassesThroughOrdinaryResults(t *testing.T) {
 	}
 }
 
-// Every goroutine takes the root context and exits on cancellation; a worker
-// that outlived its context would keep holding jobs through shutdown.
-func TestRunStopsEveryGoroutineOnCancellation(t *testing.T) {
+// Cancelling accept stops every goroutine; a worker that outlived it would keep
+// claiming jobs through shutdown.
+func TestRunStopsEveryGoroutineWhenAcceptIsCancelled(t *testing.T) {
 	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error { return nil }}
-	// No consumers: the loop takes a container slot, finds nothing to claim,
-	// releases it, and waits — which is the path that has to notice the
-	// cancellation.
-	p := New(nil, nil, processor, 4, 4, discardLogger())
+	p := newTestPool(newFakeQueue("submit"), newFakeQueue("run"), processor,
+		Options{Concurrency: 4, MaxContainers: 4, ReservedForSubmit: 1})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	stopped := make(chan struct{})
-	go func() {
-		p.Run(ctx)
-		close(stopped)
-	}()
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
 
-	cancel()
-
-	select {
-	case <-stopped:
-	case <-time.After(10 * time.Second):
-		t.Fatal("Run did not return after its context was cancelled")
-	}
+	stopAccepting()
+	wait(t)
 }
 
 // The semaphore, not the goroutine count, is what bounds containers. Reporting
 // saturation lets the health endpoint distinguish "busy" from "wedged".
 func TestSaturationTracksTheContainerSemaphore(t *testing.T) {
-	p := New(nil, nil, &stubProcessor{}, 2, 2, discardLogger())
+	p := newTestPool(nil, nil, &stubProcessor{}, Options{Concurrency: 2, MaxContainers: 2})
 
 	if p.Saturated() {
 		t.Fatal("a fresh pool must not report saturation")
@@ -108,10 +210,154 @@ func TestSaturationTracksTheContainerSemaphore(t *testing.T) {
 	}
 }
 
-// ReleaseInFlight is what keeps a shutdown from stranding claimed jobs in the
-// active list until BullMQ's stalled check eventually rescues them.
+// Claim order alone lets long practice runs fill every slot. The reserve keeps
+// capacity free so a submission starts while the runs are still going.
+func TestRunsNeverTakeTheSlotsReservedForSubmissions(t *testing.T) {
+	submit := newFakeQueue("submit")
+	run := newFakeQueue("run")
+	run.push("run-1", "run-2", "run-3", "run-4", "run-5")
+
+	unblockRuns := make(chan struct{})
+	var runningRuns, peakRuns atomic.Int64
+	var submissionDone atomic.Bool
+
+	processor := &stubProcessor{fn: func(ctx context.Context, job *queue.Job) error {
+		if job.Queue == "submit" {
+			submissionDone.Store(true)
+			return nil
+		}
+		current := runningRuns.Add(1)
+		defer runningRuns.Add(-1)
+		for {
+			peak := peakRuns.Load()
+			if current <= peak || peakRuns.CompareAndSwap(peak, current) {
+				break
+			}
+		}
+		<-unblockRuns
+		return nil
+	}}
+
+	p := newTestPool(submit, run, processor,
+		Options{Concurrency: 3, MaxContainers: 3, ReservedForSubmit: 1})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "two runs to start", func() bool { return runningRuns.Load() == 2 })
+	// Give an idle goroutine every chance to wrongly take a third run.
+	time.Sleep(50 * time.Millisecond)
+	if peak := peakRuns.Load(); peak != 2 {
+		t.Fatalf("%d runs held containers at once, want 2 with one slot reserved", peak)
+	}
+
+	submit.push("submission-1")
+	eventually(t, "the submission to be processed while runs hold their slots",
+		submissionDone.Load)
+
+	close(unblockRuns)
+	stopAccepting()
+	wait(t)
+}
+
+// SIGTERM stops new claims but lets a running submission finish and report.
+func TestShutdownLetsARunningJobFinish(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.push("submission-1")
+
+	started := make(chan struct{})
+	processor := &stubProcessor{fn: func(ctx context.Context, _ *queue.Job) error {
+		close(started)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+			return nil
+		}
+	}}
+
+	p := newTestPool(submit, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	<-started
+	stopAccepting()
+	wait(t)
+
+	completed, failed, released := submit.snapshot()
+	if len(completed) != 1 || len(failed) != 0 || len(released) != 0 {
+		t.Fatalf("completed=%v failed=%v released=%v; want the job completed",
+			completed, failed, released)
+	}
+}
+
+// Past the grace period a job is interrupted. That is not an attempt it made:
+// it goes back to waiting instead of spending a retry or being reported.
+func TestInterruptedJobIsReleasedNotFailed(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.push("submission-1")
+
+	started := make(chan struct{})
+	processor := &stubProcessor{fn: func(ctx context.Context, _ *queue.Job) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+
+	p := newTestPool(submit, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	work, interrupt := context.WithCancel(context.Background())
+	wait := start(p, accept, work)
+
+	<-started
+	stopAccepting()
+	interrupt()
+	wait(t)
+
+	completed, failed, released := submit.snapshot()
+	if len(released) != 1 || len(failed) != 0 || len(completed) != 0 {
+		t.Fatalf("completed=%v failed=%v released=%v; want the job released",
+			completed, failed, released)
+	}
+	if p.ActiveJobs() != 0 {
+		t.Fatalf("active jobs = %d after shutdown", p.ActiveJobs())
+	}
+}
+
+// An ordinary failure goes through the queue's retry policy with its cause.
+func TestFailedJobIsHandedToTheRetryPolicy(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.push("submission-1")
+
+	cause := errors.New("callback unreachable")
+	processed := make(chan struct{})
+	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error {
+		defer close(processed)
+		return cause
+	}}
+
+	p := newTestPool(submit, nil, processor, Options{Concurrency: 1, MaxContainers: 1})
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	<-processed
+	eventually(t, "the failure to be recorded", func() bool {
+		_, failed, _ := submit.snapshot()
+		return len(failed) == 1
+	})
+	stopAccepting()
+	wait(t)
+
+	_, failed, released := submit.snapshot()
+	if !errors.Is(failed["submission-1"], cause) {
+		t.Fatalf("Fail got cause %v, want %v", failed["submission-1"], cause)
+	}
+	if len(released) != 0 {
+		t.Fatalf("a failed job was released: %v", released)
+	}
+}
+
 func TestReleaseInFlightIsSafeWithNothingRunning(t *testing.T) {
-	p := New(nil, nil, &stubProcessor{}, 1, 1, discardLogger())
+	p := newTestPool(nil, nil, &stubProcessor{}, Options{Concurrency: 1, MaxContainers: 1})
 
 	done := make(chan struct{})
 	go func() {

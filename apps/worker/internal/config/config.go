@@ -29,6 +29,9 @@ type Config struct {
 	// MaxContainers caps concurrently running containers independently of the
 	// pool, because a container costs far more than a goroutine.
 	MaxContainers int
+	// ReservedSubmitContainers is how many container slots practice runs may
+	// never take, so a flood of runs cannot starve formal submissions.
+	ReservedSubmitContainers int
 
 	HealthAddr string
 
@@ -77,6 +80,11 @@ func Load() (Config, error) {
 	if cfg.MaxContainers, err = intEnv("WORKER_MAX_CONTAINERS", cfg.Concurrency); err != nil {
 		return Config{}, err
 	}
+	if cfg.ReservedSubmitContainers, err = intEnv(
+		"WORKER_SUBMIT_RESERVED_CONTAINERS", defaultReservedSubmit(cfg.MaxContainers),
+	); err != nil {
+		return Config{}, err
+	}
 	if cfg.LockDuration, err = durationEnv("WORKER_LOCK_DURATION_MS", defaultLockDuration); err != nil {
 		return Config{}, err
 	}
@@ -103,6 +111,19 @@ func (c Config) validate() error {
 			c.MaxContainers, c.Concurrency,
 		)
 	}
+	if c.ReservedSubmitContainers < 0 {
+		return fmt.Errorf(
+			"WORKER_SUBMIT_RESERVED_CONTAINERS must not be negative, got %d", c.ReservedSubmitContainers,
+		)
+	}
+	// Reserving every slot would leave practice runs no capacity at all, which
+	// is an outage for every Coder pressing Run rather than a priority.
+	if c.ReservedSubmitContainers > 0 && c.ReservedSubmitContainers >= c.MaxContainers {
+		return fmt.Errorf(
+			"WORKER_SUBMIT_RESERVED_CONTAINERS (%d) must be below WORKER_MAX_CONTAINERS (%d) so runs keep a slot",
+			c.ReservedSubmitContainers, c.MaxContainers,
+		)
+	}
 	if c.QueuePrefix == "" {
 		return fmt.Errorf("WORKER_QUEUE_PREFIX must not be empty")
 	}
@@ -122,6 +143,20 @@ func (c Config) validate() error {
 		return fmt.Errorf("WORKER_LOG_LEVEL must be debug, info, warn or error, got %q", c.LogLevel)
 	}
 	return nil
+}
+
+// defaultReservedSubmit holds a quarter of the container slots for submissions,
+// and at least one whenever there is more than one slot. A single-slot worker
+// reserves nothing — runs would otherwise never execute — and relies on claim
+// order alone.
+func defaultReservedSubmit(maxContainers int) int {
+	if maxContainers < 2 {
+		return 0
+	}
+	if reserved := maxContainers / 4; reserved > 1 {
+		return reserved
+	}
+	return 1
 }
 
 func envOr(key, fallback string) string {

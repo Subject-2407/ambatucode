@@ -24,8 +24,16 @@ import url from "node:url";
 const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 
-/** The three entry points the worker executes, by BullMQ's own script name. */
-const SCRIPTS = ["moveToActive", "moveToFinished", "moveJobFromActiveToWait"];
+/** The entry points the worker executes, by BullMQ's own script name. */
+const SCRIPTS = [
+  "moveToActive",
+  "moveToFinished",
+  "moveJobFromActiveToWait",
+  // A failed job with attempts left is retried through these rather than
+  // moveToFinished, exactly as BullMQ's own Job.moveToFailed does.
+  "moveToDelayed",
+  "retryJob",
+];
 
 const pkgJson = require.resolve("bullmq/package.json", {
   paths: [path.join(repoRoot, "apps/web")],
