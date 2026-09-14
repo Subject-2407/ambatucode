@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_EXECUTION_LIMITS } from "@ambatucode/shared";
 import { summarizeValidation, validationLimits } from "./script-validation";
-import { VALIDATION_STALE_MS, toValidationView } from "../serializers/test-script-validation";
+import {
+  VALIDATION_STALE_MS,
+  VALIDATION_WAITING_MESSAGE,
+  VALIDATION_WAITING_MS,
+  toValidationView,
+} from "../serializers/test-script-validation";
 
 const graded = { status: "GRADED" as const, systemError: null };
 const test = (name: string, passed: boolean) => ({ name, passed });
@@ -75,6 +80,14 @@ describe("toValidationView", () => {
     const stale = toValidationView(row("VALIDATING", new Date(now - VALIDATION_STALE_MS - 1)), now);
     expect(stale.status).toBe("UNVALIDATED");
     expect(stale.summary).toMatch(/never finished/);
+  });
+
+  it("says why a validation might still be waiting", () => {
+    const now = Date.now();
+    expect(toValidationView(row("VALIDATING", new Date(now - 5_000)), now).summary).toBeNull();
+    expect(
+      toValidationView(row("VALIDATING", new Date(now - VALIDATION_WAITING_MS - 1)), now),
+    ).toMatchObject({ status: "VALIDATING", summary: VALIDATION_WAITING_MESSAGE });
   });
 
   it("passes a finished result through", () => {

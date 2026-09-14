@@ -84,6 +84,37 @@ export const testScriptFileShape = {
   content: z.string(),
 };
 
+/**
+ * Mistakes that compile, run, and then test nothing — or fail every Coder the
+ * same way. Each is caught here, where the Architect can still fix it, rather
+ * than surfacing as a vague platform error during validation.
+ */
+function scriptShapeProblem(value: TestScriptFile): string | null {
+  const fileName = value.path.split("/").at(-1) ?? value.path;
+
+  if (value.language === "java") {
+    // The worker selects the class the file is named after. A test class under
+    // any other name compiles fine and then runs no tests at all.
+    const className = fileName.replace(/\.java$/, "");
+    if (!new RegExp(`\\bclass\\s+${className}\\b`).test(value.content)) {
+      return `${fileName} must declare a class named ${className}: the worker runs the class the file is named after`;
+    }
+  }
+
+  if (
+    value.framework === "JUNIT" &&
+    /\bimport\s+(?:static\s+)?org\.junit\.(?!jupiter\.)/.test(value.content)
+  ) {
+    return "JUnit 4 is not supported; import from org.junit.jupiter.api instead of org.junit";
+  }
+
+  if (value.framework === "GOOGLETEST" && /\bint\s+main\s*\(/.test(value.content)) {
+    return "A GoogleTest script must not define main: GoogleTest supplies its own";
+  }
+
+  return null;
+}
+
 type TestScriptFile = {
   language: Language;
   framework: TestScriptFramework;
@@ -121,6 +152,9 @@ export function checkTestScriptFile(value: TestScriptFile, context: z.Refinement
 
   if (value.content.trim() === "") {
     context.addIssue({ code: "custom", message: "The script file is empty", path: ["content"] });
+  } else {
+    const problem = scriptShapeProblem(value);
+    if (problem !== null) context.addIssue({ code: "custom", message: problem, path: ["content"] });
   }
   if (utf8ByteLength(value.content) > MAX_TEST_SCRIPT_BYTES) {
     context.addIssue({

@@ -64,6 +64,53 @@ describe("uploadTestScriptRequestSchema", () => {
     ).toBe(false);
   });
 
+  const java = (path: string, content: string, framework = "JUNIT") =>
+    uploadTestScriptRequestSchema.safeParse(script({ language: "java", framework, path, content }));
+
+  // A class under another name compiles, then runs no tests at all.
+  it("refuses a Java script whose class is not named after its file", () => {
+    const body =
+      "import org.junit.jupiter.api.Test;\nclass StudentConstructorTest {\n  @Test void ok() {}\n}\n";
+    const refused = java("ConstructorTest.java", body);
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.message).toMatch(/must declare a class named ConstructorTest/);
+    expect(java("StudentConstructorTest.java", body).success).toBe(true);
+    expect(java("tests/Check.java", "public class Check {}\n", "CUSTOM").success).toBe(true);
+    // A longer name that merely starts with the file's is not the class.
+    expect(java("Check.java", "class CheckTwice {}\n", "CUSTOM").success).toBe(false);
+  });
+
+  it("refuses JUnit 4", () => {
+    expect(
+      java("SolutionTest.java", "import org.junit.Test;\nclass SolutionTest {}\n").success,
+    ).toBe(false);
+    expect(
+      java(
+        "SolutionTest.java",
+        "import static org.junit.Assert.assertEquals;\nclass SolutionTest {}\n",
+      ).success,
+    ).toBe(false);
+    expect(
+      java(
+        "SolutionTest.java",
+        "import static org.junit.jupiter.api.Assertions.assertEquals;\nclass SolutionTest {}\n",
+      ).success,
+    ).toBe(true);
+  });
+
+  it("refuses a GoogleTest script with its own main", () => {
+    const cpp = (content: string) =>
+      uploadTestScriptRequestSchema.safeParse(
+        script({ language: "cpp", framework: "GOOGLETEST", path: "solution_test.cpp", content }),
+      );
+    expect(
+      cpp('#include "main.cpp"\nint main(int argc, char** argv) { return 0; }\n').success,
+    ).toBe(false);
+    expect(cpp('#include <gtest/gtest.h>\n#include "main.cpp"\nTEST(A, B) {}\n').success).toBe(
+      true,
+    );
+  });
+
   it("refuses an empty or oversized file", () => {
     expect(uploadTestScriptRequestSchema.safeParse(script({ content: "  \n" })).success).toBe(
       false,

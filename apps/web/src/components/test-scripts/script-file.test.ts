@@ -27,11 +27,13 @@ describe("frameworksFor", () => {
   it("suggests a path the upload schema accepts for every pairing", () => {
     for (const language of LANGUAGES) {
       for (const framework of frameworksFor(language)) {
+        const path = defaultScriptPath(framework, language);
         const result = uploadTestScriptRequestSchema.safeParse({
           language,
           framework,
-          path: defaultScriptPath(framework, language),
-          content: "x",
+          path,
+          // A Java file has to declare the class its name promises.
+          content: language === "java" ? `class ${path.replace(/\.java$/, "")} {}` : "x",
         });
         expect(result.success, `${framework}/${language}`).toBe(true);
       }

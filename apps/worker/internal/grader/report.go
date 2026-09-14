@@ -45,7 +45,7 @@ type ScriptTest struct {
 // ErrNoTests means the report parsed but recorded nothing that ran. A script
 // that tests nothing cannot grade anything, so the caller treats it as a
 // failed script rather than a pass.
-var ErrNoTests = errors.New("the test report records no tests")
+var ErrNoTests = errors.New("the test framework found no tests to run; check that the tests sit where the file name says and use the framework's own annotations")
 
 // ParseReport reads a framework report into tests.
 //

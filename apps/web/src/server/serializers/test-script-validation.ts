@@ -8,6 +8,16 @@ import type { TestScriptValidation, TestScriptValidationStatus } from "@ambatuco
  */
 export const VALIDATION_STALE_MS = 15 * 60 * 1_000;
 
+/**
+ * How long a validation may wait before the Architect is told why it might be.
+ * A handful of scripts finishes well inside this; a queue with no worker never
+ * does, and "Validating" alone gives no hint of that.
+ */
+export const VALIDATION_WAITING_MS = 60 * 1_000;
+
+export const VALIDATION_WAITING_MESSAGE =
+  "Still waiting for an execution worker. If this does not finish soon, check that the worker is running.";
+
 type ValidationColumns = {
   validationStatus: TestScriptValidationStatus;
   validationSummary: string | null;
@@ -27,5 +37,13 @@ export function toValidationView(row: ValidationColumns, now = Date.now()): Test
       changedAt,
     };
   }
-  return { status: row.validationStatus, summary: row.validationSummary, changedAt };
+  const waiting =
+    row.validationStatus === "VALIDATING" &&
+    row.validationChangedAt !== null &&
+    now - row.validationChangedAt.getTime() > VALIDATION_WAITING_MS;
+  return {
+    status: row.validationStatus,
+    summary: waiting ? VALIDATION_WAITING_MESSAGE : row.validationSummary,
+    changedAt,
+  };
 }
