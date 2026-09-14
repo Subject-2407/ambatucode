@@ -41,6 +41,7 @@ model User {
   startedSessions   AssessmentSession[]     @relation("SessionStartedBy")
   events            AssessmentEvent[]
   achievements      UserAchievement[]
+  practiceProgress  PracticeProgress[]
 
   @@index([role])
 }
@@ -172,6 +173,7 @@ model PracticeActivity {
 
   material    Material             @relation(fields: [materialId], references: [id], onDelete: Cascade)
   testScripts PracticeTestScript[]
+  progress    PracticeProgress[]
 
   @@index([materialId, orderIndex])
 }
@@ -425,6 +427,10 @@ model AssessmentAttempt {
   individualDeadlineAt DateTime?
   consumedMs           Int           @default(0)
   pausedAt             DateTime?
+  // Runs the Coder spent on this attempt. A Run is not history and writes no
+  // Submission; this is a counter so gamification can tell a first-try solve
+  // from a twentieth, and nothing else reads it.
+  runCount             Int           @default(0)
   // At most one attempt per (sessionId, userId) may be official. The siblings
   // hold false rather than null, so a partial unique index cannot express it —
   // the official-score transaction enforces it instead.
@@ -602,5 +608,31 @@ model UserAchievement {
   achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
 
   @@unique([userId, achievementId])
+  @@index([userId])
+}
+
+// How much practice one Coder has done on one Practice Activity.
+//
+// Practice deliberately writes no Submission and produces no grade, and that
+// stays true: this is a counter, not a record. It holds how many times the
+// activity was run and whether every one of its checks has ever passed, so
+// gamification can recognise practice without turning practice into an
+// assessment. Nothing in grading reads it.
+model PracticeProgress {
+  id                 String    @id @default(cuid())
+  userId             String
+  practiceActivityId String
+  runCount           Int       @default(0)
+  // Set the first time every case and script test passed together. Never
+  // cleared: a later failing run does not un-learn the activity.
+  passedAllAt        DateTime?
+  lastRunAt          DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  practiceActivity PracticeActivity @relation(fields: [practiceActivityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, practiceActivityId])
   @@index([userId])
 }

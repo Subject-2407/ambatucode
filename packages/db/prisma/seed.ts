@@ -1,4 +1,5 @@
 import { hash } from "@node-rs/argon2";
+import { ACHIEVEMENTS } from "@ambatucode/shared";
 import { PrismaClient, UserRole } from "@prisma/client";
 import { seedContent, seedEnrollments, seedPractice } from "./seed-content";
 
@@ -77,6 +78,7 @@ async function main(): Promise<void> {
   await seedContent(prisma, owners);
   await seedPractice(prisma);
   await seedEnrollments(prisma, owners);
+  await seedAchievements();
 
   const counts = users.reduce<Record<string, number>>((accumulator, user) => {
     accumulator[user.role] = (accumulator[user.role] ?? 0) + 1;
@@ -87,6 +89,47 @@ async function main(): Promise<void> {
     `Seeded ${users.length} users (${JSON.stringify(counts)}) with the shared development password.`,
   );
   console.info("Seeded 2 modules, 3 sections, 4 materials, 2 practice activities, 8 enrollments.");
+  console.info(`Seeded ${ACHIEVEMENTS.length} achievements.`);
+}
+
+/**
+ * Mirrors the shared catalogue into the database.
+ *
+ * The catalogue in `packages/shared` is the definition — it is what the rule
+ * engine keys on and what the browser renders — and these rows exist so an
+ * award can carry a foreign key. Upserted rather than inserted, so re-running
+ * the seed refreshes wording without disturbing a single `UserAchievement`:
+ * awards are permanent, and a reseed must never be able to revoke one.
+ *
+ * A row whose code has left the catalogue is deactivated rather than deleted,
+ * for the same reason.
+ */
+async function seedAchievements(): Promise<void> {
+  for (const achievement of ACHIEVEMENTS) {
+    await prisma.achievement.upsert({
+      where: { code: achievement.code },
+      create: {
+        code: achievement.code,
+        name: achievement.name,
+        description: achievement.description,
+        iconKey: achievement.iconKey,
+        rulesJson: { category: achievement.category },
+        isActive: true,
+      },
+      update: {
+        name: achievement.name,
+        description: achievement.description,
+        iconKey: achievement.iconKey,
+        rulesJson: { category: achievement.category },
+        isActive: true,
+      },
+    });
+  }
+
+  await prisma.achievement.updateMany({
+    where: { code: { notIn: ACHIEVEMENTS.map((achievement) => achievement.code) } },
+    data: { isActive: false },
+  });
 }
 
 main()
