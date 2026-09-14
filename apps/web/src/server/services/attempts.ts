@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { PRISMA_UNIQUE_VIOLATION, isPrismaErrorCode, prisma, type Prisma } from "@ambatucode/db";
 import {
+  errorFields,
   AppError,
   DEFAULT_EXECUTION_LIMITS,
   attemptActivityProblem,
@@ -41,7 +42,9 @@ import {
 import { announceEvents, recordEvent } from "./assessment-events";
 import { scopeForOwnAttempt, scopeForSession } from "./assessment-scope";
 import { ASSESSMENT_SELECT } from "./assessments";
+import { claimOfficialIfUnset } from "./official-score";
 import { sessionEligibility } from "./participation";
+import { log } from "../logger";
 
 /**
  * Assessment Attempts: starting one, saving its draft, running it against the
@@ -465,6 +468,16 @@ export async function runAttempt(
     },
     { userId: actor.id },
   );
+
+  // Counted, not recorded. A Run stays outside grading history — this is a
+  // tally so an achievement can tell a first-try solve from a twentieth, and
+  // a failure to bump it must never cost the Coder the run they already have.
+  await prisma.assessmentAttempt
+    .update({ where: { id: attemptId }, data: { runCount: { increment: 1 } } })
+    .catch((error: unknown) => {
+      log.warn("attempt.run_count_failed", { attemptId, ...errorFields(error) });
+    });
+
   return { jobId };
 }
 
@@ -568,7 +581,7 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
     });
     return toSubmissionSummary(queued);
   } catch (error) {
-    console.error(`[submissions] failed to queue ${submission.id}:`, error);
+    log.error("submission.enqueue_failed", { submissionId: submission.id, ...errorFields(error) });
     const failed = await prisma.submission.update({
       where: { id: submission.id },
       data: {
@@ -641,6 +654,10 @@ export async function submitAttempt(
       where: { id: attemptId },
       data: { status: "SUBMITTED" },
     });
+    // A reset leaves the record with no official attempt so the Architect can
+    // choose. This settles the flag on the attempt that just produced a
+    // result, and never overrides a choice already made.
+    await claimOfficialIfUnset(tx, { sessionId: scope.sessionId, userId: actor.id, attemptId });
     const recorded = await recordEvent(tx, {
       sessionId: scope.sessionId,
       type: "ATTEMPT_SUBMITTED",
@@ -731,6 +748,11 @@ export async function autoSubmitAttempt(
       await tx.assessmentAttempt.update({
         where: { id: attemptId },
         data: { status: "SUBMITTED" },
+      });
+      await claimOfficialIfUnset(tx, {
+        sessionId: attempt.sessionId,
+        userId: attempt.userId,
+        attemptId,
       });
       const event = await recordEvent(tx, {
         sessionId: attempt.sessionId,

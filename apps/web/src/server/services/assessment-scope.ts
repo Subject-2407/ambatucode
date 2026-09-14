@@ -70,6 +70,23 @@ export async function scopeForSession(sessionId: string): Promise<SessionScope> 
 export type AttemptScope = SessionScope & { attemptId: string; userId: string };
 
 /**
+ * Any attempt, whoever it belongs to. For Architect-side reads and for reset
+ * and official-score selection, where the caller is authorized against the
+ * Module rather than against the attempt's owner — so the ownership check the
+ * Coder-facing lookup below performs would be the wrong question entirely.
+ */
+export async function scopeForAttempt(attemptId: string): Promise<AttemptScope> {
+  const attempt = await prisma.assessmentAttempt.findUnique({
+    where: { id: attemptId },
+    select: { sessionId: true, userId: true },
+  });
+  if (!attempt) {
+    throw new AppError("NOT_FOUND", "Attempt not found");
+  }
+  return { ...(await scopeForSession(attempt.sessionId)), attemptId, userId: attempt.userId };
+}
+
+/**
  * An attempt that belongs to someone else answers NOT_FOUND, not FORBIDDEN:
  * whether another Coder has an attempt in a session is not the caller's
  * business.
