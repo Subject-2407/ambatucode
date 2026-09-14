@@ -15,6 +15,7 @@
     "db:studio": "pnpm --filter @ambatucode/db studio",
     "stub:worker": "pnpm --filter web stub:worker",
     "enqueue:sample": "pnpm --filter web enqueue:sample",
+    "load:submissions": "pnpm --filter web load:submissions",
     "db:reset": "pnpm --filter @ambatucode/db reset",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

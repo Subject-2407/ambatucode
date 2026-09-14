@@ -14,7 +14,41 @@ import { Redis } from "ioredis";
  * under test everywhere else: nothing in the suite raises the limit or bypasses
  * the limiter, it simply starts from a clean window.
  */
+/**
+ * Routes the suite visits, compiled once before the first test.
+ *
+ * `next dev` compiles a route the first time it is requested, and a cold
+ * compile of a heavy screen takes longer than a whole test is allowed. Without
+ * this the first spec to open a screen fails on a timeout that says nothing
+ * about the screen — and the same spec passes on the next run, which is the
+ * worst kind of flake to chase.
+ *
+ * An unauthenticated request compiles the route and redirects to the login
+ * page, which is all that is needed here.
+ */
+const WARM_ROUTES = [
+  "/login",
+  "/dashboard",
+  "/modules",
+  "/submissions",
+  "/achievements",
+  "/profile",
+  "/manage/modules",
+  "/manage/grades",
+  "/admin/users",
+];
+
+async function warmRoutes(baseUrl: string): Promise<void> {
+  await Promise.all(
+    WARM_ROUTES.map((route) =>
+      fetch(`${baseUrl}${route}`, { redirect: "manual" }).catch(() => undefined),
+    ),
+  );
+}
+
 export default async function globalSetup(): Promise<void> {
+  await warmRoutes(process.env.E2E_BASE_URL ?? "http://localhost:3000");
+
   const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
     maxRetriesPerRequest: null,
   });
