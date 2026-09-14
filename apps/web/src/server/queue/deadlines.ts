@@ -1,12 +1,15 @@
 import "server-only";
 import { Queue } from "bullmq";
 import {
+  errorFields,
   DEADLINE_JOB_OPTIONS,
   DEADLINE_QUEUE_NAME,
   deadlineJobId,
   type DeadlineJob,
 } from "@ambatucode/shared";
+import { registerCloser } from "../shutdown-registry";
 import { getConnection } from "./producer";
+import { log } from "../logger";
 
 /**
  * Schedules the delayed jobs that enforce assessment deadlines. apps/realtime
@@ -27,6 +30,7 @@ export function getDeadlineQueue(): Queue<DeadlineJob> {
   globalForDeadlines.ambatucodeDeadlineQueue ??= new Queue<DeadlineJob>(DEADLINE_QUEUE_NAME, {
     connection: getConnection(),
   });
+  registerCloser("deadlineQueue", closeDeadlineQueue);
   return globalForDeadlines.ambatucodeDeadlineQueue;
 }
 
@@ -36,7 +40,7 @@ async function removeIfPresent(queue: Queue<DeadlineJob>, jobId: string): Promis
   } catch (error) {
     // A job that is firing right now is locked and cannot be removed. It
     // re-reads the attempt before acting, so letting it run is harmless.
-    console.warn(`[deadlines] could not remove ${jobId}:`, error);
+    log.warn("deadline.remove_failed", { jobId, ...errorFields(error) });
   }
 }
 
@@ -56,7 +60,7 @@ export async function scheduleDeadline(
       delay: Math.max(0, atMs - nowMs),
     });
   } catch (error) {
-    console.error(`[deadlines] failed to schedule ${jobId}; the sweep will cover it:`, error);
+    log.error("deadline.schedule_failed", { jobId, recovery: "sweep", ...errorFields(error) });
   }
 }
 
@@ -64,7 +68,7 @@ export async function cancelDeadline(job: DeadlineJob): Promise<void> {
   try {
     await removeIfPresent(getDeadlineQueue(), deadlineJobId(job));
   } catch (error) {
-    console.error(`[deadlines] failed to cancel ${deadlineJobId(job)}:`, error);
+    log.error("deadline.cancel_failed", { jobId: deadlineJobId(job), ...errorFields(error) });
   }
 }
 

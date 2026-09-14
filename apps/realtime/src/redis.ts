@@ -1,5 +1,6 @@
 import { Redis } from "ioredis";
 import { getEnv } from "./env";
+import { log } from "./logger";
 
 /**
  * Socket.IO's Redis adapter needs a dedicated pub/sub pair, and the
@@ -23,7 +24,7 @@ export function createRedisClients(): RealtimeRedis {
 
   for (const [name, client] of Object.entries({ pub, sub, events })) {
     client.on("error", (error: Error) => {
-      console.error(`[redis:${name}] ${error.message}`);
+      log.error("redis.connection_error", { connection: name, errorMessage: error.message });
     });
   }
 

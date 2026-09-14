@@ -1,5 +1,6 @@
 import { prisma, type Prisma } from "@ambatucode/db";
 import {
+  errorFields,
   CLIENT_EVENTS,
   DISCONNECT_DEBOUNCE_MS,
   SERVER_EVENTS,
@@ -32,6 +33,7 @@ import {
 import type { DeadlineScheduler } from "./deadlines";
 import type { AppServer, AppSocket } from "./server";
 import type { WebClient } from "./web-client";
+import { log } from "./logger";
 
 /**
  * The live half of an Assessment Session: who is connected to which attempt,
@@ -468,7 +470,7 @@ export function createAssessmentRuntime(options: {
       if (existing) clearTimeout(existing.timer);
       const timer = setTimeout(() => {
         void settleDisconnect(bound, socket.id, atMs).catch((error: unknown) => {
-          console.error("[realtime] failed to settle disconnect:", error);
+          log.error("attempt.disconnect_settle_failed", errorFields(error));
         });
       }, debounceMs);
       pendingDisconnects.set(bound.attemptId, { timer, socketId: socket.id });
@@ -478,7 +480,7 @@ export function createAssessmentRuntime(options: {
       const key = `${lobby.sessionId}:${lobby.userId}`;
       const timer = setTimeout(() => {
         void settleLobbyDisconnect(lobby, socket.id).catch((error: unknown) => {
-          console.error("[realtime] failed to settle lobby disconnect:", error);
+          log.error("lobby.disconnect_settle_failed", errorFields(error));
         });
       }, debounceMs);
       pendingLobbyDisconnects.set(key, timer);
@@ -773,7 +775,7 @@ export function createAssessmentRuntime(options: {
   }
 
   const tickTimer = setInterval(() => {
-    void tick().catch((error: unknown) => console.error("[realtime] tick failed:", error));
+    void tick().catch((error: unknown) => log.error("attempt.tick_failed", errorFields(error)));
   }, options.tickIntervalMs ?? TICK_INTERVAL_MS);
 
   function guarded(
@@ -783,7 +785,7 @@ export function createAssessmentRuntime(options: {
   ) {
     return (raw: unknown, ack?: AckFn) => {
       handler(socket, raw, ack).catch((error: unknown) => {
-        console.error(`[realtime] ${name} failed:`, error);
+        log.error("socket.handler_failed", { handler: name, ...errorFields(error) });
         ack?.(reject("INTERNAL", "Something went wrong"));
       });
     };

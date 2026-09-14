@@ -2,6 +2,7 @@ import { Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { prisma } from "@ambatucode/db";
 import {
+  errorFields,
   DEADLINE_JOB_OPTIONS,
   DEADLINE_QUEUE_NAME,
   deadlineJobId,
@@ -9,6 +10,7 @@ import {
   type DeadlineJob,
 } from "@ambatucode/shared";
 import type { WebClient } from "./web-client";
+import { log } from "./logger";
 
 /**
  * Deadline enforcement, apps/realtime side.
@@ -54,7 +56,7 @@ export function createDeadlineRuntime(options: {
     } catch (error) {
       // A job firing right now is locked. It re-checks the database before
       // anything happens, so letting it finish is harmless.
-      console.warn(`[deadlines] could not remove ${jobId}:`, error);
+      log.warn("deadline.remove_failed", { jobId, ...errorFields(error) });
     }
   }
 
@@ -68,7 +70,7 @@ export function createDeadlineRuntime(options: {
         delay: Math.max(0, atMs - Date.now()),
       });
     } catch (error) {
-      console.error(`[deadlines] failed to schedule ${jobId}; the sweep will cover it:`, error);
+      log.error("deadline.schedule_failed", { jobId, recovery: "sweep", ...errorFields(error) });
     }
   }
 
@@ -115,21 +117,30 @@ export function createDeadlineRuntime(options: {
 
       for (const session of sessions) {
         await options.web.expireSession(session.id).catch((error: unknown) => {
-          console.error(`[deadlines] sweep could not expire session ${session.id}:`, error);
+          log.error("deadline.sweep_expire_session_failed", {
+            sessionId: session.id,
+            ...errorFields(error),
+          });
         });
       }
       for (const attempt of attempts) {
         await options.web.autoSubmit(attempt.id, "DEADLINE").catch((error: unknown) => {
-          console.error(`[deadlines] sweep could not close attempt ${attempt.id}:`, error);
+          log.error("deadline.sweep_close_attempt_failed", {
+            attemptId: attempt.id,
+            ...errorFields(error),
+          });
         });
       }
       for (const attempt of stranded) {
         await options.web.autoSubmit(attempt.id, "SESSION_ENDED").catch((error: unknown) => {
-          console.error(`[deadlines] sweep could not close stranded attempt ${attempt.id}:`, error);
+          log.error("deadline.sweep_close_stranded_failed", {
+            attemptId: attempt.id,
+            ...errorFields(error),
+          });
         });
       }
     } catch (error) {
-      console.error("[deadlines] sweep failed:", error);
+      log.error("deadline.sweep_failed", errorFields(error));
     } finally {
       sweeping = false;
     }
@@ -149,7 +160,7 @@ export function createDeadlineRuntime(options: {
         { connection: options.connection.duplicate(), concurrency: 8 },
       );
       worker.on("failed", (job, error) => {
-        console.error(`[deadlines] ${job?.id ?? "job"} failed:`, error.message);
+        log.error("deadline.job_failed", { jobId: job?.id ?? null, errorMessage: error.message });
       });
       // Deadlines that passed while this process was down are closed before
       // anything else waits on them.

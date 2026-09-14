@@ -9,6 +9,18 @@ import {
   isSessionLive,
 } from "@ambatucode/shared/auth/session-token";
 import { getServerEnv, isProduction } from "../env";
+import { registerCloser } from "../shutdown-registry";
+
+/**
+ * Closes the database pool on shutdown.
+ *
+ * Registered here because this is the module every request path loads to find
+ * out who is asking — so a process that has served a single request has a pool
+ * to close, and one that has not does not. The registry deliberately cannot
+ * import Prisma itself: it is reached from `instrumentation.ts`, where that
+ * import does not compile.
+ */
+registerCloser("prisma", () => prisma.$disconnect());
 
 export type SessionContext = {
   sessionId: string;
