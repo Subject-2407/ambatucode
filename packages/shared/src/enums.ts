@@ -33,6 +33,14 @@ export type TestCaseKind = (typeof TEST_CASE_KINDS)[number];
 export const TEST_SCRIPT_FRAMEWORKS = ["JUNIT", "JEST", "PYTEST", "CUSTOM"] as const;
 export type TestScriptFramework = (typeof TEST_SCRIPT_FRAMEWORKS)[number];
 
+export const TEST_SCRIPT_VALIDATION_STATUSES = [
+  "UNVALIDATED",
+  "VALIDATING",
+  "PASSED",
+  "FAILED",
+] as const;
+export type TestScriptValidationStatus = (typeof TEST_SCRIPT_VALIDATION_STATUSES)[number];
+
 export const COMPARISON_MODES = ["EXACT", "TRIMMED", "TOKEN", "NUMERIC_TOLERANT"] as const;
 export type ComparisonMode = (typeof COMPARISON_MODES)[number];
 

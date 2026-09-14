@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { toValidationView } from "./test-script-validation";
 import {
   AppError,
   antiCheatConfigSchema,
@@ -32,6 +33,7 @@ import {
   type TestCaseView,
   type TestScriptFramework,
   type TestResultStatus,
+  type TestScriptValidationStatus,
   type TestScriptView,
   type TimeMode,
   TEST_RESULT_STATUSES,
@@ -102,6 +104,11 @@ export function readScriptContent(row: { entrypoint: string; filesJson: unknown 
   return file.content;
 }
 
+/** Same shape as starter code: a source per language. Architect-only. */
+export function readReferenceSolutions(value: unknown, model: string): StarterCodeMap {
+  return parseStored(starterCodeMapSchema, value, `${model}.referenceSolutionsJson`);
+}
+
 // --- Assessment ---------------------------------------------------------------
 
 type AssessmentSummaryRow = {
@@ -166,6 +173,9 @@ export type TestScriptRow = {
   entrypoint: string;
   filesJson: unknown;
   weight: number;
+  validationStatus: TestScriptValidationStatus;
+  validationSummary: string | null;
+  validationChangedAt: Date | null;
   updatedAt: Date;
 };
 
@@ -178,6 +188,7 @@ export function toTestScriptView(row: TestScriptRow): TestScriptView {
     path: row.entrypoint,
     content: readScriptContent(row),
     weight: row.weight,
+    validation: toValidationView(row),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -196,7 +207,11 @@ export type AssessmentRow = AssessmentSummaryRow & {
 };
 
 export function toAssessmentArchitectView(
-  row: AssessmentRow & { testCases: TestCaseRow[]; testScripts: TestScriptRow[] },
+  row: AssessmentRow & {
+    testCases: TestCaseRow[];
+    testScripts: TestScriptRow[];
+    referenceSolutionsJson: unknown;
+  },
 ): AssessmentArchitectView {
   return {
     ...toAssessmentSummary(row),
@@ -210,6 +225,7 @@ export function toAssessmentArchitectView(
     antiCheat: readAntiCheat(row.antiCheatConfigJson),
     testCases: row.testCases.map(toTestCaseView),
     testScripts: row.testScripts.map(toTestScriptView),
+    referenceSolutions: readReferenceSolutions(row.referenceSolutionsJson, "Assessment"),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

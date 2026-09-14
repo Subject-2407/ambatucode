@@ -16,16 +16,28 @@ import {
   type PracticeTestCase,
   type PracticeTestCaseInput,
   type PracticeTestScriptView,
+  type PracticeTestScriptsView,
   type RunPracticeRequest,
   type RunPracticeResponse,
+  type SaveReferenceSolutionRequest,
+  type StarterCodeMap,
   type UpdatePracticeRequest,
   type UploadPracticeTestScriptRequest,
+  type ValidateTestScriptsRequest,
+  type ValidateTestScriptsResponse,
 } from "@ambatucode/shared";
 import { consumeRateLimit } from "../auth/rate-limit";
 import { enqueueExecutionJob, type ExecutionJobInput } from "../queue/producer";
+import { readReferenceSolutions } from "../serializers/assessment";
 import { toPracticeActivityView, toPracticeTestScriptView } from "../serializers/content";
 import { scopeForMaterial, scopeForPractice, scopeForPracticeTestScript } from "./content-scope";
 import { assertCanRead, assertCanWrite } from "./modules";
+import {
+  VALIDATION_SELECT,
+  enqueueScriptValidation,
+  resetValidation,
+  validationLimits,
+} from "./script-validation";
 
 /**
  * Practice Activities and the Runs they produce.
@@ -363,6 +375,7 @@ const PRACTICE_TEST_SCRIPT_SELECT = {
   framework: true,
   path: true,
   content: true,
+  ...VALIDATION_SELECT,
   updatedAt: true,
 } satisfies Prisma.PracticeTestScriptSelect;
 
@@ -373,16 +386,24 @@ const PRACTICE_TEST_SCRIPT_SELECT = {
 export async function listPracticeTestScripts(
   actor: AuthenticatedUser,
   practiceId: string,
-): Promise<PracticeTestScriptView[]> {
+): Promise<PracticeTestScriptsView> {
   const scope = await scopeForPractice(practiceId);
   await assertCanWrite(actor, scope.moduleId);
 
-  const rows = await prisma.practiceTestScript.findMany({
-    where: { practiceActivityId: practiceId },
-    select: PRACTICE_TEST_SCRIPT_SELECT,
-    orderBy: [{ language: "asc" }, { path: "asc" }],
+  const activity = await prisma.practiceActivity.findUniqueOrThrow({
+    where: { id: practiceId },
+    select: {
+      referenceSolutionsJson: true,
+      testScripts: {
+        select: PRACTICE_TEST_SCRIPT_SELECT,
+        orderBy: [{ language: "asc" }, { path: "asc" }],
+      },
+    },
   });
-  return rows.map(toPracticeTestScriptView);
+  return {
+    scripts: activity.testScripts.map(toPracticeTestScriptView),
+    referenceSolutions: readReferenceSolutions(activity.referenceSolutionsJson, "PracticeActivity"),
+  };
 }
 
 /** Adds one script file, or replaces the one the language has at that path. */
@@ -422,7 +443,8 @@ export async function uploadPracticeTestScript(
         );
       }
     }
-    const data = { framework: input.framework, content: input.content };
+    // New content has not been run against anything yet.
+    const data = { framework: input.framework, content: input.content, ...resetValidation() };
     return tx.practiceTestScript.upsert({
       where: { practiceActivityId_language_path: key },
       create: { ...key, ...data },
@@ -441,4 +463,87 @@ export async function deletePracticeTestScript(
   await assertCanWrite(actor, scope.moduleId);
 
   await prisma.practiceTestScript.delete({ where: { id: testScriptId } });
+}
+
+// --- Reference solutions and validation --------------------------------------
+
+/**
+ * Saves, or with an empty source removes, the reference solution for one
+ * language, and puts that language's scripts back to unvalidated.
+ */
+export async function savePracticeReferenceSolution(
+  actor: AuthenticatedUser,
+  practiceId: string,
+  input: SaveReferenceSolutionRequest,
+): Promise<StarterCodeMap> {
+  const scope = await scopeForPractice(practiceId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  return prisma.$transaction(async (tx) => {
+    const activity = await tx.practiceActivity.findUniqueOrThrow({
+      where: { id: practiceId },
+      select: { allowedLanguages: true, referenceSolutionsJson: true },
+    });
+    if (!activity.allowedLanguages.includes(input.language)) {
+      throw new AppError(
+        "LANGUAGE_NOT_ALLOWED",
+        "A reference solution must be in a language the practice activity allows",
+      );
+    }
+
+    const { [input.language]: _previous, ...others } = readReferenceSolutions(
+      activity.referenceSolutionsJson,
+      "PracticeActivity",
+    );
+    const next: StarterCodeMap =
+      input.sourceCode.trim() === "" ? others : { ...others, [input.language]: input.sourceCode };
+
+    await tx.practiceActivity.update({
+      where: { id: practiceId },
+      data: { referenceSolutionsJson: next },
+    });
+    await tx.practiceTestScript.updateMany({
+      where: { practiceActivityId: practiceId, language: input.language },
+      data: resetValidation(),
+    });
+    return next;
+  });
+}
+
+/** Runs every script in one language against the reference solution for it. */
+export async function validatePracticeTestScripts(
+  actor: AuthenticatedUser,
+  practiceId: string,
+  input: ValidateTestScriptsRequest,
+): Promise<ValidateTestScriptsResponse> {
+  const scope = await scopeForPractice(practiceId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  const activity = await prisma.practiceActivity.findUniqueOrThrow({
+    where: { id: practiceId },
+    select: {
+      timeLimitMs: true,
+      memoryLimitMb: true,
+      referenceSolutionsJson: true,
+      testScripts: {
+        where: { language: input.language },
+        orderBy: { path: "asc" },
+        select: { id: true, framework: true, path: true, content: true },
+      },
+    },
+  });
+
+  const scripts = activity.testScripts.map((script) => ({ ...script, weight: 1 }));
+  const solutions = readReferenceSolutions(activity.referenceSolutionsJson, "PracticeActivity");
+
+  const jobId = await enqueueScriptValidation({
+    target: "PRACTICE",
+    actorId: actor.id,
+    jobId: randomUUID(),
+    language: input.language,
+    referenceSolution: solutions[input.language],
+    scripts,
+    limits: validationLimits(activity.timeLimitMs, activity.memoryLimitMb, scripts.length),
+  });
+  return { jobId };
 }

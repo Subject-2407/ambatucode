@@ -22,9 +22,11 @@ import {
   type PracticeTestScriptView,
   type SectionView,
   type TestScriptFramework,
+  type TestScriptValidationStatus,
 } from "@ambatucode/shared";
 import type { z } from "zod";
 import { assertInteractiveBlocksValid } from "../services/interactive-blocks";
+import { toValidationView } from "./test-script-validation";
 
 /**
  * Row-to-response translation for learning content.
@@ -284,6 +286,9 @@ export type PracticeTestScriptRow = {
   framework: TestScriptFramework;
   path: string;
   content: string;
+  validationStatus: TestScriptValidationStatus;
+  validationSummary: string | null;
+  validationChangedAt: Date | null;
   updatedAt: Date;
 };
 
@@ -299,6 +304,7 @@ export function toPracticeTestScriptView(row: PracticeTestScriptRow): PracticeTe
     framework: row.framework,
     path: row.path,
     content: row.content,
+    validation: toValidationView(row),
     updatedAt: row.updatedAt.toISOString(),
   };
 }

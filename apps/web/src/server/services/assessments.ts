@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import {
   PRISMA_FOREIGN_KEY_VIOLATION,
   isPrismaErrorCode,
@@ -22,13 +23,19 @@ import {
   type CreateAssessmentRequest,
   type CreateTestCaseRequest,
   type Language,
+  type SaveReferenceSolutionRequest,
+  type StarterCodeMap,
   type TestCaseView,
   type TestScriptView,
   type UpdateAssessmentRequest,
   type UpdateTestCaseRequest,
   type UploadTestScriptRequest,
+  type ValidateTestScriptsRequest,
+  type ValidateTestScriptsResponse,
 } from "@ambatucode/shared";
 import {
+  readReferenceSolutions,
+  readScriptContent,
   toAssessmentArchitectView,
   toAssessmentSummary,
   toAssessmentWorkspaceView,
@@ -39,6 +46,12 @@ import { scopeForAssessment, scopeForTestCase, scopeForTestScript } from "./asse
 import { moduleIdForSection } from "./content-scope";
 import { assertCanRead, assertCanWrite } from "./modules";
 import { sessionEligibility } from "./participation";
+import {
+  VALIDATION_SELECT,
+  enqueueScriptValidation,
+  resetValidation,
+  validationLimits,
+} from "./script-validation";
 
 /**
  * Assessment definitions: the problem, its limits, its test cases, and its
@@ -93,6 +106,7 @@ const TEST_SCRIPT_SELECT = {
   entrypoint: true,
   filesJson: true,
   weight: true,
+  ...VALIDATION_SELECT,
   updatedAt: true,
 } satisfies Prisma.AssessmentTestScriptSelect;
 
@@ -138,6 +152,7 @@ async function loadArchitectView(assessmentId: string): Promise<AssessmentArchit
     where: { id: assessmentId },
     select: {
       ...ASSESSMENT_SELECT,
+      referenceSolutionsJson: true,
       testCases: { select: TEST_CASE_SELECT, orderBy: { orderIndex: "asc" } },
       testScripts: {
         select: TEST_SCRIPT_SELECT,
@@ -515,6 +530,8 @@ export async function uploadTestScript(
     framework: input.framework,
     filesJson: toJsonInput([{ path: input.path, content: input.content }]),
     weight: input.weight,
+    // New content has not been run against anything yet.
+    ...resetValidation(),
   };
 
   const saved = await prisma.$transaction(async (tx) => {
@@ -552,4 +569,96 @@ export async function deleteTestScript(
   await assertNoRunningSession(scope.assessmentId);
 
   await prisma.assessmentTestScript.delete({ where: { id: testScriptId } });
+}
+
+// --- Reference solutions and validation --------------------------------------
+
+/**
+ * Saves, or with an empty source removes, the reference solution for one
+ * language. Every script in that language goes back to unvalidated: a pass
+ * against the old solution says nothing about this one.
+ *
+ * Allowed while a session runs. A reference solution grades nobody.
+ */
+export async function saveReferenceSolution(
+  actor: AuthenticatedUser,
+  assessmentId: string,
+  input: SaveReferenceSolutionRequest,
+): Promise<StarterCodeMap> {
+  const scope = await scopeForAssessment(assessmentId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  return prisma.$transaction(async (tx) => {
+    const assessment = await tx.assessment.findUniqueOrThrow({
+      where: { id: assessmentId },
+      select: { allowedLanguages: true, referenceSolutionsJson: true },
+    });
+    if (!assessment.allowedLanguages.includes(input.language)) {
+      throw new AppError(
+        "LANGUAGE_NOT_ALLOWED",
+        "A reference solution must be in a language the assessment allows",
+      );
+    }
+
+    const { [input.language]: _previous, ...others } = readReferenceSolutions(
+      assessment.referenceSolutionsJson,
+      "Assessment",
+    );
+    const next: StarterCodeMap =
+      input.sourceCode.trim() === "" ? others : { ...others, [input.language]: input.sourceCode };
+
+    await tx.assessment.update({
+      where: { id: assessmentId },
+      data: { referenceSolutionsJson: toJsonInput(next) },
+    });
+    await tx.assessmentTestScript.updateMany({
+      where: { assessmentId, language: input.language },
+      data: resetValidation(),
+    });
+    return next;
+  });
+}
+
+/** Runs every script in one language against the reference solution for it. */
+export async function validateTestScripts(
+  actor: AuthenticatedUser,
+  assessmentId: string,
+  input: ValidateTestScriptsRequest,
+): Promise<ValidateTestScriptsResponse> {
+  const scope = await scopeForAssessment(assessmentId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  const assessment = await prisma.assessment.findUniqueOrThrow({
+    where: { id: assessmentId },
+    select: {
+      timeLimitMs: true,
+      memoryLimitMb: true,
+      referenceSolutionsJson: true,
+      testScripts: {
+        where: { language: input.language },
+        orderBy: { entrypoint: "asc" },
+        select: { id: true, framework: true, entrypoint: true, filesJson: true, weight: true },
+      },
+    },
+  });
+
+  const scripts = assessment.testScripts.map((script) => ({
+    id: script.id,
+    framework: script.framework,
+    path: script.entrypoint,
+    content: readScriptContent(script),
+    weight: script.weight,
+  }));
+  const solutions = readReferenceSolutions(assessment.referenceSolutionsJson, "Assessment");
+
+  const jobId = await enqueueScriptValidation({
+    target: "ASSESSMENT",
+    actorId: actor.id,
+    jobId: randomUUID(),
+    language: input.language,
+    referenceSolution: solutions[input.language],
+    scripts,
+    limits: validationLimits(assessment.timeLimitMs, assessment.memoryLimitMb, scripts.length),
+  });
+  return { jobId };
 }

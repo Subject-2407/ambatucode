@@ -4,8 +4,9 @@ import {
   TEST_SCRIPT_FRAMEWORKS,
   type Language,
   type TestScriptFramework,
+  type TestScriptValidationStatus,
 } from "../enums";
-import { utf8ByteLength } from "./content";
+import { utf8ByteLength, type StarterCodeMap } from "./content";
 
 /**
  * Custom test scripts: unit and structural tests an Architect writes for the
@@ -137,6 +138,18 @@ export const uploadTestScriptRequestSchema = z
   .superRefine(checkTestScriptFile);
 export type UploadTestScriptRequest = z.infer<typeof uploadTestScriptRequestSchema>;
 
+/**
+ * How a script fared the last time it ran against the reference solution for
+ * its language. Advisory: an unvalidated or failing script is a warning to the
+ * Architect, never a refusal.
+ */
+export type TestScriptValidation = {
+  status: TestScriptValidationStatus;
+  /** Why it failed, or how many tests passed. Null until a result arrives. */
+  summary: string | null;
+  changedAt: string | null;
+};
+
 export type TestScriptView = {
   id: string;
   assessmentId: string;
@@ -145,7 +158,31 @@ export type TestScriptView = {
   path: string;
   content: string;
   weight: number;
+  validation: TestScriptValidation;
   updatedAt: string;
+};
+
+// --- Reference solutions and validation --------------------------------------
+
+/**
+ * The Architect's own solution for one language. An empty source removes it.
+ * Saving one resets every script in that language to unvalidated: a pass
+ * against the old solution says nothing about the new one.
+ */
+export const saveReferenceSolutionRequestSchema = z.object({
+  language: z.enum(LANGUAGES),
+  sourceCode: z.string().max(200_000),
+});
+export type SaveReferenceSolutionRequest = z.infer<typeof saveReferenceSolutionRequestSchema>;
+
+/** Runs every script in one language against that language's reference solution. */
+export const validateTestScriptsRequestSchema = z.object({
+  language: z.enum(LANGUAGES),
+});
+export type ValidateTestScriptsRequest = z.infer<typeof validateTestScriptsRequestSchema>;
+
+export type ValidateTestScriptsResponse = {
+  jobId: string;
 };
 
 /** Practice produces no grade, so a practice script has no weight to set. */
@@ -165,5 +202,12 @@ export type PracticeTestScriptView = {
   framework: TestScriptFramework;
   path: string;
   content: string;
+  validation: TestScriptValidation;
   updatedAt: string;
+};
+
+/** Everything the Architect's script manager for one Practice Activity needs. */
+export type PracticeTestScriptsView = {
+  scripts: PracticeTestScriptView[];
+  referenceSolutions: StarterCodeMap;
 };

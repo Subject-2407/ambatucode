@@ -6,12 +6,17 @@ import type {
   AssessmentSummary,
   CreateAssessmentRequest,
   CreateTestCaseRequest,
+  SaveReferenceSolutionRequest,
+  StarterCodeMap,
   TestCaseView,
   TestScriptView,
   UpdateAssessmentRequest,
   UpdateTestCaseRequest,
   UploadTestScriptRequest,
+  ValidateTestScriptsRequest,
+  ValidateTestScriptsResponse,
 } from "@ambatucode/shared";
+import { isValidating, VALIDATION_POLL_MS } from "@/components/test-scripts/validation";
 import { apiClient } from "@/lib/api-client";
 import { moduleKeys } from "./use-modules";
 
@@ -34,6 +39,14 @@ export function useAssessment(assessmentId: string) {
     queryKey: assessmentKeys.detail(assessmentId),
     queryFn: ({ signal }) =>
       apiClient.get<AssessmentDetailResponse>(`/api/assessments/${assessmentId}`, { signal }),
+    // A validation's result lands on the scripts, so while one is in flight
+    // the Architect's view is re-read until it arrives.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.view === "ARCHITECT" && isValidating(data.assessment.testScripts)
+        ? VALIDATION_POLL_MS
+        : false;
+    },
   });
 }
 
@@ -113,6 +126,27 @@ export function useDeleteTestScript(assessmentId: string) {
   return useMutation({
     mutationFn: (testScriptId: string) =>
       apiClient.delete<{ deleted: boolean }>(`/api/test-scripts/${testScriptId}`),
+    onSuccess: invalidate,
+  });
+}
+
+export function useSaveReferenceSolution(assessmentId: string) {
+  const invalidate = useInvalidateAssessment(assessmentId);
+  return useMutation({
+    mutationFn: (input: SaveReferenceSolutionRequest) =>
+      apiClient.put<StarterCodeMap>(`/api/assessments/${assessmentId}/reference-solution`, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useValidateTestScripts(assessmentId: string) {
+  const invalidate = useInvalidateAssessment(assessmentId);
+  return useMutation({
+    mutationFn: (input: ValidateTestScriptsRequest) =>
+      apiClient.post<ValidateTestScriptsResponse>(
+        `/api/assessments/${assessmentId}/test-scripts/validate`,
+        input,
+      ),
     onSuccess: invalidate,
   });
 }

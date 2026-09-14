@@ -9,6 +9,7 @@ import {
 import { getRedis } from "../redis";
 import { runOwnerKey } from "../queue/producer";
 import { publishExecutionStatus } from "../realtime/publish";
+import { recordScriptValidation } from "./script-validation";
 import { computeScore } from "./scoring";
 
 export type IngestOutcome = {
@@ -40,6 +41,10 @@ export async function ingestExecutionResult(result: ExecutionResult): Promise<In
  * entire delivery mechanism.
  */
 async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
+  // A validation of an Architect's scripts is a Run too, and the one kind
+  // whose result is kept. It is still delivered below like any other Run.
+  const validated = await recordScriptValidation(result);
+
   // Read without deleting: a retried callback re-delivering the same terminal
   // result is harmless, whereas consuming the key on a publish that then fails
   // would strand the Coder watching a spinner. The TTL does the cleanup.
@@ -47,7 +52,7 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
   if (userId === null) {
     // The owner record expired, or this job was enqueued by a script with no
     // one watching. Neither is an error: nothing was graded and nothing lost.
-    return { persisted: false, delivered: false };
+    return { persisted: validated, delivered: false };
   }
 
   const payload: SubmissionStatusPayload = {
@@ -79,7 +84,7 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
   };
 
   await publishExecutionStatus({ userId, payload });
-  return { persisted: false, delivered: true };
+  return { persisted: validated, delivered: true };
 }
 
 async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome> {

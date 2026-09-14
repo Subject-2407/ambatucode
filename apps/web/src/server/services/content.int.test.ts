@@ -24,8 +24,10 @@ import {
   deletePracticeTestScript,
   listPracticeTestScripts,
   runPracticeActivity,
+  savePracticeReferenceSolution,
   updatePracticeActivity,
   uploadPracticeTestScript,
+  validatePracticeTestScripts,
 } from "./practice";
 
 /**
@@ -678,7 +680,7 @@ describe("practice test scripts", () => {
     const { module, material, activity } = await scriptedActivity("Script Owner");
     await requestEnrollment(enrolledCoder, module.id);
 
-    const listed = await listPracticeTestScripts(owner, activity.id);
+    const { scripts: listed } = await listPracticeTestScripts(owner, activity.id);
     expect(listed.map((script) => [script.language, script.path])).toEqual([
       ["javascript", "counter.test.js"],
       ["python", "test_behaviour.py"],
@@ -718,7 +720,7 @@ describe("practice test scripts", () => {
       path: "test_structure.py",
       content: "replaced\n",
     });
-    const listed = await listPracticeTestScripts(owner, activity.id);
+    const { scripts: listed } = await listPracticeTestScripts(owner, activity.id);
     expect(listed).toHaveLength(3);
     expect(listed.find((script) => script.path === "test_structure.py")?.content).toBe(
       "replaced\n",
@@ -762,6 +764,54 @@ describe("practice test scripts", () => {
     expect(job?.data.limits.wallTimeoutMs).toBeGreaterThanOrEqual(
       DEFAULT_EXECUTION_LIMITS.compileTimeoutMs + 2 * DEFAULT_EXECUTION_LIMITS.wallTimeoutMs,
     );
+    await getRunQueue().remove(jobId);
+  });
+
+  it("validates one language's scripts against a reference solution a Coder never sees", async () => {
+    const { module, material, activity } = await scriptedActivity("Script Validation");
+    await requestEnrollment(enrolledCoder, module.id);
+
+    expect(
+      await refusalCode(() =>
+        validatePracticeTestScripts(owner, activity.id, { language: "python" }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+
+    await savePracticeReferenceSolution(owner, activity.id, {
+      language: "python",
+      sourceCode: "class Counter:\n    REFERENCE_SECRET = True\n",
+    });
+    expect((await listPracticeTestScripts(owner, activity.id)).referenceSolutions.python).toContain(
+      "REFERENCE_SECRET",
+    );
+    expect(JSON.stringify(await getMaterial(enrolledCoder, material.id))).not.toContain(
+      "REFERENCE_SECRET",
+    );
+    expect(
+      await refusalCode(() =>
+        savePracticeReferenceSolution(enrolledCoder, activity.id, {
+          language: "python",
+          sourceCode: "x = 1\n",
+        }),
+      ),
+    ).toBe("FORBIDDEN");
+
+    const { jobId } = await validatePracticeTestScripts(owner, activity.id, {
+      language: "python",
+    });
+    const job = await getRunQueue().getJob(jobId);
+    expect(job?.data.sourceCode).toContain("REFERENCE_SECRET");
+    expect(job?.data.testScripts.map((script) => script.path)).toEqual([
+      "test_behaviour.py",
+      "test_structure.py",
+    ]);
+
+    const { scripts } = await listPracticeTestScripts(owner, activity.id);
+    expect(scripts.map((script) => [script.language, script.validation.status])).toEqual([
+      ["javascript", "UNVALIDATED"],
+      ["python", "VALIDATING"],
+      ["python", "VALIDATING"],
+    ]);
     await getRunQueue().remove(jobId);
   });
 

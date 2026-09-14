@@ -152,20 +152,23 @@ model Material {
 }
 
 model PracticeActivity {
-  id               String   @id @default(cuid())
-  materialId       String
-  title            String
-  orderIndex       Int
-  prompt           String
-  starterCodeJson  Json     @default("{}")
-  allowedLanguages String[]
-  timeLimitMs      Int      @default(5000)
-  memoryLimitMb    Int      @default(256)
+  id                     String   @id @default(cuid())
+  materialId             String
+  title                  String
+  orderIndex             Int
+  prompt                 String
+  starterCodeJson        Json     @default("{}")
+  allowedLanguages       String[]
+  timeLimitMs            Int      @default(5000)
+  memoryLimitMb          Int      @default(256)
   // Practice cases are all visible to the Coder. No hidden cases live here and
   // Practice never writes a Submission row.
-  testCasesJson    Json     @default("[]")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  testCasesJson          Json     @default("[]")
+  // Architect-only source per language, never sent to a Coder: the program
+  // test scripts are validated against.
+  referenceSolutionsJson Json     @default("{}")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   material    Material             @relation(fields: [materialId], references: [id], onDelete: Cascade)
   testScripts PracticeTestScript[]
@@ -178,14 +181,22 @@ model PracticeActivity {
 // Coder-facing activity read cannot select it by accident. A Run shows the
 // Coder each test's name and whether it passed, and nothing of the file.
 model PracticeTestScript {
-  id                 String              @id @default(cuid())
-  practiceActivityId String
-  language           String
-  framework          TestScriptFramework
-  path               String
-  content            String
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  id                  String                     @id @default(cuid())
+  practiceActivityId  String
+  language            String
+  framework           TestScriptFramework
+  path                String
+  content             String
+  // Validation against the reference solution. Reset to UNVALIDATED whenever
+  // the script or the reference solution for its language changes;
+  // validationJobId ties a result to the request that asked for it, so a
+  // late result cannot mark a script that has since been edited.
+  validationStatus    TestScriptValidationStatus @default(UNVALIDATED)
+  validationJobId     String?
+  validationSummary   String?
+  validationChangedAt DateTime?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
 
   practiceActivity PracticeActivity @relation(fields: [practiceActivityId], references: [id], onDelete: Cascade)
 
@@ -213,23 +224,26 @@ enum GradingStrategy {
 }
 
 model Assessment {
-  id                  String                   @id @default(cuid())
-  sectionId           String
-  title               String
-  orderIndex          Int
-  problemStatement    String
-  starterCodeJson     Json                     @default("{}")
-  allowedLanguages    String[]
-  timeMode            TimeMode                 @default(UNTIMED)
-  durationMinutes     Int?
-  executionMode       AssessmentExecutionMode?
-  timeLimitMs         Int                      @default(5000)
-  memoryLimitMb       Int                      @default(256)
-  gradingStrategy     GradingStrategy          @default(WEIGHTED_AVERAGE)
-  antiCheatConfigJson Json                     @default("{}")
-  isPublished         Boolean                  @default(false)
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
+  id                     String                   @id @default(cuid())
+  sectionId              String
+  title                  String
+  orderIndex             Int
+  problemStatement       String
+  starterCodeJson        Json                     @default("{}")
+  allowedLanguages       String[]
+  timeMode               TimeMode                 @default(UNTIMED)
+  durationMinutes        Int?
+  executionMode          AssessmentExecutionMode?
+  timeLimitMs            Int                      @default(5000)
+  memoryLimitMb          Int                      @default(256)
+  gradingStrategy        GradingStrategy          @default(WEIGHTED_AVERAGE)
+  antiCheatConfigJson    Json                     @default("{}")
+  // Architect-only source per language, never sent to a Coder: the program
+  // test scripts are validated against.
+  referenceSolutionsJson Json                     @default("{}")
+  isPublished            Boolean                  @default(false)
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
 
   section     Section                @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   testCases   AssessmentTestCase[]
@@ -281,17 +295,35 @@ enum TestScriptFramework {
   CUSTOM
 }
 
+// Whether a script has been run against the Architect's reference solution
+// since either last changed. Advisory only: nothing refuses an unvalidated
+// script, but an Architect is warned before a Coder meets a broken one.
+enum TestScriptValidationStatus {
+  UNVALIDATED
+  VALIDATING
+  PASSED
+  FAILED
+}
+
 // Architect-only data. Never serialized into a Coder-facing response.
 model AssessmentTestScript {
-  id           String              @id @default(cuid())
-  assessmentId String
-  language     String
-  framework    TestScriptFramework
-  entrypoint   String
-  filesJson    Json                @default("[]")
-  weight       Int                 @default(1)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id                  String                     @id @default(cuid())
+  assessmentId        String
+  language            String
+  framework           TestScriptFramework
+  entrypoint          String
+  filesJson           Json                       @default("[]")
+  weight              Int                        @default(1)
+  // Validation against the reference solution. Reset to UNVALIDATED whenever
+  // the script or the reference solution for its language changes;
+  // validationJobId ties a result to the request that asked for it, so a
+  // late result cannot mark a script that has since been edited.
+  validationStatus    TestScriptValidationStatus @default(UNVALIDATED)
+  validationJobId     String?
+  validationSummary   String?
+  validationChangedAt DateTime?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
 
   assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
 

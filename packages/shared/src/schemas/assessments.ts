@@ -222,6 +222,8 @@ export type AssessmentArchitectView = AssessmentSummary & {
   antiCheat: AntiCheatConfig;
   testCases: TestCaseView[];
   testScripts: TestScriptView[];
+  /** Architect-only: what the test scripts are validated against, by language. */
+  referenceSolutions: StarterCodeMap;
   createdAt: string;
   updatedAt: string;
 };

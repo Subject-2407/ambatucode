@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { HStack, Stack, Text } from "@chakra-ui/react";
+import { Alert, HStack, Stack, Text } from "@chakra-ui/react";
 import { Plus } from "lucide-react";
 import type { AssessmentArchitectView, TestScriptView } from "@ambatucode/shared";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,15 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal } from "@/components/ui/modal";
 import { toaster } from "@/components/ui/toaster";
 import { TestScriptForm, type TestScriptDraft } from "@/components/test-scripts/test-script-form";
+import { ReferenceSolutionPanel } from "@/components/test-scripts/reference-solution-panel";
 import { TestScriptList } from "@/components/test-scripts/test-script-list";
-import { useDeleteTestScript, useUploadTestScript } from "@/hooks/use-assessments";
+import { validationWarning } from "@/components/test-scripts/validation";
+import {
+  useDeleteTestScript,
+  useSaveReferenceSolution,
+  useUploadTestScript,
+  useValidateTestScripts,
+} from "@/hooks/use-assessments";
 import { isApiError } from "@/lib/api-client";
 
 /**
@@ -28,6 +35,9 @@ export function TestScriptsTab({ assessment }: { assessment: AssessmentArchitect
   const [deleting, setDeleting] = useState<TestScriptView | null>(null);
   const upload = useUploadTestScript(assessment.id);
   const remove = useDeleteTestScript(assessment.id);
+  const saveSolution = useSaveReferenceSolution(assessment.id);
+  const validate = useValidateTestScripts(assessment.id);
+  const warning = validationWarning(assessment.testScripts);
 
   async function save(draft: TestScriptDraft) {
     await upload.mutateAsync(draft);
@@ -63,12 +73,33 @@ export function TestScriptsTab({ assessment }: { assessment: AssessmentArchitect
         </Button>
       </HStack>
 
+      {warning === null ? null : (
+        <Alert.Root status="warning" size="sm">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Description>{warning}</Alert.Description>
+          </Alert.Content>
+        </Alert.Root>
+      )}
+
       <TestScriptList
         scripts={assessment.testScripts}
         emptyDescription="Test cases alone are enough for input and output problems. Add a script when the structure of the code is what you are grading."
         onEdit={setEditing}
         onDelete={setDeleting}
       />
+
+      {assessment.testScripts.length === 0 ? null : (
+        <ReferenceSolutionPanel
+          languages={assessment.allowedLanguages}
+          saved={assessment.referenceSolutions}
+          scripts={assessment.testScripts}
+          savePending={saveSolution.isPending}
+          validatePending={validate.isPending}
+          onSave={(language, sourceCode) => saveSolution.mutateAsync({ language, sourceCode })}
+          onValidate={(language) => validate.mutateAsync({ language })}
+        />
+      )}
 
       {editing === null ? null : (
         <Modal

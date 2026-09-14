@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Flex, Stack, Text } from "@chakra-ui/react";
+import { Alert, Flex, Stack, Text } from "@chakra-ui/react";
 import { Plus } from "lucide-react";
 import type { PracticeActivityView, PracticeTestScriptView } from "@ambatucode/shared";
 import { Button } from "@/components/ui/button";
@@ -11,11 +11,15 @@ import { Modal } from "@/components/ui/modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toaster } from "@/components/ui/toaster";
 import { TestScriptForm, type TestScriptDraft } from "@/components/test-scripts/test-script-form";
+import { ReferenceSolutionPanel } from "@/components/test-scripts/reference-solution-panel";
 import { TestScriptList } from "@/components/test-scripts/test-script-list";
+import { validationWarning } from "@/components/test-scripts/validation";
 import {
   useDeletePracticeTestScript,
   usePracticeTestScripts,
+  useSavePracticeReferenceSolution,
   useUploadPracticeTestScript,
+  useValidatePracticeTestScripts,
 } from "@/hooks/use-practice-test-scripts";
 import { isApiError } from "@/lib/api-client";
 
@@ -36,6 +40,8 @@ export function PracticeTestScriptsDialog({
   const scripts = usePracticeTestScripts(activity.id);
   const upload = useUploadPracticeTestScript(activity.id);
   const remove = useDeletePracticeTestScript(activity.id);
+  const saveSolution = useSavePracticeReferenceSolution(activity.id);
+  const validate = useValidatePracticeTestScripts(activity.id);
 
   /** null lists the scripts; "new" or a script opens the editor. */
   const [editing, setEditing] = useState<"new" | PracticeTestScriptView | null>(null);
@@ -80,6 +86,9 @@ export function PracticeTestScriptsDialog({
     }
     if (scripts.isPending) return <Skeleton height="8rem" borderRadius="md" />;
 
+    const { scripts: listed, referenceSolutions } = scripts.data;
+    const warning = validationWarning(listed);
+
     return (
       <Stack gap="4">
         <Flex justify="space-between" align="center" gap="3" wrap="wrap">
@@ -93,12 +102,31 @@ export function PracticeTestScriptsDialog({
             Add script
           </Button>
         </Flex>
+        {warning === null ? null : (
+          <Alert.Root status="warning" size="sm">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Description>{warning}</Alert.Description>
+            </Alert.Content>
+          </Alert.Root>
+        )}
         <TestScriptList
-          scripts={scripts.data}
+          scripts={listed}
           emptyDescription="Add a script when what matters is how the code is built, not only what it prints."
           onEdit={setEditing}
           onDelete={setDeleting}
         />
+        {listed.length === 0 ? null : (
+          <ReferenceSolutionPanel
+            languages={activity.allowedLanguages}
+            saved={referenceSolutions}
+            scripts={listed}
+            savePending={saveSolution.isPending}
+            validatePending={validate.isPending}
+            onSave={(language, sourceCode) => saveSolution.mutateAsync({ language, sourceCode })}
+            onValidate={(language) => validate.mutateAsync({ language })}
+          />
+        )}
       </Stack>
     );
   }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import NextLink from "next/link";
-import { HStack, Stack, Text } from "@chakra-ui/react";
+import { Alert, HStack, Stack, Text } from "@chakra-ui/react";
 import { CalendarClock, ChevronRight, Plus } from "lucide-react";
 import {
   createSessionRequestSchema,
@@ -19,6 +19,7 @@ import { Modal } from "@/components/ui/modal";
 import { SelectField } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toaster } from "@/components/ui/toaster";
+import { validationWarning } from "@/components/test-scripts/validation";
 import { useCreateSession, useSessions } from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
@@ -143,6 +144,8 @@ function CreateSessionDialog({
   );
   const [durationMinutes, setDurationMinutes] = useState(String(assessment.durationMinutes ?? 30));
   const [error, setError] = useState<string | null>(null);
+  // Advisory only: a session may still be created with unchecked scripts.
+  const scriptWarning = validationWarning(assessment.testScripts);
 
   async function save() {
     setError(null);
@@ -186,6 +189,16 @@ function CreateSessionDialog({
       }
     >
       <Stack gap="4">
+        {scriptWarning === null ? null : (
+          <Alert.Root status="warning" size="sm">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Description>
+                {scriptWarning} Check them in the Test Scripts tab before Coders take this session.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert.Root>
+        )}
         <TextField
           label="Name"
           value={name}

@@ -28,8 +28,10 @@ import {
   createTestCase,
   getAssessment,
   listTestCases,
+  saveReferenceSolution,
   updateAssessment,
   uploadTestScript,
+  validateTestScripts,
 } from "./assessments";
 import { autoSubmitAttempt, runAttempt, saveDraft, startAttempt, submitAttempt } from "./attempts";
 import { ingestExecutionResult } from "./execution-result";
@@ -774,5 +776,150 @@ describe("grading ingestion", () => {
     expect(
       (await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } })).score,
     ).toBe(40);
+  });
+});
+
+describe("test script validation", () => {
+  async function architectScripts(assessmentId: string) {
+    const detail = await getAssessment(owner, assessmentId);
+    if (detail.view !== "ARCHITECT") throw new Error("expected the Architect view");
+    return detail.assessment;
+  }
+
+  it("runs a language's scripts against its reference solution, and records the verdict", async () => {
+    const assessment = await individualAssessment();
+
+    expect(
+      await refusalCode(() => validateTestScripts(owner, assessment.id, { language: "python" })),
+    ).toBe("VALIDATION_FAILED");
+
+    await saveReferenceSolution(owner, assessment.id, {
+      language: "python",
+      sourceCode: "REFERENCE_SECRET = 1\n",
+    });
+    expect((await architectScripts(assessment.id)).referenceSolutions.python).toBe(
+      "REFERENCE_SECRET = 1\n",
+    );
+    // The reference solution is Architect-only, like the scripts it checks.
+    expect(JSON.stringify(await getAssessment(coderA, assessment.id))).not.toContain(
+      "REFERENCE_SECRET",
+    );
+
+    const { jobId } = await validateTestScripts(owner, assessment.id, { language: "python" });
+    createdJobIds.push(jobId);
+
+    const job = await getRunQueue().getJob(jobId);
+    expect(job?.data.kind).toBe("RUN");
+    expect(job?.data.sourceCode).toBe("REFERENCE_SECRET = 1\n");
+    expect(job?.data.testCases).toEqual([]);
+    const [script] = (await architectScripts(assessment.id)).testScripts;
+    if (!script) throw new Error("expected the fixture script");
+    expect(job?.data.testScripts.map((entry) => entry.id)).toEqual([script.id]);
+    expect(script.validation.status).toBe("VALIDATING");
+
+    const outcome = await ingestExecutionResult({
+      contractVersion: EXECUTION_CONTRACT_VERSION,
+      jobId,
+      submissionId: null,
+      status: "GRADED",
+      compilerOutput: null,
+      systemError: null,
+      executionTimeMs: 30,
+      memoryUsedKb: null,
+      testResults: [
+        {
+          testCaseId: null,
+          testScriptId: script.id,
+          name: "test_doubles",
+          status: "GRADED",
+          passed: true,
+          weight: 1,
+          executionTimeMs: 30,
+          memoryUsedKb: null,
+          stdoutExcerpt: "",
+          stderrExcerpt: "",
+        },
+      ],
+    });
+    expect(outcome.persisted).toBe(true);
+
+    const [validated] = (await architectScripts(assessment.id)).testScripts;
+    expect(validated?.validation).toMatchObject({ status: "PASSED", summary: "Its test passed" });
+
+    // A new reference solution says nothing about the old verdict.
+    await saveReferenceSolution(owner, assessment.id, {
+      language: "python",
+      sourceCode: "REFERENCE_SECRET = 2\n",
+    });
+    const [reset] = (await architectScripts(assessment.id)).testScripts;
+    expect(reset?.validation.status).toBe("UNVALIDATED");
+  });
+
+  it("never lets a late result mark a script edited since it was requested", async () => {
+    const assessment = await individualAssessment();
+    await saveReferenceSolution(owner, assessment.id, {
+      language: "python",
+      sourceCode: "print(1)\n",
+    });
+    const { jobId } = await validateTestScripts(owner, assessment.id, { language: "python" });
+    createdJobIds.push(jobId);
+
+    const [script] = (await architectScripts(assessment.id)).testScripts;
+    if (!script) throw new Error("expected the fixture script");
+    await uploadTestScript(owner, assessment.id, {
+      language: "python",
+      framework: "PYTEST",
+      path: script.path,
+      content: "def test_changed():\n    pass\n",
+      weight: 1,
+    });
+
+    await ingestExecutionResult({
+      contractVersion: EXECUTION_CONTRACT_VERSION,
+      jobId,
+      submissionId: null,
+      status: "GRADED",
+      compilerOutput: null,
+      systemError: null,
+      executionTimeMs: 30,
+      memoryUsedKb: null,
+      testResults: [
+        {
+          testCaseId: null,
+          testScriptId: script.id,
+          name: "test_old",
+          status: "GRADED",
+          passed: true,
+          weight: 1,
+          executionTimeMs: 30,
+          memoryUsedKb: null,
+          stdoutExcerpt: "",
+          stderrExcerpt: "",
+        },
+      ],
+    });
+
+    const [edited] = (await architectScripts(assessment.id)).testScripts;
+    expect(edited?.validation.status).toBe("UNVALIDATED");
+  });
+
+  it("keeps reference solutions and validation to the owning Architect", async () => {
+    const assessment = await individualAssessment();
+    expect(
+      await refusalCode(() =>
+        saveReferenceSolution(otherArchitect, assessment.id, {
+          language: "python",
+          sourceCode: "x = 1\n",
+        }),
+      ),
+    ).toBe("FORBIDDEN");
+    expect(
+      await refusalCode(() => validateTestScripts(coderA, assessment.id, { language: "python" })),
+    ).toBe("FORBIDDEN");
+    expect(
+      await refusalCode(() =>
+        saveReferenceSolution(owner, assessment.id, { language: "java", sourceCode: "class A {}" }),
+      ),
+    ).toBe("LANGUAGE_NOT_ALLOWED");
   });
 });
