@@ -7,12 +7,14 @@
  * that imports so much as a Zod schema or an event name. Server-side consumers
  * import it from `@ambatucode/shared/auth/session-token` instead.
  */
+export * from "./achievements";
 export * from "./anti-cheat";
 export * from "./api";
 export * from "./assessment-clock";
 export * from "./enums";
 export * from "./errors";
 export * from "./interactive-block-bridge";
+export * from "./logger";
 export * from "./queue";
 export * from "./realtime-events";
 export * from "./redis-channels";
@@ -24,6 +26,8 @@ export * from "./schemas/auth";
 export * from "./schemas/common";
 export * from "./schemas/content";
 export * from "./schemas/enrollments";
+export * from "./schemas/gamification";
+export * from "./schemas/grades";
 export * from "./schemas/materials";
 export * from "./schemas/modules";
 export * from "./schemas/practice";

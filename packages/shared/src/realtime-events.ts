@@ -1,5 +1,13 @@
 import { z } from "zod";
 import {
+  LEADERBOARD_SCOPES,
+  achievementAwardedPayloadSchema,
+  leaderboardUpdatePayloadSchema,
+  type AchievementAwardedPayload,
+  type LeaderboardScope,
+  type LeaderboardUpdatePayload,
+} from "./schemas/gamification";
+import {
   ASSESSMENT_EVENT_TYPES,
   ASSESSMENT_SESSION_STATUSES,
   CONNECTION_STATES,
@@ -24,6 +32,8 @@ export const CLIENT_EVENTS = {
   ANTICHEAT_FOCUS: "anticheat:focus",
   ANTICHEAT_CLIPBOARD: "anticheat:clipboard",
   MONITOR_JOIN: "monitor:join",
+  LEADERBOARD_JOIN: "leaderboard:join",
+  LEADERBOARD_LEAVE: "leaderboard:leave",
 } as const;
 
 export const SERVER_EVENTS = {
@@ -40,6 +50,7 @@ export const SERVER_EVENTS = {
   MONITOR_PARTICIPANT: "monitor:participant",
   MONITOR_EVENT: "monitor:event",
   LEADERBOARD_UPDATE: "leaderboard:update",
+  ACHIEVEMENT_AWARDED: "achievement:awarded",
 } as const;
 
 // --- Room names -------------------------------------------------------------
@@ -48,6 +59,13 @@ export const rooms = {
   user: (userId: string) => `user:${userId}` as const,
   session: (sessionId: string) => `session:${sessionId}` as const,
   monitor: (sessionId: string) => `monitor:${sessionId}` as const,
+  /**
+   * Watchers of one leaderboard. Joining is authorized against the Module the
+   * board belongs to, so membership of this room is itself the permission
+   * check — nothing is filtered on the way out.
+   */
+  leaderboard: (scope: LeaderboardScope, scopeId: string) =>
+    `leaderboard:${scope}:${scopeId}` as const,
 };
 
 // --- Client -> server payloads (validated on arrival) -----------------------
@@ -72,6 +90,10 @@ export const anticheatClipboardPayloadSchema = z.object({
   action: z.enum(["COPY", "PASTE", "CUT", "CONTEXT_MENU"]),
 });
 export const monitorJoinPayloadSchema = z.object({ sessionId: z.string().min(1) });
+export const leaderboardJoinPayloadSchema = z.object({
+  scope: z.enum(LEADERBOARD_SCOPES),
+  scopeId: z.string().min(1),
+});
 
 export type AttemptJoinPayload = z.infer<typeof attemptJoinPayloadSchema>;
 export type AttemptHeartbeatPayload = z.infer<typeof attemptHeartbeatPayloadSchema>;
@@ -80,6 +102,7 @@ export type AttemptDraftPayload = z.infer<typeof attemptDraftPayloadSchema>;
 export type AnticheatFocusPayload = z.infer<typeof anticheatFocusPayloadSchema>;
 export type AnticheatClipboardPayload = z.infer<typeof anticheatClipboardPayloadSchema>;
 export type MonitorJoinPayload = z.infer<typeof monitorJoinPayloadSchema>;
+export type LeaderboardJoinPayload = z.infer<typeof leaderboardJoinPayloadSchema>;
 
 /** Every client event is acked so the browser can surface a rejection. */
 export type Ack = { ok: true } | { ok: false; code: string; message: string };
@@ -226,14 +249,15 @@ export const monitorEventPayloadSchema = z.object({
 });
 export type MonitorEventPayload = z.infer<typeof monitorEventPayloadSchema>;
 
-export type LeaderboardRow = {
-  rank: number;
-  userId: string;
-  displayName: string;
-  score: number;
-  submittedAt: number | null;
-};
-export type LeaderboardUpdatePayload = { scopeId: string; rows: LeaderboardRow[] };
+/**
+ * Leaderboard and achievement payloads are defined with the rest of the
+ * gamification contract in `schemas/gamification.ts` and re-exported here, so
+ * a socket listener and an HTTP response are provably the same shape. Both
+ * cross the Redis boundary between apps/web and apps/realtime, so both are
+ * schemas rather than bare types.
+ */
+export { achievementAwardedPayloadSchema, leaderboardUpdatePayloadSchema };
+export type { AchievementAwardedPayload, LeaderboardUpdatePayload };
 
 // --- Typed socket maps -------------------------------------------------------
 
@@ -245,6 +269,8 @@ export type ClientToServerEvents = {
   [CLIENT_EVENTS.ANTICHEAT_FOCUS]: (payload: AnticheatFocusPayload, ack?: AckFn) => void;
   [CLIENT_EVENTS.ANTICHEAT_CLIPBOARD]: (payload: AnticheatClipboardPayload, ack?: AckFn) => void;
   [CLIENT_EVENTS.MONITOR_JOIN]: (payload: MonitorJoinPayload, ack?: AckFn) => void;
+  [CLIENT_EVENTS.LEADERBOARD_JOIN]: (payload: LeaderboardJoinPayload, ack?: AckFn) => void;
+  [CLIENT_EVENTS.LEADERBOARD_LEAVE]: (payload: LeaderboardJoinPayload, ack?: AckFn) => void;
 };
 
 export type ServerToClientEvents = {
@@ -261,6 +287,7 @@ export type ServerToClientEvents = {
   [SERVER_EVENTS.MONITOR_PARTICIPANT]: (payload: MonitorParticipantPayload) => void;
   [SERVER_EVENTS.MONITOR_EVENT]: (payload: MonitorEventPayload) => void;
   [SERVER_EVENTS.LEADERBOARD_UPDATE]: (payload: LeaderboardUpdatePayload) => void;
+  [SERVER_EVENTS.ACHIEVEMENT_AWARDED]: (payload: AchievementAwardedPayload) => void;
 };
 
 export type InterServerEvents = Record<string, never>;

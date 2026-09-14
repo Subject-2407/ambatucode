@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
+  achievementAwardedPayloadSchema,
   attemptAutoSubmittedPayloadSchema,
+  leaderboardUpdatePayloadSchema,
   monitorEventPayloadSchema,
   monitorParticipantPayloadSchema,
   sessionStartedPayloadSchema,
@@ -16,6 +18,8 @@ export const REDIS_CHANNELS = {
   EXECUTION_STATUS: "ambatucode:execution:status",
   /** Assessment lifecycle changes apps/web made, for apps/realtime to fan out. */
   ASSESSMENT_BROADCAST: "ambatucode:assessment:broadcast",
+  /** Awards and leaderboard refreshes, published after grading. */
+  GAMIFICATION: "ambatucode:gamification",
 } as const;
 
 export const sessionRevokedMessageSchema = z.object({
@@ -73,3 +77,30 @@ export const assessmentBroadcastMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export type AssessmentBroadcastMessage = z.infer<typeof assessmentBroadcastMessageSchema>;
+
+/**
+ * Gamification, which apps/web computes after grading and apps/realtime
+ * delivers.
+ *
+ * An award is addressed to one Coder; a leaderboard refresh is addressed to a
+ * scope, and apps/realtime turns that into the rooms watching it. Same
+ * division as the two channels above: apps/web names the subject, apps/realtime
+ * names the rooms.
+ *
+ * A leaderboard whose assessment sets `hideLeaderboard` is never published —
+ * suppression happens at the source, so a message on this channel is always
+ * safe to fan out.
+ */
+export const gamificationMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("ACHIEVEMENT_AWARDED"),
+    userId: z.string().min(1),
+    payload: achievementAwardedPayloadSchema,
+  }),
+  z.object({
+    type: z.literal("LEADERBOARD_UPDATE"),
+    payload: leaderboardUpdatePayloadSchema,
+  }),
+]);
+
+export type GamificationMessage = z.infer<typeof gamificationMessageSchema>;
