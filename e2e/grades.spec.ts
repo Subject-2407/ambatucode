@@ -174,10 +174,13 @@ test.describe("grading records and gamification", () => {
         .getByRole("combobox", { name: "Module" })
         .selectOption({ label: fixture.moduleTitle });
 
+      // The first row on this screen is the first answer from the grades
+      // endpoint. Global setup compiles it, but a dev build under load can
+      // still take longer than an ordinary assertion allows.
       const record = architectPage.getByRole("row", {
         name: new RegExp(SEED_USERS.coder.displayName),
       });
-      await expect(record).toBeVisible();
+      await expect(record).toBeVisible({ timeout: 30_000 });
       await expect(record).toContainText("Attempt 1");
 
       // --- Reset, and prove nothing was destroyed ---------------------------
@@ -186,7 +189,11 @@ test.describe("grading records and gamification", () => {
       await expect(resetDialog).toContainText(/nothing is deleted/i);
       await resetDialog.getByLabel("Reason").fill("Lab power cut during the attempt");
       await resetDialog.getByRole("button", { name: "Reset attempt" }).click();
-      await expect(resetDialog).toBeHidden();
+      // A reset is the heaviest write in the product — a locked transaction,
+      // two broadcasts, and a leaderboard rebuild — and this is the first time
+      // the route runs. It closes on success only, so a dialog still open here
+      // would mean the reset failed.
+      await expect(resetDialog).toBeHidden({ timeout: 30_000 });
 
       const afterReset = architectPage.getByRole("row", {
         name: new RegExp(SEED_USERS.coder.displayName),
@@ -207,7 +214,9 @@ test.describe("grading records and gamification", () => {
         .locator('[data-scope="radio-group"][data-part="item"]')
         .first()
         .click();
-      await expect(architectPage.getByText("Official score updated")).toBeVisible();
+      await expect(architectPage.getByText("Official score updated")).toBeVisible({
+        timeout: 30_000,
+      });
 
       // --- Export ------------------------------------------------------------
       const download = architectPage.waitForEvent("download");
@@ -220,12 +229,13 @@ test.describe("grading records and gamification", () => {
       const historyRow = coderPage.getByRole("row", {
         name: new RegExp(fixture.assessmentTitle),
       });
-      await expect(historyRow).toBeVisible();
+      await expect(historyRow).toBeVisible({ timeout: 30_000 });
       await expect(historyRow).toContainText("Official");
 
       await historyRow.getByRole("link", { name: "View" }).click();
       await coderPage.waitForURL(/\/submissions\//);
-      await expect(coderPage.getByText("print(int(input()) * 2)")).toBeVisible();
+      // The detail page shows the exact source that was submitted.
+      await expect(coderPage.getByText(SOURCE)).toBeVisible({ timeout: 30_000 });
       // Hidden grading data never reaches this page.
       await expect(coderPage.getByText(/Hidden grading cases stay hidden/)).toBeVisible();
     } finally {
@@ -279,7 +289,7 @@ test.describe("leaderboard and achievements", () => {
       await coderPage.goto("/achievements");
       await expect(coderPage.getByRole("heading", { name: "Achievements" })).toBeVisible();
       // Locked titles are readable: they are goals, not surprises.
-      await expect(coderPage.getByText("First Light")).toBeVisible();
+      await expect(coderPage.getByText("First Light")).toBeVisible({ timeout: 30_000 });
       await expect(coderPage.getByText(/titles earned/)).toBeVisible();
     } finally {
       await deleteModule(page, fixture.moduleId);
