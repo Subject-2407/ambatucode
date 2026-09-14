@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Box, Container, Flex, Heading, Stack, Text } from "@chakra-ui/react";
 import type { AuthenticatedUser } from "@ambatucode/shared";
+import { AchievementAnnouncer } from "@/components/gamification/achievement-announcer";
 import { AssessmentModeProvider, useAssessmentMode } from "@/providers/assessment-mode";
 import { SessionProvider } from "@/providers/session-provider";
 import { ColorModeToggle } from "@/providers/color-mode";
@@ -42,9 +43,15 @@ export function AppShell({ user, children }: { user: AuthenticatedUser; children
 function ShellFrame({ user, children }: { user: AuthenticatedUser; children: ReactNode }) {
   const { active } = useAssessmentMode();
 
+  // Mounted for a Coder in both branches: an award earned during an attempt is
+  // held rather than dropped, and announced once the attempt ends. Architects
+  // and Root earn no titles, so they listen for nothing.
+  const announcer = user.role === "CODER" ? <AchievementAnnouncer /> : null;
+
   if (active) {
     return (
       <Box as="main" minHeight="100dvh" bg="bg.canvas">
+        {announcer}
         {children}
       </Box>
     );
@@ -88,6 +95,7 @@ function ShellFrame({ user, children }: { user: AuthenticatedUser; children: Rea
         <Box display={{ base: "block", md: "none" }} px="4" pt="3">
           <UserMenu />
         </Box>
+        {announcer}
         {children}
       </Box>
     </Flex>

@@ -1,4 +1,13 @@
-import { BookOpen, LayoutDashboard, User, Users, type LucideIcon } from "lucide-react";
+import {
+  BookOpen,
+  ClipboardList,
+  History,
+  LayoutDashboard,
+  Trophy,
+  User,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import type { UserRole } from "@ambatucode/shared";
 import { routes } from "@/lib/routes";
 
@@ -17,9 +26,14 @@ const NAV_BY_ROLE: Readonly<Record<UserRole, readonly NavItem[]>> = {
   CODER: [
     { href: routes.dashboard, label: "Dashboard", icon: LayoutDashboard },
     { href: routes.modules, label: "Modules", icon: BookOpen },
+    { href: routes.submissions, label: "Submissions", icon: History },
+    { href: routes.achievements, label: "Achievements", icon: Trophy },
     { href: routes.profile, label: "Profile", icon: User },
   ],
-  ARCHITECT: [{ href: routes.manageModules, label: "Modules", icon: BookOpen }],
+  ARCHITECT: [
+    { href: routes.manageModules, label: "Modules", icon: BookOpen },
+    { href: routes.manageGrades, label: "Grades", icon: ClipboardList },
+  ],
   ROOT: [{ href: routes.adminUsers, label: "Users", icon: Users }],
 };
 

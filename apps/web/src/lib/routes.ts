@@ -24,6 +24,11 @@ export const routes = {
     `/modules/${moduleSlug}/materials/${materialId}`,
   assessment: (moduleSlug: string, assessmentId: string) =>
     `/modules/${moduleSlug}/assessments/${assessmentId}`,
+  /** Every formal Submission this Coder has made. */
+  submissions: "/submissions",
+  submission: (submissionId: string) => `/submissions/${submissionId}`,
+  /** Titles this Coder has earned, and the ones still available. */
+  achievements: "/achievements",
   /** The attempt workspace. Addressed by attempt, not by session: a reset
    * produces a new attempt, and the old URL must not reopen it. */
   attempt: (attemptId: string) => `/attempt/${attemptId}`,

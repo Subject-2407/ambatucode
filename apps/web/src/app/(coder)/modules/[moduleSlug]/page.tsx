@@ -5,6 +5,7 @@ import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
 import { ChevronRight, ClipboardCheck, FileText, Lock, Terminal } from "lucide-react";
 import type { AssessmentSummary, ModuleDetail, ModuleSectionView } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
+import { ModuleLeaderboards } from "@/components/gamification/module-leaderboards";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { handlePageError } from "@/lib/page-errors";
@@ -49,7 +50,28 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
         }
       />
 
-      {module.viewer.canRead ? <SectionTree module={module} /> : <AccessPanel module={module} />}
+      {module.viewer.canRead ? (
+        <Stack gap="8">
+          <SectionTree module={module} />
+          {/* Gamification belongs to learning, so it lives on the module page
+              and never inside the attempt workspace. */}
+          <Stack gap="3">
+            <Text fontSize="sm" fontWeight="medium">
+              Leaderboard
+            </Text>
+            <ModuleLeaderboards
+              moduleId={module.id}
+              viewerId={session.user.id}
+              sections={module.sections.map((section) => ({
+                id: section.id,
+                title: section.title,
+              }))}
+            />
+          </Stack>
+        </Stack>
+      ) : (
+        <AccessPanel module={module} />
+      )}
     </PageContainer>
   );
 }
