@@ -30,11 +30,19 @@ const (
 	scriptNotRunReason  = "not run: the submission's time budget was spent"
 	scriptCompileReason = "did not compile against the submission"
 	scriptLimitReason   = "stopped at a limit"
+	scriptCrashReason   = "crashed before reporting its tests"
 )
 
 // errScriptPlatform marks a script failure the platform owns — a framework
 // that crashed without a report — which becomes SYSTEM_ERROR for the job.
 var errScriptPlatform = errors.New("test script failed inside the platform")
+
+// errNoReport is the platform failure of a framework that wrote no report.
+var errNoReport = fmt.Errorf("%w: the test framework wrote no report", errScriptPlatform)
+
+// signalExitFloor is the exit status above which a process was ended by a
+// signal: 128 plus the signal number.
+const signalExitFloor = 128
 
 // runScript runs one of a job's test scripts and returns its tests as results.
 //
@@ -163,6 +171,14 @@ func (r *Runner) runScript(
 	}
 
 	tests, err := readScriptReports(ctx, session, plan)
+	// A test process killed by a signal before it could write a report was,
+	// almost always, taken down by the code it was testing: a segfault in the
+	// Coder's C++, an interpreter the submission crashed. That is the Coder's
+	// failure, not the platform's. A framework that exits normally without a
+	// report is still the platform's.
+	if errors.Is(err, errNoReport) && outcome.ExitCode > signalExitFloor {
+		return notRun(scriptCrashReason, contract.StatusRuntimeError)
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -197,7 +213,7 @@ func readScriptReports(ctx context.Context, session *sandbox.Session, plan langu
 		tests = append(tests, parsed...)
 	}
 	if !found {
-		return nil, fmt.Errorf("%w: the test framework wrote no report", errScriptPlatform)
+		return nil, errNoReport
 	}
 	return tests, nil
 }

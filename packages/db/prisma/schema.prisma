@@ -292,6 +292,7 @@ enum TestScriptFramework {
   JUNIT
   JEST
   PYTEST
+  GOOGLETEST
   CUSTOM
 }
 

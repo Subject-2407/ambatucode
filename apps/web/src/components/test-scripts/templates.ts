@@ -217,6 +217,73 @@ test("zero width has no area", () => {
 });
 `;
 
+const GOOGLETEST_STRUCTURE = `// Structural checks for C++: inheritance, abstract classes, private members,
+// method signatures and constructors, all decided at compile time.
+//
+// Replace Shape, Rectangle, area and width_ with the names your problem
+// statement asks for. The submission is included below; its main is renamed
+// while these tests build, and GoogleTest supplies its own, so write no main.
+//
+// Every check here is a concept or a type trait, so a member that is missing
+// or private makes a test fail instead of stopping the build. Naming a class
+// the submission does not declare at all still fails the whole script, which
+// is reported as one failed test.
+#include <concepts>
+#include <type_traits>
+
+#include <gtest/gtest.h>
+
+#include "main.cpp"
+
+template <typename T>
+concept HasPublicWidth = requires(T shape) { shape.width_; };
+
+template <typename T>
+concept HasDoubleArea = requires(const T& shape) {
+    { shape.area() } -> std::same_as<double>;
+};
+
+TEST(Structure, RectangleExtendsShape) {
+    EXPECT_TRUE((std::is_base_of_v<Shape, Rectangle>));
+}
+
+TEST(Structure, ShapeIsAbstract) {
+    EXPECT_TRUE(std::is_abstract_v<Shape>);
+}
+
+TEST(Structure, AreaIsAConstMethodReturningDouble) {
+    EXPECT_TRUE(HasDoubleArea<Rectangle>);
+}
+
+TEST(Structure, WidthIsNotPublic) {
+    EXPECT_FALSE(HasPublicWidth<Rectangle>);
+}
+
+TEST(Structure, RectangleIsBuiltFromWidthAndHeight) {
+    EXPECT_TRUE((std::is_constructible_v<Rectangle, double, double>));
+    EXPECT_FALSE(std::is_default_constructible_v<Rectangle>);
+}
+`;
+
+const GOOGLETEST_BEHAVIOUR = `// Behaviour checks: call the Coder's classes and functions directly.
+//
+// The submission is included below; its main is renamed while these tests
+// build, and GoogleTest supplies its own, so write no main. If the submission
+// lacks something named here, the script fails to build and is reported as
+// one failed test.
+#include <gtest/gtest.h>
+
+#include "main.cpp"
+
+TEST(Rectangle, AreaIsWidthTimesHeight) {
+    EXPECT_DOUBLE_EQ(6.0, Rectangle(2, 3).area());
+}
+
+TEST(Rectangle, ZeroWidthHasNoArea) {
+    EXPECT_DOUBLE_EQ(0.0, Rectangle(0, 5).area());
+}
+`;
+
 const PYTHON_CUSTOM = `"""A custom runner: any checks at all, reported as JSON.
 
 Write {"tests": [{"name": ..., "passed": ...}]} to the file named by the
@@ -434,6 +501,25 @@ export const SCRIPT_TEMPLATES: readonly ScriptTemplate[] = [
     language: "javascript",
     path: "rectangle.test.js",
     content: JEST_BEHAVIOUR,
+  },
+  {
+    id: "googletest-structure",
+    label: "Class structure",
+    description:
+      "Inheritance, abstract classes, private members and signatures, checked with concepts and type traits.",
+    framework: "GOOGLETEST",
+    language: "cpp",
+    path: "structure_test.cpp",
+    content: GOOGLETEST_STRUCTURE,
+  },
+  {
+    id: "googletest-behaviour",
+    label: "Behaviour",
+    description: "Unit tests that call the Coder's classes and functions.",
+    framework: "GOOGLETEST",
+    language: "cpp",
+    path: "rectangle_test.cpp",
+    content: GOOGLETEST_BEHAVIOUR,
   },
   {
     id: "custom-python",

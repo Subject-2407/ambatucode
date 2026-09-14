@@ -40,6 +40,8 @@ export function defaultScriptPath(framework: TestScriptFramework, language: Lang
       return "solution.test.js";
     case "PYTEST":
       return "test_solution.py";
+    case "GOOGLETEST":
+      return "solution_test.cpp";
     case "CUSTOM":
       return language === "java"
         ? "Check.java"

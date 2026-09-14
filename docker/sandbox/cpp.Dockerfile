@@ -15,8 +15,12 @@ FROM debian:bookworm-slim
 # `--no-install-recommends` keeps out documentation, an editor, and a mail
 # transport agent that would otherwise arrive as recommended packages. The
 # apt lists are removed in the same layer so they never reach the image.
+#
+# libgtest-dev is GoogleTest for Architect test scripts. Bookworm's package
+# ships the headers and prebuilt static libgtest and libgtest_main, so a script
+# links against them with no build step and no network.
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y g++ libstdc++-12-dev \
+    && apt-get install --no-install-recommends -y g++ libstdc++-12-dev libgtest-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # The job process runs as 65534:65534 with a read-only root filesystem, so

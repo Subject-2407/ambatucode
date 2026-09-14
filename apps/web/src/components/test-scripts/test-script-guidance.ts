@@ -51,6 +51,12 @@ export function describeScriptContract(
         results:
           "JUnit Jupiter (JUnit 6.1) runs the entrypoint class; its results are read directly.",
       };
+    case "GOOGLETEST":
+      return {
+        submission:
+          'Include the submission with `#include "main.cpp"` to test its classes and functions directly. Its main is renamed while the tests build, and GoogleTest supplies its own; do not write a main.',
+        results: "GoogleTest 1.12 runs every TEST in the file; its results are read directly.",
+      };
     case "CUSTOM":
       return { submission: customSubmission(language), results: CUSTOM_REPORT };
   }

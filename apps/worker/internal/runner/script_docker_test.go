@@ -374,3 +374,91 @@ json.dump({"tests": [{"name": "second sees a clean container", "passed": not os.
 		t.Fatalf("results are not attributed to their scripts in order: %+v", result.TestResults)
 	}
 }
+
+// GoogleTest includes the submission to reach its classes; the submission's
+// own main is renamed so GoogleTest's can run.
+func TestGoogleTestScriptGradesTheSubmission(t *testing.T) {
+	runner := newDockerRunner(t)
+
+	source := `#include <iostream>
+
+class Rectangle {
+public:
+    Rectangle(double width, double height) : width_(width), height_(height) {}
+    double area() const { return width_ * height_; }
+
+private:
+    double width_;
+    double height_;
+};
+
+int main() {
+    double w, h;
+    std::cin >> w >> h;
+    std::cout << Rectangle(w, h).area() << "\n";
+}
+`
+	script := `#include <concepts>
+#include <gtest/gtest.h>
+
+#include "main.cpp"
+
+template <typename T>
+concept HasPublicWidth = requires(T shape) { shape.width_; };
+
+TEST(Rectangle, AreaIsWidthTimesHeight) { EXPECT_DOUBLE_EQ(6.0, Rectangle(2, 3).area()); }
+TEST(Rectangle, Wrong) { EXPECT_DOUBLE_EQ(5.0, Rectangle(2, 2).area()); }
+TEST(Rectangle, KeepsFieldsPrivate) { EXPECT_FALSE(HasPublicWidth<Rectangle>); }
+`
+	result := execute(t, runner, scriptJob(contract.LanguageCPP, source,
+		contract.FrameworkGoogleTest, "rectangle_test.cpp", script,
+		echoCase("the program still runs on its own", "2 3", "6"),
+	))
+
+	if !result.TestResults[0].Passed {
+		t.Fatalf("the stdin case failed: %+v", result.TestResults[0])
+	}
+	assertScriptTests(t, result, []wantTest{
+		{"Rectangle.AreaIsWidthTimesHeight", true},
+		{"Rectangle.Wrong", false},
+		{"Rectangle.KeepsFieldsPrivate", true},
+	})
+	if result.Status != contract.StatusGraded {
+		t.Fatalf("status = %s; failing tests leave the submission GRADED", result.Status)
+	}
+}
+
+// A GoogleTest script that names something the submission lacks fails as a
+// test, like JUnit's.
+func TestGoogleTestAgainstAMissingClassFailsAsATest(t *testing.T) {
+	runner := newDockerRunner(t)
+
+	result := execute(t, runner, scriptJob(contract.LanguageCPP, "int main() {}\n",
+		contract.FrameworkGoogleTest, "rectangle_test.cpp", `#include <gtest/gtest.h>
+#include "main.cpp"
+TEST(Rectangle, Area) { EXPECT_EQ(6, Rectangle(2, 3).area()); }
+`,
+	))
+
+	assertScriptTests(t, result, []wantTest{{"did not compile", false}})
+}
+
+// Code under test that crashes takes GoogleTest down before it writes a
+// report. The crash is the submission's, so it fails as a test.
+func TestGoogleTestWhoseSubmissionCrashesFailsAsATest(t *testing.T) {
+	runner := newDockerRunner(t)
+
+	result := execute(t, runner, scriptJob(contract.LanguageCPP, `int crash() { int* p = nullptr; return *p; }
+int main() {}
+`,
+		contract.FrameworkGoogleTest, "crash_test.cpp", `#include <gtest/gtest.h>
+#include "main.cpp"
+TEST(Crash, Dereferences) { EXPECT_EQ(0, crash()); }
+`,
+	))
+
+	assertScriptTests(t, result, []wantTest{{"crashed before reporting", false}})
+	if result.Status != contract.StatusRuntimeError {
+		t.Fatalf("status = %s, want RUNTIME_ERROR", result.Status)
+	}
+}

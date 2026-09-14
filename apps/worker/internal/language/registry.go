@@ -100,7 +100,8 @@ var registry = map[contract.Language]Spec{
 		RunCmd:    []string{WorkspaceDir + "/program"},
 		artifacts: []string{"program"},
 		scripts: map[contract.TestScriptFramework]scriptPlanner{
-			contract.FrameworkCustom: planCppCustom,
+			contract.FrameworkGoogleTest: planGoogleTest,
+			contract.FrameworkCustom:     planCppCustom,
 		},
 	},
 }

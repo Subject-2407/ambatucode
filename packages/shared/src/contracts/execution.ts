@@ -29,7 +29,7 @@ import {
  * Bump it whenever a field is added, removed, renamed, or changes meaning, and
  * update `apps/worker/internal/contract` in the same commit.
  */
-export const EXECUTION_CONTRACT_VERSION = 3;
+export const EXECUTION_CONTRACT_VERSION = 4;
 
 export const executionKindSchema = z.enum(["RUN", "SUBMIT"]);
 export type ExecutionKind = z.infer<typeof executionKindSchema>;

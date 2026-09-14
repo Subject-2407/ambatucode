@@ -48,6 +48,7 @@ export const FRAMEWORK_LANGUAGE: Readonly<Record<TestScriptFramework, Language |
   JUNIT: "java",
   JEST: "javascript",
   PYTEST: "python",
+  GOOGLETEST: "cpp",
   CUSTOM: null,
 };
 

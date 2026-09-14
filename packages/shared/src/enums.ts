@@ -30,7 +30,7 @@ export type FocusLossAction = (typeof FOCUS_LOSS_ACTIONS)[number];
 export const TEST_CASE_KINDS = ["PUBLIC", "HIDDEN"] as const;
 export type TestCaseKind = (typeof TEST_CASE_KINDS)[number];
 
-export const TEST_SCRIPT_FRAMEWORKS = ["JUNIT", "JEST", "PYTEST", "CUSTOM"] as const;
+export const TEST_SCRIPT_FRAMEWORKS = ["JUNIT", "JEST", "PYTEST", "GOOGLETEST", "CUSTOM"] as const;
 export type TestScriptFramework = (typeof TEST_SCRIPT_FRAMEWORKS)[number];
 
 export const TEST_SCRIPT_VALIDATION_STATUSES = [

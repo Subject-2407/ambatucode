@@ -18,9 +18,9 @@ function picked(name: string, content: string, size = content.length) {
 describe("frameworksFor", () => {
   it("offers a language its own framework and CUSTOM", () => {
     expect(frameworksFor("java")).toEqual(["JUNIT", "CUSTOM"]);
-    expect(frameworksFor("cpp")).toEqual(["CUSTOM"]);
+    expect(frameworksFor("cpp")).toEqual(["GOOGLETEST", "CUSTOM"]);
     expect(defaultFramework("python")).toBe("PYTEST");
-    expect(defaultFramework("cpp")).toBe("CUSTOM");
+    expect(defaultFramework("cpp")).toBe("GOOGLETEST");
   });
 
   // A default the upload schema refuses would greet the Architect with an error.

@@ -207,6 +207,42 @@ func planCppCustom(input ScriptInput) (ScriptPlan, error) {
 	}, nil
 }
 
+// googleTestHarness is where a GoogleTest script is built. Like cppHarness,
+// the leading dot keeps it clear of any path a script may declare.
+const googleTestHarness = WorkspaceDir + "/.ambatucode-googletest"
+
+// SubmissionMainSymbol is what the submission's main is renamed to while a
+// GoogleTest script is built. The script includes main.cpp to reach the
+// Coder's classes and functions, and GoogleTest brings its own main.
+const SubmissionMainSymbol = "ambatucode_submission_main"
+
+// planGoogleTest builds the script, which includes the submission, against
+// the image's prebuilt GoogleTest, and reports through GoogleTest's own XML.
+//
+// The rename is a macro, so it applies to the script's translation unit only:
+// libgtest_main's main was compiled long before and is untouched. -O1 rather
+// than -O2 because GoogleTest's headers are slow to optimise, and the build
+// runs inside the submission's compile budget.
+func planGoogleTest(input ScriptInput) (ScriptPlan, error) {
+	if !isCppSource(input.Path) {
+		return ScriptPlan{}, fmt.Errorf("the GoogleTest script %q is not a C++ source file", input.Path)
+	}
+	report := input.ReportDir + "/report.xml"
+	return ScriptPlan{
+		Compile: []string{
+			"g++", "-std=c++20", "-O1", "-w",
+			"-Dmain=" + SubmissionMainSymbol,
+			"-I", WorkspaceDir,
+			"-o", googleTestHarness,
+			workspacePath(input.Path),
+			"-lgtest_main", "-lgtest", "-pthread",
+		},
+		Run:     []string{googleTestHarness, "--gtest_output=xml:" + report},
+		Format:  grader.ReportJUnitXML,
+		Reports: []string{report},
+	}, nil
+}
+
 func isCppSource(file string) bool {
 	switch path.Ext(file) {
 	case ".cpp", ".cc", ".cxx":

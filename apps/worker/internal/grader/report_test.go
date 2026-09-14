@@ -68,6 +68,39 @@ func TestParseJUnitConsoleReport(t *testing.T) {
 	assertTests(t, tests, want)
 }
 
+// Captured from GoogleTest 1.12 in the C++ sandbox image: a pass, a failure, a
+// disabled test, and a skipped one.
+const googleTestReport = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="1" disabled="1" errors="0" time="0" timestamp="2026-09-14T08:05:33.946" name="AllTests">
+  <testsuite name="Rectangle" tests="4" failures="1" disabled="1" skipped="1" errors="0" time="0" timestamp="2026-09-14T08:05:33.946">
+    <testcase name="Area" file="t.cpp" line="2" status="run" result="completed" time="0" timestamp="2026-09-14T08:05:33.946" classname="Rectangle" />
+    <testcase name="Wrong" file="t.cpp" line="3" status="run" result="completed" time="0" timestamp="2026-09-14T08:05:33.946" classname="Rectangle">
+      <failure message="t.cpp:3&#x0A;Expected equality of these values:&#x0A;  5&#x0A;  2 * 2&#x0A;    Which is: 4" type=""><![CDATA[t.cpp:3
+Expected equality of these values:
+  5
+  2 * 2
+    Which is: 4]]></failure>
+    </testcase>
+    <testcase name="DISABLED_Later" file="t.cpp" line="4" status="notrun" result="suppressed" time="0" timestamp="1970-01-01T00:00:00.000" classname="Rectangle" />
+    <testcase name="Skips" file="t.cpp" line="5" status="run" result="skipped" time="0" timestamp="2026-09-14T08:05:33.946" classname="Rectangle">
+      <skipped message="t.cpp:5&#x0A;not yet"><![CDATA[t.cpp:5
+not yet]]></skipped>
+    </testcase>
+  </testsuite>
+</testsuites>`
+
+// A disabled GoogleTest test carries no <skipped>; it must not count as passed.
+func TestParseGoogleTestReport(t *testing.T) {
+	tests, err := ParseReport(ReportJUnitXML, []byte(googleTestReport))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	assertTests(t, tests, []ScriptTest{
+		{Name: "Rectangle.Area", Passed: true},
+		{Name: "Rectangle.Wrong", Passed: false},
+	})
+}
+
 func TestParseJestReport(t *testing.T) {
 	tests, err := ParseReport(ReportJestJSON, []byte(jestSample))
 	if err != nil {

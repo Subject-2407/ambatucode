@@ -19,6 +19,7 @@ describe("describeScriptContract", () => {
     expect(describeScriptContract("PYTEST", "python").submission).toContain("main.py");
     expect(describeScriptContract("JEST", "javascript").submission).toContain("main.js");
     expect(describeScriptContract("JUNIT", "java").submission).toContain("default package");
+    expect(describeScriptContract("GOOGLETEST", "cpp").submission).toContain('#include "main.cpp"');
   });
 
   it("tells a custom script where its report and the compiled program go", () => {

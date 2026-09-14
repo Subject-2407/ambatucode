@@ -91,12 +91,15 @@ type junitSuite struct {
 }
 
 type junitCase struct {
-	ClassName string    `xml:"classname,attr"`
-	Name      string    `xml:"name,attr"`
-	Time      string    `xml:"time,attr"`
-	Failure   *struct{} `xml:"failure"`
-	Error     *struct{} `xml:"error"`
-	Skipped   *struct{} `xml:"skipped"`
+	ClassName string `xml:"classname,attr"`
+	Name      string `xml:"name,attr"`
+	// Status is GoogleTest's: a disabled test is status="notrun" and carries
+	// no <skipped> element, so without it a disabled test would count as passed.
+	Status  string    `xml:"status,attr"`
+	Time    string    `xml:"time,attr"`
+	Failure *struct{} `xml:"failure"`
+	Error   *struct{} `xml:"error"`
+	Skipped *struct{} `xml:"skipped"`
 }
 
 // parseJUnitXML accepts either root: pytest writes <testsuites>, the JUnit
@@ -145,7 +148,7 @@ func parseJUnitXML(data []byte) ([]ScriptTest, error) {
 func collectJUnit(suites []junitSuite, into *[]ScriptTest) {
 	for _, suite := range suites {
 		for _, testCase := range suite.Cases {
-			if testCase.Skipped != nil {
+			if testCase.Skipped != nil || testCase.Status == "notrun" {
 				continue
 			}
 			name := testCase.Name

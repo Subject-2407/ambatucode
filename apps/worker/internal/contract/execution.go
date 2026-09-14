@@ -21,7 +21,7 @@ import (
 // payload shape. Without this check a renamed field would surface as a
 // silently mis-graded submission; with it the worker refuses the job and says
 // exactly why.
-const Version = 3
+const Version = 4
 
 type Kind string
 
@@ -55,6 +55,8 @@ const (
 	FrameworkJest   TestScriptFramework = "JEST"
 	FrameworkPytest TestScriptFramework = "PYTEST"
 	FrameworkCustom TestScriptFramework = "CUSTOM"
+	// FrameworkGoogleTest runs a C++ GoogleTest file compiled with the submission.
+	FrameworkGoogleTest TestScriptFramework = "GOOGLETEST"
 )
 
 // Status is the submission status the worker reports. QUEUED and RUNNING are
@@ -277,7 +279,7 @@ func ParseJob(raw []byte) (Job, error) {
 			return Job{}, fmt.Errorf("test script %d has a negative weight %v", i, script.Weight)
 		}
 		switch script.Framework {
-		case FrameworkJUnit, FrameworkJest, FrameworkPytest, FrameworkCustom:
+		case FrameworkJUnit, FrameworkJest, FrameworkPytest, FrameworkCustom, FrameworkGoogleTest:
 		default:
 			return Job{}, fmt.Errorf("test script %d has unknown framework %q", i, script.Framework)
 		}

@@ -14,7 +14,7 @@ func TestEveryLanguageRunsItsFrameworks(t *testing.T) {
 		contract.LanguagePython:     {contract.FrameworkPytest, contract.FrameworkCustom},
 		contract.LanguageJavaScript: {contract.FrameworkJest, contract.FrameworkCustom},
 		contract.LanguageJava:       {contract.FrameworkJUnit, contract.FrameworkCustom},
-		contract.LanguageCPP:        {contract.FrameworkCustom},
+		contract.LanguageCPP:        {contract.FrameworkGoogleTest, contract.FrameworkCustom},
 	}
 	entrypoints := map[contract.Language]string{
 		contract.LanguagePython:     "tests/test_main.py",
