@@ -90,7 +90,11 @@ const storedScriptFilesSchema = z.array(z.object({ path: z.string(), content: z.
  * stays a list, so the file is found by the entrypoint that names it.
  */
 export function readScriptContent(row: { entrypoint: string; filesJson: unknown }): string {
-  const files = parseStored(storedScriptFilesSchema, row.filesJson, "AssessmentTestScript.filesJson");
+  const files = parseStored(
+    storedScriptFilesSchema,
+    row.filesJson,
+    "AssessmentTestScript.filesJson",
+  );
   const file = files.find((candidate) => candidate.path === row.entrypoint);
   if (file === undefined) {
     throw new AppError("INTERNAL", "Stored AssessmentTestScript has no file at its entrypoint");

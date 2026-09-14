@@ -5,22 +5,26 @@ import {
   AppError,
   DEFAULT_EXECUTION_LIMITS,
   EXECUTABLE_LANGUAGES,
+  MAX_TEST_SCRIPTS_PER_LANGUAGE,
   isExecutableLanguage,
   type AuthenticatedUser,
   type CreatePracticeRequest,
   type ExecutionTestCase,
+  type ExecutionTestScript,
   type Language,
   type PracticeActivityView,
   type PracticeTestCase,
   type PracticeTestCaseInput,
+  type PracticeTestScriptView,
   type RunPracticeRequest,
   type RunPracticeResponse,
   type UpdatePracticeRequest,
+  type UploadPracticeTestScriptRequest,
 } from "@ambatucode/shared";
 import { consumeRateLimit } from "../auth/rate-limit";
 import { enqueueExecutionJob, type ExecutionJobInput } from "../queue/producer";
-import { toPracticeActivityView } from "../serializers/content";
-import { scopeForMaterial, scopeForPractice } from "./content-scope";
+import { toPracticeActivityView, toPracticeTestScriptView } from "../serializers/content";
+import { scopeForMaterial, scopeForPractice, scopeForPracticeTestScript } from "./content-scope";
 import { assertCanRead, assertCanWrite } from "./modules";
 
 /**
@@ -187,6 +191,20 @@ export async function updatePracticeActivity(
   assertRunnableLanguages(allowedLanguages);
   assertStarterCodeMatchesLanguages(starterCode, allowedLanguages);
 
+  // A script for a language the activity no longer offers would never run,
+  // and would quietly stop checking anyone's code. Refuse the narrowing.
+  const orphaned = await prisma.practiceTestScript.findMany({
+    where: { practiceActivityId: practiceId, language: { notIn: allowedLanguages } },
+    select: { language: true },
+    distinct: ["language"],
+  });
+  if (orphaned.length > 0) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      `Remove the ${orphaned.map((script) => script.language).join(", ")} test scripts before disallowing that language`,
+    );
+  }
+
   const updated = await prisma.practiceActivity.update({
     where: { id: practiceId },
     data: {
@@ -298,6 +316,15 @@ export async function runPracticeActivity(
   }
 
   const testCases = toExecutionTestCases(activity.testCases);
+  // Every script for the language, in a stable order so repeated runs list
+  // their tests the same way.
+  const testScripts: ExecutionTestScript[] = (
+    await prisma.practiceTestScript.findMany({
+      where: { practiceActivityId: practiceId, language: input.language },
+      select: { id: true, framework: true, path: true, content: true },
+      orderBy: { path: "asc" },
+    })
+  ).map((script) => ({ ...script, weight: 1 }));
 
   const job: ExecutionJobInput = {
     jobId: randomUUID(),
@@ -309,17 +336,109 @@ export async function runPracticeActivity(
       ...DEFAULT_EXECUTION_LIMITS,
       runTimeoutMs: activity.timeLimitMs,
       memoryLimitMb: activity.memoryLimitMb,
-      // The wall clock covers compilation plus every case in sequence, so it
-      // has to grow with the case count or a legitimate multi-case run gets
-      // killed for taking exactly as long as it was configured to take.
+      // The wall clock covers compilation plus every case in sequence, and each
+      // script in its own container after them, so it has to grow with the
+      // work or a legitimate run gets killed for taking exactly as long as it
+      // was configured to take.
       wallTimeoutMs: Math.max(
         DEFAULT_EXECUTION_LIMITS.wallTimeoutMs,
-        DEFAULT_EXECUTION_LIMITS.compileTimeoutMs + activity.timeLimitMs * testCases.length,
+        DEFAULT_EXECUTION_LIMITS.compileTimeoutMs +
+          activity.timeLimitMs * testCases.length +
+          DEFAULT_EXECUTION_LIMITS.wallTimeoutMs * testScripts.length,
       ),
     },
     testCases,
-    testScripts: [],
+    testScripts,
   };
 
   return { jobId: await enqueueExecutionJob(job, { userId: actor.id }) };
+}
+
+// --- Test scripts -------------------------------------------------------------
+
+const PRACTICE_TEST_SCRIPT_SELECT = {
+  id: true,
+  practiceActivityId: true,
+  language: true,
+  framework: true,
+  path: true,
+  content: true,
+  updatedAt: true,
+} satisfies Prisma.PracticeTestScriptSelect;
+
+/**
+ * Owner only, and never folded into the activity view: that view is what a
+ * Coder reads, and a script is Architect-only data.
+ */
+export async function listPracticeTestScripts(
+  actor: AuthenticatedUser,
+  practiceId: string,
+): Promise<PracticeTestScriptView[]> {
+  const scope = await scopeForPractice(practiceId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  const rows = await prisma.practiceTestScript.findMany({
+    where: { practiceActivityId: practiceId },
+    select: PRACTICE_TEST_SCRIPT_SELECT,
+    orderBy: [{ language: "asc" }, { path: "asc" }],
+  });
+  return rows.map(toPracticeTestScriptView);
+}
+
+/** Adds one script file, or replaces the one the language has at that path. */
+export async function uploadPracticeTestScript(
+  actor: AuthenticatedUser,
+  practiceId: string,
+  input: UploadPracticeTestScriptRequest,
+): Promise<PracticeTestScriptView> {
+  const scope = await scopeForPractice(practiceId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  const activity = await prisma.practiceActivity.findUniqueOrThrow({
+    where: { id: practiceId },
+    select: { allowedLanguages: true },
+  });
+  if (!activity.allowedLanguages.includes(input.language)) {
+    throw new AppError(
+      "LANGUAGE_NOT_ALLOWED",
+      "A test script must target a language the practice activity allows",
+    );
+  }
+
+  const key = { practiceActivityId: practiceId, language: input.language, path: input.path };
+  const saved = await prisma.$transaction(async (tx) => {
+    const existing = await tx.practiceTestScript.findUnique({
+      where: { practiceActivityId_language_path: key },
+      select: { id: true },
+    });
+    if (existing === null) {
+      const count = await tx.practiceTestScript.count({
+        where: { practiceActivityId: practiceId, language: input.language },
+      });
+      if (count >= MAX_TEST_SCRIPTS_PER_LANGUAGE) {
+        throw new AppError(
+          "VALIDATION_FAILED",
+          `A language holds at most ${MAX_TEST_SCRIPTS_PER_LANGUAGE} test scripts`,
+        );
+      }
+    }
+    const data = { framework: input.framework, content: input.content };
+    return tx.practiceTestScript.upsert({
+      where: { practiceActivityId_language_path: key },
+      create: { ...key, ...data },
+      update: data,
+      select: PRACTICE_TEST_SCRIPT_SELECT,
+    });
+  });
+  return toPracticeTestScriptView(saved);
+}
+
+export async function deletePracticeTestScript(
+  actor: AuthenticatedUser,
+  testScriptId: string,
+): Promise<void> {
+  const scope = await scopeForPracticeTestScript(testScriptId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  await prisma.practiceTestScript.delete({ where: { id: testScriptId } });
 }

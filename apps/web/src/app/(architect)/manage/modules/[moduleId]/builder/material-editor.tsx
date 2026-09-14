@@ -3,7 +3,7 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { Checkbox, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { Pencil, Plus, Save, Terminal, Trash } from "lucide-react";
+import { FileCode, Pencil, Plus, Save, Terminal, Trash } from "lucide-react";
 import type { MaterialDetail, PracticeActivityView, RichTextDocument } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button, IconButton } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { useMaterial, useUpdateMaterial } from "@/hooks/use-materials";
 import { useDeletePractice } from "@/hooks/use-practice";
 import { isApiError } from "@/lib/api-client";
 import { PracticeFormDialog } from "./practice-form-dialog";
+import { PracticeTestScriptsDialog } from "./practice-test-scripts-dialog";
 
 /**
  * TipTap and its ProseMirror core are heavy and only an Architect ever loads
@@ -71,6 +72,7 @@ function MaterialForm({ moduleId, material }: { moduleId: string; material: Mate
   const [editingPractice, setEditingPractice] = useState<PracticeActivityView | null>(null);
   const [creatingPractice, setCreatingPractice] = useState(false);
   const [deletingPractice, setDeletingPractice] = useState<PracticeActivityView | null>(null);
+  const [scriptingPractice, setScriptingPractice] = useState<PracticeActivityView | null>(null);
 
   /**
    * Saving is explicit. Autosave belongs to an attempt, where losing work costs
@@ -184,6 +186,13 @@ function MaterialForm({ moduleId, material }: { moduleId: string; material: Mate
                   </HStack>
                 </Stack>
                 <IconButton
+                  aria-label={`Test scripts for ${activity.title}`}
+                  size="xs"
+                  onClick={() => setScriptingPractice(activity)}
+                >
+                  <FileCode size={14} aria-hidden />
+                </IconButton>
+                <IconButton
                   aria-label={`Edit ${activity.title}`}
                   size="xs"
                   onClick={() => setEditingPractice(activity)}
@@ -216,6 +225,13 @@ function MaterialForm({ moduleId, material }: { moduleId: string; material: Mate
           materialId={material.id}
           activity={editingPractice}
           onClose={() => setEditingPractice(null)}
+        />
+      ) : null}
+
+      {scriptingPractice ? (
+        <PracticeTestScriptsDialog
+          activity={scriptingPractice}
+          onClose={() => setScriptingPractice(null)}
         />
       ) : null}
 

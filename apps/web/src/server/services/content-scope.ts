@@ -56,3 +56,19 @@ export async function scopeForPractice(practiceId: string): Promise<MaterialScop
   }
   return scopeForMaterial(practice.materialId);
 }
+
+export type PracticeScope = MaterialScope & { practiceId: string };
+
+export async function scopeForPracticeTestScript(testScriptId: string): Promise<PracticeScope> {
+  const script = await prisma.practiceTestScript.findUnique({
+    where: { id: testScriptId },
+    select: { practiceActivityId: true },
+  });
+  if (!script) {
+    throw new AppError("NOT_FOUND", "Test script not found");
+  }
+  return {
+    ...(await scopeForPractice(script.practiceActivityId)),
+    practiceId: script.practiceActivityId,
+  };
+}

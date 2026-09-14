@@ -167,11 +167,31 @@ model PracticeActivity {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  material    Material             @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  testScripts PracticeTestScript[]
 
   @@index([materialId, orderIndex])
 }
 
+// A Practice Activity's structural or unit test file. Unlike its cases, which
+// a Coder reads, a script is Architect-only: it lives in its own table so the
+// Coder-facing activity read cannot select it by accident. A Run shows the
+// Coder each test's name and whether it passed, and nothing of the file.
+model PracticeTestScript {
+  id                 String              @id @default(cuid())
+  practiceActivityId String
+  language           String
+  framework          TestScriptFramework
+  path               String
+  content            String
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  practiceActivity PracticeActivity @relation(fields: [practiceActivityId], references: [id], onDelete: Cascade)
+
+  // Uploading a file to a path the language already has replaces it.
+  @@unique([practiceActivityId, language, path])
+}
 
 // ---------------------------------------------------------------------------
 // Assessment

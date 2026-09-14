@@ -23,7 +23,7 @@ import { SelectField } from "@/components/ui/select";
 import { toaster } from "@/components/ui/toaster";
 import { SourceEditor } from "@/components/editor/code-editor";
 import { LANGUAGE_LABEL, MONACO_LANGUAGE_ID, TAB_SIZE } from "@/components/editor/language-labels";
-import { describeScriptContract } from "@/components/assessment/test-script-guidance";
+import { describeScriptContract } from "@/components/test-scripts/test-script-guidance";
 import { useDeleteTestScript, useUploadTestScript } from "@/hooks/use-assessments";
 import { isApiError } from "@/lib/api-client";
 

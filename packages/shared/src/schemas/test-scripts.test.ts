@@ -43,9 +43,9 @@ describe("uploadTestScriptRequestSchema", () => {
   });
 
   it("refuses a file its language cannot run", () => {
-    expect(uploadTestScriptRequestSchema.safeParse(script({ path: "test_solution.js" })).success).toBe(
-      false,
-    );
+    expect(
+      uploadTestScriptRequestSchema.safeParse(script({ path: "test_solution.js" })).success,
+    ).toBe(false);
     expect(
       uploadTestScriptRequestSchema.safeParse(
         script({ language: "java", framework: "JUNIT", path: "SolutionTest.kt" }),
@@ -54,7 +54,9 @@ describe("uploadTestScriptRequestSchema", () => {
   });
 
   it("refuses the path the submission is written to", () => {
-    expect(uploadTestScriptRequestSchema.safeParse(script({ path: "main.py" })).success).toBe(false);
+    expect(uploadTestScriptRequestSchema.safeParse(script({ path: "main.py" })).success).toBe(
+      false,
+    );
     expect(
       uploadTestScriptRequestSchema.safeParse(
         script({ language: "cpp", framework: "CUSTOM", path: "main.cpp" }),
@@ -63,7 +65,9 @@ describe("uploadTestScriptRequestSchema", () => {
   });
 
   it("refuses an empty or oversized file", () => {
-    expect(uploadTestScriptRequestSchema.safeParse(script({ content: "  \n" })).success).toBe(false);
+    expect(uploadTestScriptRequestSchema.safeParse(script({ content: "  \n" })).success).toBe(
+      false,
+    );
     const heavy = "界".repeat(Math.floor(MAX_TEST_SCRIPT_BYTES / 3) + 1);
     expect(uploadTestScriptRequestSchema.safeParse(script({ content: heavy })).success).toBe(false);
   });

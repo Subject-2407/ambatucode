@@ -19,7 +19,9 @@ import {
   type ModuleViewerState,
   type ModuleVisibility,
   type PracticeActivityView,
+  type PracticeTestScriptView,
   type SectionView,
+  type TestScriptFramework,
 } from "@ambatucode/shared";
 import type { z } from "zod";
 import { assertInteractiveBlocksValid } from "../services/interactive-blocks";
@@ -271,6 +273,32 @@ export function toPracticeActivityView(row: PracticeRow): PracticeActivityView {
       "PracticeActivity.testCasesJson",
     ),
     createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+export type PracticeTestScriptRow = {
+  id: string;
+  practiceActivityId: string;
+  language: string;
+  framework: TestScriptFramework;
+  path: string;
+  content: string;
+  updatedAt: Date;
+};
+
+/** Architect-only. Nothing that serves a Coder may call this. */
+export function toPracticeTestScriptView(row: PracticeTestScriptRow): PracticeTestScriptView {
+  if (!isLanguage(row.language)) {
+    throw new AppError("INTERNAL", `Stored language "${row.language}" is not a known language`);
+  }
+  return {
+    id: row.id,
+    practiceId: row.practiceActivityId,
+    language: row.language,
+    framework: row.framework,
+    path: row.path,
+    content: row.content,
     updatedAt: row.updatedAt.toISOString(),
   };
 }

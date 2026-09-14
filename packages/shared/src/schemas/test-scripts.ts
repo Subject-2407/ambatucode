@@ -147,3 +147,23 @@ export type TestScriptView = {
   weight: number;
   updatedAt: string;
 };
+
+/** Practice produces no grade, so a practice script has no weight to set. */
+export const uploadPracticeTestScriptRequestSchema = z
+  .object(testScriptFileShape)
+  .superRefine(checkTestScriptFile);
+export type UploadPracticeTestScriptRequest = z.infer<typeof uploadPracticeTestScriptRequestSchema>;
+
+/**
+ * For the owning Architect only. The Coder-facing Practice Activity view never
+ * carries scripts; a Run reports each test's name and verdict and nothing else.
+ */
+export type PracticeTestScriptView = {
+  id: string;
+  practiceId: string;
+  language: Language;
+  framework: TestScriptFramework;
+  path: string;
+  content: string;
+  updatedAt: string;
+};

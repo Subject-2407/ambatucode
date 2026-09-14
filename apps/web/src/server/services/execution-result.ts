@@ -59,14 +59,22 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
     // carrying a hidden case — so these results need no filtering. What is
     // dropped is the shape rather than the rows: no test case id, no weight,
     // and no expected output ever reaches the browser.
-    testResults: result.testResults.map((testResult) => ({
-      name: testResult.name,
-      status: testResult.status,
-      passed: testResult.passed,
-      executionTimeMs: testResult.executionTimeMs,
-      stdoutExcerpt: testResult.stdoutExcerpt,
-      stderrExcerpt: testResult.stderrExcerpt,
-    })),
+    //
+    // A Practice Activity's script tests arrive here too. For those the Coder
+    // gets the test's name and verdict only. The worker already sends them
+    // with no excerpts; blanking them again means a framework that ever
+    // printed an assertion into one still could not show it to a Coder.
+    testResults: result.testResults.map((testResult) => {
+      const fromScript = testResult.testScriptId !== null;
+      return {
+        name: testResult.name,
+        status: testResult.status,
+        passed: testResult.passed,
+        executionTimeMs: testResult.executionTimeMs,
+        stdoutExcerpt: fromScript ? "" : testResult.stdoutExcerpt,
+        stderrExcerpt: fromScript ? "" : testResult.stderrExcerpt,
+      };
+    }),
     compilerOutput: result.compilerOutput,
   };
 

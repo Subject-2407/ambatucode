@@ -37,9 +37,10 @@ describe("createPracticeRequestSchema", () => {
     ).toBe(false);
   });
 
-  it("refuses an activity with no cases to check against", () => {
+  // Its test scripts are added once it exists, so it may start with no case.
+  it("accepts an activity with no stdin/stdout cases", () => {
     expect(createPracticeRequestSchema.safeParse({ ...validActivity, testCases: [] }).success).toBe(
-      false,
+      true,
     );
   });
 });

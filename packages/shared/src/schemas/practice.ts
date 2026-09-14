@@ -52,7 +52,11 @@ const practiceShape = {
   starterCode: starterCodeMapSchema,
   timeLimitMs: z.number().int().min(100).max(60_000),
   memoryLimitMb: z.number().int().min(16).max(2_048),
-  testCases: z.array(practiceTestCaseInputSchema).min(1).max(50),
+  /**
+   * May be empty: an activity checked only by its test scripts — one about
+   * class structure, say — has no stdin/stdout case to offer.
+   */
+  testCases: z.array(practiceTestCaseInputSchema).max(50),
 };
 
 export const createPracticeRequestSchema = z.object({

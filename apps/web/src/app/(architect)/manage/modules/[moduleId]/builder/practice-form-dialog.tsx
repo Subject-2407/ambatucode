@@ -29,7 +29,9 @@ import { isApiError } from "@/lib/api-client";
 type DraftCase = PracticeTestCaseInput & { key: string };
 
 function toDraftCases(cases: PracticeActivityView["testCases"] | undefined): DraftCase[] {
-  if (!cases || cases.length === 0) {
+  // A new activity starts with one case to fill in. An existing one with none
+  // is checked by its test scripts alone, and must stay that way on save.
+  if (!cases) {
     return [{ key: "new-0", name: "Case 1", input: "", expectedOutput: "", comparison: "TRIMMED" }];
   }
   return cases.map((testCase, index) => ({
@@ -247,7 +249,7 @@ export function PracticeFormDialog({
 
           <Text fontSize="xs" color="fg.muted">
             Every practice case is visible to the Coder. An exercise that needs a hidden case
-            belongs in an Assessment.
+            belongs in an Assessment. An activity checked only by test scripts needs no case.
           </Text>
 
           {cases.map((testCase) => (
@@ -273,7 +275,6 @@ export function PracticeFormDialog({
                 <IconButton
                   aria-label={`Remove ${testCase.name}`}
                   size="sm"
-                  disabled={cases.length === 1}
                   onClick={() =>
                     setCases((current) => current.filter((entry) => entry.key !== testCase.key))
                   }

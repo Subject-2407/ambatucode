@@ -2,7 +2,10 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@ambatucode/db";
 import {
+  DEFAULT_EXECUTION_LIMITS,
+  EXECUTION_CONTRACT_VERSION,
   MAX_BLOCK_JS_BYTES,
+  REDIS_CHANNELS,
   createPracticeRequestSchema,
   isAppError,
   type AuthenticatedUser,
@@ -15,7 +18,15 @@ import { createModule, deleteModule, getModule, listModules, updateModule } from
 import { decideEnrollment, listEnrollments, requestEnrollment } from "./enrollments";
 import { createSection, deleteSection, listSections, reorderSections } from "./sections";
 import { createMaterial, getMaterial, listMaterials, updateMaterial } from "./materials";
-import { createPracticeActivity, runPracticeActivity } from "./practice";
+import { ingestExecutionResult } from "./execution-result";
+import {
+  createPracticeActivity,
+  deletePracticeTestScript,
+  listPracticeTestScripts,
+  runPracticeActivity,
+  updatePracticeActivity,
+  uploadPracticeTestScript,
+} from "./practice";
 
 /**
  * The Phase 2 flow end to end against the real database and Redis: an
@@ -613,5 +624,200 @@ describe("practice", () => {
     ).toBe("RATE_LIMITED");
 
     await getRedis().del(key);
+  });
+});
+
+describe("practice test scripts", () => {
+  async function scriptedActivity(title: string) {
+    const module = await createModule(owner, {
+      title: `${title} ${suffix}`,
+      visibility: "PUBLIC",
+      isPublished: true,
+    });
+    const section = await createSection(owner, module.id, { title: "Practice" });
+    const material = await createMaterial(owner, section.id, {
+      title: "With scripts",
+      isPublished: true,
+    });
+    const activity = await createPracticeActivity(owner, material.id, {
+      title: "Build a class",
+      prompt: "Write a Counter class.",
+      allowedLanguages: ["python", "javascript"],
+      starterCode: {},
+      timeLimitMs: 5_000,
+      memoryLimitMb: 256,
+      // Checked by its scripts alone.
+      testCases: [],
+    });
+    const script = (path: string, secret: string) => ({
+      language: "python" as const,
+      framework: "PYTEST" as const,
+      path,
+      content: `SECRET = "${secret}"\n`,
+    });
+    await uploadPracticeTestScript(
+      owner,
+      activity.id,
+      script("test_structure.py", "STRUCTURE_SECRET"),
+    );
+    await uploadPracticeTestScript(
+      owner,
+      activity.id,
+      script("test_behaviour.py", "BEHAVIOUR_SECRET"),
+    );
+    await uploadPracticeTestScript(owner, activity.id, {
+      language: "javascript",
+      framework: "JEST",
+      path: "counter.test.js",
+      content: "JS_SECRET\n",
+    });
+    return { module, material, activity };
+  }
+
+  it("keeps scripts to the owning Architect", async () => {
+    const { module, material, activity } = await scriptedActivity("Script Owner");
+    await requestEnrollment(enrolledCoder, module.id);
+
+    const listed = await listPracticeTestScripts(owner, activity.id);
+    expect(listed.map((script) => [script.language, script.path])).toEqual([
+      ["javascript", "counter.test.js"],
+      ["python", "test_behaviour.py"],
+      ["python", "test_structure.py"],
+    ]);
+
+    expect(await refusalCode(() => listPracticeTestScripts(enrolledCoder, activity.id))).toBe(
+      "FORBIDDEN",
+    );
+    expect(
+      await refusalCode(() =>
+        uploadPracticeTestScript(enrolledCoder, activity.id, {
+          language: "python",
+          framework: "PYTEST",
+          path: "test_mine.py",
+          content: "x\n",
+        }),
+      ),
+    ).toBe("FORBIDDEN");
+    const firstScript = listed[0];
+    if (!firstScript) throw new Error("expected a script");
+    expect(await refusalCode(() => deletePracticeTestScript(enrolledCoder, firstScript.id))).toBe(
+      "FORBIDDEN",
+    );
+
+    // What a Coder reads of the activity carries nothing of its scripts.
+    const read = JSON.stringify(await getMaterial(enrolledCoder, material.id));
+    expect(read).not.toContain("SECRET");
+    expect(read).not.toContain("test_structure.py");
+  });
+
+  it("replaces by path, and refuses a language the activity does not offer", async () => {
+    const { activity } = await scriptedActivity("Script Replace");
+    await uploadPracticeTestScript(owner, activity.id, {
+      language: "python",
+      framework: "CUSTOM",
+      path: "test_structure.py",
+      content: "replaced\n",
+    });
+    const listed = await listPracticeTestScripts(owner, activity.id);
+    expect(listed).toHaveLength(3);
+    expect(listed.find((script) => script.path === "test_structure.py")?.content).toBe(
+      "replaced\n",
+    );
+
+    expect(
+      await refusalCode(() =>
+        uploadPracticeTestScript(owner, activity.id, {
+          language: "java",
+          framework: "JUNIT",
+          path: "CounterTest.java",
+          content: "class CounterTest {}\n",
+        }),
+      ),
+    ).toBe("LANGUAGE_NOT_ALLOWED");
+
+    // Narrowing away a language that still has scripts would silently drop them.
+    expect(
+      await refusalCode(() =>
+        updatePracticeActivity(owner, activity.id, { allowedLanguages: ["python"] }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("runs every script for the Run's language, and only those", async () => {
+    const { module, activity } = await scriptedActivity("Script Run");
+    await requestEnrollment(enrolledCoder, module.id);
+
+    const { jobId } = await runPracticeActivity(enrolledCoder, activity.id, {
+      language: "python",
+      sourceCode: "class Counter: pass\n",
+    });
+
+    const job = await getRunQueue().getJob(jobId);
+    expect(job?.data.testCases).toEqual([]);
+    expect(job?.data.testScripts.map((script) => script.path)).toEqual([
+      "test_behaviour.py",
+      "test_structure.py",
+    ]);
+    // Each script adds a container's worth of wall clock.
+    expect(job?.data.limits.wallTimeoutMs).toBeGreaterThanOrEqual(
+      DEFAULT_EXECUTION_LIMITS.compileTimeoutMs + 2 * DEFAULT_EXECUTION_LIMITS.wallTimeoutMs,
+    );
+    await getRunQueue().remove(jobId);
+  });
+
+  it("shows a Coder a script test's name and verdict, never what it printed", async () => {
+    const jobId = `script-result-${suffix}`;
+    await getRedis().set(runOwnerKey(jobId), enrolledCoder.id, "EX", 60);
+
+    const subscriber = getRedis().duplicate();
+    const received = new Promise<string>((resolve) => {
+      subscriber.on("message", (_channel, message: string) => resolve(message));
+    });
+    await subscriber.subscribe(REDIS_CHANNELS.EXECUTION_STATUS);
+
+    const row = {
+      status: "GRADED" as const,
+      weight: 1,
+      executionTimeMs: 3,
+      memoryUsedKb: null,
+    };
+    await ingestExecutionResult({
+      contractVersion: EXECUTION_CONTRACT_VERSION,
+      jobId,
+      submissionId: null,
+      status: "GRADED",
+      compilerOutput: null,
+      systemError: null,
+      executionTimeMs: 6,
+      memoryUsedKb: null,
+      testResults: [
+        {
+          ...row,
+          testCaseId: "case-1",
+          testScriptId: null,
+          name: "echo",
+          passed: true,
+          stdoutExcerpt: "CASE_OUTPUT",
+          stderrExcerpt: "",
+        },
+        {
+          ...row,
+          testScriptId: "script-1",
+          testCaseId: null,
+          name: "test_has_increment",
+          passed: false,
+          stdoutExcerpt: "assert EXPECTED_VALUE",
+          stderrExcerpt: "EXPECTED_VALUE",
+        },
+      ],
+    });
+
+    const message = await received;
+    await subscriber.quit();
+    await getRedis().del(runOwnerKey(jobId));
+
+    expect(message).toContain("CASE_OUTPUT");
+    expect(message).toContain("test_has_increment");
+    expect(message).not.toContain("EXPECTED_VALUE");
   });
 });
