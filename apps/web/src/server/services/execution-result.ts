@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@ambatucode/db";
 import {
   AppError,
+  EXECUTION_CONTRACT_VERSION,
   type ExecutionResult,
   type SubmissionStatusPayload,
   isTerminalSubmissionStatus,
@@ -85,6 +86,61 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
 
   await publishExecutionStatus({ userId, payload });
   return { persisted: validated, delivered: true };
+}
+
+/** Shown to the Architect; a Coder's view never includes a system error. */
+export const EXPIRED_RESULT_MESSAGE =
+  "The job waited in the queue longer than its result may arrive, so the result was refused. Check that an execution worker is running.";
+
+/**
+ * Closes out a job whose genuine result arrived after its callback token
+ * expired — almost always because no worker picked it up in time.
+ *
+ * Only the job id is used: it is the one field the token signs. A SUBMIT's job
+ * id is its Submission id, and that submission becomes SYSTEM_ERROR instead of
+ * staying QUEUED for good; the Architect can reset the attempt. A validation's
+ * scripts are marked failed with the same reason. A Run needs nothing.
+ */
+export async function closeExpiredExecution(jobId: string): Promise<void> {
+  await recordScriptValidation({
+    contractVersion: EXECUTION_CONTRACT_VERSION,
+    jobId,
+    submissionId: null,
+    status: "SYSTEM_ERROR",
+    compilerOutput: null,
+    systemError: EXPIRED_RESULT_MESSAGE,
+    executionTimeMs: 0,
+    memoryUsedKb: null,
+    testResults: [],
+  });
+
+  const submission = await prisma.submission.findUnique({
+    where: { id: jobId },
+    select: { id: true, jobId: true, status: true, userId: true },
+  });
+  if (submission === null || submission.jobId !== jobId) return;
+  if (isTerminalSubmissionStatus(submission.status)) return;
+
+  const failed = await prisma.submission.update({
+    where: { id: submission.id },
+    data: {
+      status: "SYSTEM_ERROR",
+      score: 0,
+      systemError: EXPIRED_RESULT_MESSAGE,
+      gradedAt: new Date(),
+    },
+    select: { status: true, score: true },
+  });
+  await publishExecutionStatus({
+    userId: submission.userId,
+    payload: {
+      kind: "SUBMIT",
+      jobId,
+      submissionId: submission.id,
+      status: failed.status,
+      score: failed.score,
+    },
+  });
 }
 
 async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome> {

@@ -19,6 +19,8 @@ import {
   issueInternalToken,
 } from "@ambatucode/shared/auth/internal-token";
 import { POST as autoSubmitRoute } from "@/app/api/internal/attempts/[attemptId]/auto-submit/route";
+import { POST as executionResultRoute } from "@/app/api/internal/execution/result/route";
+import { issueCallbackToken } from "../auth/callback-token";
 import { getServerEnv } from "../env";
 import { closeRedis } from "../redis";
 import { closeDeadlineQueue, getDeadlineQueue } from "../queue/deadlines";
@@ -34,7 +36,7 @@ import {
   validateTestScripts,
 } from "./assessments";
 import { autoSubmitAttempt, runAttempt, saveDraft, startAttempt, submitAttempt } from "./attempts";
-import { ingestExecutionResult } from "./execution-result";
+import { EXPIRED_RESULT_MESSAGE, ingestExecutionResult } from "./execution-result";
 import {
   createSession,
   endSession,
@@ -1055,3 +1057,106 @@ async function architectView(assessmentId: string): Promise<AssessmentArchitectV
   if (detail.view !== "ARCHITECT") throw new Error("expected the Architect view");
   return detail.assessment;
 }
+
+describe("results that arrive after their callback token expired", () => {
+  async function postLate(jobId: string) {
+    const token = issueCallbackToken(jobId, Date.now() - 60 * MINUTE);
+    const request = new Request("http://localhost/api/internal/execution/result", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-execution-callback-token": token },
+      body: JSON.stringify({
+        contractVersion: EXECUTION_CONTRACT_VERSION,
+        jobId,
+        submissionId: jobId,
+        status: "GRADED",
+        compilerOutput: null,
+        systemError: null,
+        executionTimeMs: 1,
+        memoryUsedKb: null,
+        testResults: [],
+      }),
+    });
+    return executionResultRoute(request, { params: Promise.resolve({}) });
+  }
+
+  it("refuses the result but closes out the submission it was for", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Late result");
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+    const { submission } = await submitAttempt(coderA, attempt.id, {
+      language: "python",
+      sourceCode: "print(1)",
+    });
+
+    const response = await postLate(submission.id);
+    expect(response.status).toBe(403);
+
+    const stored = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(stored).toMatchObject({ status: "SYSTEM_ERROR", score: 0 });
+    // What the late result claimed never counted.
+    expect(
+      await prisma.submissionTestResult.count({ where: { submissionId: submission.id } }),
+    ).toBe(0);
+    expect(JSON.stringify(await getSubmission(coderA, submission.id))).not.toContain("queue");
+
+    // A second late callback changes nothing further.
+    expect((await postLate(submission.id)).status).toBe(403);
+    expect(
+      (await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } })).status,
+    ).toBe("SYSTEM_ERROR");
+  });
+
+  it("marks a validation that waited too long as failed, with the reason", async () => {
+    const assessment = await individualAssessment();
+    await saveReferenceSolution(owner, assessment.id, {
+      language: "python",
+      sourceCode: "print(1)\n",
+    });
+    const { jobId } = await validateTestScripts(owner, assessment.id, { language: "python" });
+    createdJobIds.push(jobId);
+
+    expect((await postLate(jobId)).status).toBe(403);
+
+    const [script] = (await architectView(assessment.id)).testScripts;
+    expect(script?.validation).toMatchObject({
+      status: "FAILED",
+      summary: EXPIRED_RESULT_MESSAGE,
+    });
+  });
+
+  it("does nothing for a token that is forged rather than late", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Forged result");
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+    const { submission } = await submitAttempt(coderA, attempt.id, {
+      language: "python",
+      sourceCode: "print(1)",
+    });
+
+    const forged = issueCallbackToken("some-other-job", Date.now() - 60 * MINUTE);
+    const response = await executionResultRoute(
+      new Request("http://localhost/api/internal/execution/result", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-execution-callback-token": forged },
+        body: JSON.stringify({
+          contractVersion: EXECUTION_CONTRACT_VERSION,
+          jobId: submission.id,
+          submissionId: submission.id,
+          status: "GRADED",
+          compilerOutput: null,
+          systemError: null,
+          executionTimeMs: 1,
+          memoryUsedKb: null,
+          testResults: [],
+        }),
+      }),
+      { params: Promise.resolve({}) },
+    );
+    expect(response.status).toBe(403);
+    expect(
+      (await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } })).status,
+    ).toBe("QUEUED");
+  });
+});

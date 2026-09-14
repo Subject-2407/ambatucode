@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { isAppError } from "@ambatucode/shared";
-import { issueCallbackToken, verifyCallbackToken } from "./callback-token";
+import { inspectCallbackToken, issueCallbackToken, verifyCallbackToken } from "./callback-token";
 
 beforeAll(() => {
   vi.stubEnv("DATABASE_URL", "postgresql://test/test");
@@ -49,6 +49,14 @@ describe("execution callback token", () => {
     const issuedAt = Date.now() - 60 * 60 * 1000;
     const token = issueCallbackToken("job-1", issuedAt);
     expectForbidden(() => verifyCallbackToken("job-1", token));
+  });
+
+  it("recognises a late token as genuine, and only a genuine one", () => {
+    const stale = issueCallbackToken("job-1", Date.now() - 60 * 60 * 1000);
+    expect(inspectCallbackToken("job-1", stale)).toBe("EXPIRED");
+    expect(inspectCallbackToken("job-1", issueCallbackToken("job-1"))).toBe("VALID");
+    // A stale token for another job is not proof of anything about this one.
+    expectForbidden(() => inspectCallbackToken("job-2", stale));
   });
 
   it("rejects malformed tokens", () => {

@@ -24,7 +24,22 @@ export function issueCallbackToken(jobId: string, now: number = Date.now()): str
   return `${expiresAtMs}.${sign(jobId, expiresAtMs)}`;
 }
 
-export function verifyCallbackToken(jobId: string, token: string, now: number = Date.now()): void {
+export type CallbackTokenState = "VALID" | "EXPIRED";
+
+/**
+ * Checks a token's signature and reports whether it is still in date.
+ *
+ * Only a correctly signed token gets an answer: anything forged or malformed
+ * throws, exactly as `verifyCallbackToken` does. An expired one is still
+ * proof the worker sent it, which is what lets the callback route close the
+ * job's submission out instead of leaving it queued forever. The caller must
+ * still refuse the result itself.
+ */
+export function inspectCallbackToken(
+  jobId: string,
+  token: string,
+  now: number = Date.now(),
+): CallbackTokenState {
   const separator = token.indexOf(".");
   if (separator === -1) {
     throw new AppError("FORBIDDEN", "Invalid callback token");
@@ -39,9 +54,14 @@ export function verifyCallbackToken(jobId: string, token: string, now: number = 
   if (!constantTimeEquals(signature, sign(jobId, expiresAtMs))) {
     throw new AppError("FORBIDDEN", "Invalid callback token");
   }
-  // Expiry is checked after the signature so an attacker cannot use the error
-  // shape to distinguish a forged token from a stale one.
-  if (expiresAtMs <= now) {
+  // Expiry is checked after the signature so an attacker learns nothing from
+  // it: a forged token never gets this far.
+  return expiresAtMs <= now ? "EXPIRED" : "VALID";
+}
+
+export function verifyCallbackToken(jobId: string, token: string, now: number = Date.now()): void {
+  // One error shape for forged and stale alike, so a caller cannot tell them apart.
+  if (inspectCallbackToken(jobId, token, now) === "EXPIRED") {
     throw new AppError("FORBIDDEN", "Invalid callback token");
   }
 }
