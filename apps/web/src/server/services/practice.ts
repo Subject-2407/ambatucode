@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { type Prisma, prisma } from "@ambatucode/db";
 import {
+  errorFields,
   AppError,
   DEFAULT_EXECUTION_LIMITS,
   EXECUTABLE_LANGUAGES,
@@ -27,7 +28,11 @@ import {
   type ValidateTestScriptsResponse,
 } from "@ambatucode/shared";
 import { consumeRateLimit } from "../auth/rate-limit";
-import { enqueueExecutionJob, type ExecutionJobInput } from "../queue/producer";
+import {
+  enqueueExecutionJob,
+  rememberPracticeRun,
+  type ExecutionJobInput,
+} from "../queue/producer";
 import { readReferenceSolutions } from "../serializers/assessment";
 import { toPracticeActivityView, toPracticeTestScriptView } from "../serializers/content";
 import { scopeForMaterial, scopeForPractice, scopeForPracticeTestScript } from "./content-scope";
@@ -38,6 +43,7 @@ import {
   resetValidation,
   validationLimits,
 } from "./script-validation";
+import { log } from "../logger";
 
 /**
  * Practice Activities and the Runs they produce.
@@ -363,7 +369,15 @@ export async function runPracticeActivity(
     testScripts,
   };
 
-  return { jobId: await enqueueExecutionJob(job, { userId: actor.id }) };
+  const jobId = await enqueueExecutionJob(job, { userId: actor.id });
+
+  // Practice progress is a counter, not a record — failing to note which
+  // activity this run belongs to costs one tally, never the run itself.
+  await rememberPracticeRun(jobId, practiceId).catch((error: unknown) => {
+    log.warn("practice.run_tag_failed", { practiceId, ...errorFields(error) });
+  });
+
+  return { jobId };
 }
 
 // --- Test scripts -------------------------------------------------------------

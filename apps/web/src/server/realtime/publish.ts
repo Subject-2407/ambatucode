@@ -1,11 +1,14 @@
 import "server-only";
 import {
+  errorFields,
   REDIS_CHANNELS,
   type AssessmentBroadcastMessage,
   type ExecutionStatusMessage,
+  type GamificationMessage,
   type SessionRevokedMessage,
 } from "@ambatucode/shared";
 import { getPublisher } from "../redis";
+import { log } from "../logger";
 
 /**
  * apps/web owns the session table but not the sockets. When a session dies it
@@ -19,7 +22,7 @@ export async function publishSessionRevoked(message: SessionRevokedMessage): Pro
   } catch (error) {
     // A dropped notification must not fail the login or logout that caused it.
     // The socket is still rejected on its next authenticated action.
-    console.error("[realtime] failed to publish session:revoked:", error);
+    log.error("publish.session_revoked_failed", errorFields(error));
   }
 }
 
@@ -37,7 +40,7 @@ export async function publishExecutionStatus(message: ExecutionStatusMessage): P
   try {
     await getPublisher().publish(REDIS_CHANNELS.EXECUTION_STATUS, JSON.stringify(message));
   } catch (error) {
-    console.error("[realtime] failed to publish execution:status:", error);
+    log.error("publish.execution_status_failed", errorFields(error));
   }
 }
 
@@ -55,6 +58,25 @@ export async function publishAssessmentBroadcast(
   try {
     await getPublisher().publish(REDIS_CHANNELS.ASSESSMENT_BROADCAST, JSON.stringify(message));
   } catch (error) {
-    console.error("[realtime] failed to publish assessment broadcast:", error);
+    log.error("publish.assessment_broadcast_failed", errorFields(error));
+  }
+}
+
+/**
+ * Announces an award or a refreshed leaderboard.
+ *
+ * Best-effort like the rest of this module. The award row is already written
+ * and the board recomputes on the next read, so a lost push costs a toast and
+ * a few seconds of staleness — not a grade.
+ *
+ * Nothing suppressed reaches here: a board belonging to an assessment with
+ * `hideLeaderboard` is never published in the first place, so apps/realtime can
+ * fan out whatever arrives without re-deciding who is allowed to see it.
+ */
+export async function publishGamification(message: GamificationMessage): Promise<void> {
+  try {
+    await getPublisher().publish(REDIS_CHANNELS.GAMIFICATION, JSON.stringify(message));
+  } catch (error) {
+    log.error("publish.gamification_failed", errorFields(error));
   }
 }

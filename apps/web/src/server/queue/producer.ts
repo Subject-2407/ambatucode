@@ -14,6 +14,7 @@ import {
 import { getServerEnv } from "../env";
 import { getRedis } from "../redis";
 import { issueCallbackToken } from "../auth/callback-token";
+import { registerCloser } from "../shutdown-registry";
 
 /**
  * Queue producer. This is the only path from apps/web to code execution —
@@ -33,6 +34,7 @@ export function getConnection(): Redis {
   globalForQueues.ambatucodeQueueConnection ??= new Redis(getServerEnv().REDIS_URL, {
     maxRetriesPerRequest: null,
   });
+  registerCloser("executionQueues", closeQueueConnection);
   return globalForQueues.ambatucodeQueueConnection;
 }
 
@@ -74,6 +76,25 @@ export const RUN_OWNER_TTL_SECONDS = 900;
 
 export function runOwnerKey(jobId: string): string {
   return `execution:run-owner:${jobId}`;
+}
+
+/**
+ * Which Practice Activity a Run belongs to, when it belongs to one.
+ *
+ * Kept beside the owner key rather than inside it so an assessment Run — which
+ * has no activity — carries nothing extra, and so the owner record keeps the
+ * single meaning it already had. Practice progress is a counter, and a lapsed
+ * key simply means one run went uncounted.
+ */
+export function practiceRunKey(jobId: string): string {
+  return `execution:run-practice:${jobId}`;
+}
+
+export async function rememberPracticeRun(
+  jobId: string,
+  practiceActivityId: string,
+): Promise<void> {
+  await getRedis().set(practiceRunKey(jobId), practiceActivityId, "EX", RUN_OWNER_TTL_SECONDS);
 }
 
 /**

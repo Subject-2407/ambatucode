@@ -10,6 +10,9 @@ import {
 import { getRedis } from "../redis";
 import { runOwnerKey } from "../queue/producer";
 import { publishExecutionStatus } from "../realtime/publish";
+import { evaluateSubmissionAchievements } from "./achievements";
+import { invalidateLeaderboards } from "./leaderboards";
+import { recordPracticeRun } from "./practice-progress";
 import { recordScriptValidation } from "./script-validation";
 import { computeScore } from "./scoring";
 
@@ -29,8 +32,10 @@ export type IngestOutcome = {
  * successful no-op rather than a duplicate write.
  *
  * A formal submission is scored here, by the Assessment's grading strategy,
- * in the same write that records its per-case results. Leaderboard refresh and
- * achievement evaluation are wired in a later phase.
+ * in the same write that records its per-case results. The leaderboard refresh
+ * and the achievement evaluation run after that write and never block it: both
+ * are decorations on a grade, and neither is allowed to be the reason a grade
+ * fails to record.
  */
 export async function ingestExecutionResult(result: ExecutionResult): Promise<IngestOutcome> {
   return result.submissionId === null ? ingestRun(result) : ingestSubmission(result);
@@ -85,6 +90,12 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
   };
 
   await publishExecutionStatus({ userId, payload });
+
+  // A practice run is the one Run whose happening is worth remembering. The
+  // counter is written after delivery so a bookkeeping failure can never cost
+  // the Coder the results they were waiting for.
+  await recordPracticeRun(result.jobId, userId, result);
+
   return { persisted: validated, delivered: true };
 }
 
@@ -298,6 +309,10 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
       score: updated.score,
     },
   });
+
+  // The grade is already durable. Both of these swallow their own failures.
+  await invalidateLeaderboards({ assessmentId: submission.assessmentId });
+  await evaluateSubmissionAchievements(submission.id);
 
   return { persisted: true, delivered: true };
 }
