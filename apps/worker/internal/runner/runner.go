@@ -66,24 +66,29 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 
 	// A script with a bad path is refused before anything runs, rather than
 	// after every case has already spent its time.
-	if job.TestScript != nil {
-		if _, err := validateScriptPaths(job.TestScript, spec); err != nil {
+	for _, script := range job.TestScripts {
+		if err := validateScriptPath(script, spec); err != nil {
 			return r.systemError(job, err)
 		}
 	}
 
 	result, compiled := r.runProgram(ctx, job, spec, deadline)
-	if !compiled || job.TestScript == nil || result.Status == contract.StatusSystemError {
+	if !compiled || len(job.TestScripts) == 0 || result.Status == contract.StatusSystemError {
 		return result
 	}
 
+	// Scripts run one after another, each in a fresh container, so one
+	// script's leftovers — a conftest.py, compiled classes — cannot change
+	// what the next one sees.
 	scriptStarted := time.Now()
-	scriptResults, scriptStatus, err := r.runScript(ctx, job, spec, deadline)
-	if err != nil {
-		return r.systemError(job, err)
+	for _, script := range job.TestScripts {
+		scriptResults, scriptStatus, err := r.runScript(ctx, job, script, spec, deadline)
+		if err != nil {
+			return r.systemError(job, err)
+		}
+		result.TestResults = append(result.TestResults, scriptResults...)
+		result.Status = escalate(result.Status, scriptStatus)
 	}
-	result.TestResults = append(result.TestResults, scriptResults...)
-	result.Status = escalate(result.Status, scriptStatus)
 	result.ExecutionTimeMs += float64(time.Since(scriptStarted).Milliseconds())
 	return result
 }
@@ -171,9 +176,9 @@ func (r *Runner) runCases(
 ) contract.Result {
 	meter := newOOMMeter(ctx, session)
 
-	// A job with only a script has nothing to run here: the script exercises
-	// the program itself.
-	if len(job.TestCases) == 0 && job.TestScript != nil {
+	// A job with only scripts has nothing to run here: the scripts exercise
+	// the program themselves.
+	if len(job.TestCases) == 0 && len(job.TestScripts) > 0 {
 		return result
 	}
 

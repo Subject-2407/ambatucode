@@ -30,9 +30,8 @@ func TestEveryLanguageRunsItsFrameworks(t *testing.T) {
 		}
 		for _, framework := range frameworks {
 			plan, err := spec.PlanScript(framework, ScriptInput{
-				Entrypoint: entrypoints[lang],
-				Files:      []string{entrypoints[lang]},
-				ReportDir:  "/tmp/ambatucode-report-test",
+				Path:      entrypoints[lang],
+				ReportDir: "/tmp/ambatucode-report-test",
 			})
 			if err != nil {
 				t.Errorf("%s cannot run %s: %v", lang, framework, err)
@@ -54,10 +53,10 @@ func TestFrameworkInTheWrongLanguageIsRefused(t *testing.T) {
 	python, _ := Lookup(contract.LanguagePython)
 	cpp, _ := Lookup(contract.LanguageCPP)
 
-	if _, err := python.PlanScript(contract.FrameworkJest, ScriptInput{Entrypoint: "a.js", Files: []string{"a.js"}}); err == nil {
+	if _, err := python.PlanScript(contract.FrameworkJest, ScriptInput{Path: "a.js"}); err == nil {
 		t.Error("python accepted a Jest script")
 	}
-	if _, err := cpp.PlanScript(contract.FrameworkJUnit, ScriptInput{Entrypoint: "a.java", Files: []string{"a.java"}}); err == nil {
+	if _, err := cpp.PlanScript(contract.FrameworkJUnit, ScriptInput{Path: "a.java"}); err == nil {
 		t.Error("cpp accepted a JUnit script")
 	}
 }
@@ -81,19 +80,31 @@ func TestJavaClassNameFollowsTheSourcePath(t *testing.T) {
 	}
 }
 
-func TestJUnitCompilesOnlyJavaSources(t *testing.T) {
+func TestJUnitCompilesTheScriptAgainstTheSubmission(t *testing.T) {
 	java, _ := Lookup(contract.LanguageJava)
 	plan, err := java.PlanScript(contract.FrameworkJUnit, ScriptInput{
-		Entrypoint: "SolutionTest.java",
-		Files:      []string{"SolutionTest.java", "fixtures/input.txt"},
-		ReportDir:  "/tmp/r",
+		Path:      "SolutionTest.java",
+		ReportDir: "/tmp/r",
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	joined := strings.Join(plan.Compile, " ")
-	if !strings.Contains(joined, "/workspace/SolutionTest.java") || strings.Contains(joined, "input.txt") {
+	if !strings.Contains(joined, "/workspace/SolutionTest.java") || !strings.Contains(joined, "-cp /workspace:") {
 		t.Fatalf("compile command = %q", joined)
+	}
+}
+
+// A single script file has to be something its language can build.
+func TestCompiledScriptsMustBeSources(t *testing.T) {
+	java, _ := Lookup(contract.LanguageJava)
+	cpp, _ := Lookup(contract.LanguageCPP)
+
+	if _, err := java.PlanScript(contract.FrameworkJUnit, ScriptInput{Path: "fixtures/input.txt"}); err == nil {
+		t.Error("JUnit accepted a non-Java file")
+	}
+	if _, err := cpp.PlanScript(contract.FrameworkCustom, ScriptInput{Path: "harness.h"}); err == nil {
+		t.Error("C++ accepted a header as its harness")
 	}
 }
 

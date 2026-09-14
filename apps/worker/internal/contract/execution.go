@@ -21,7 +21,7 @@ import (
 // payload shape. Without this check a renamed field would surface as a
 // silently mis-graded submission; with it the worker refuses the job and says
 // exactly why.
-const Version = 2
+const Version = 3
 
 type Kind string
 
@@ -109,15 +109,15 @@ func (c TestCase) MemoryLimit(limits Limits) int64 {
 	return limits.MemoryLimitMb
 }
 
-type TestScriptFile struct {
+// TestScript is one Architect-authored test file, run by its framework in a
+// container of its own.
+type TestScript struct {
+	ID        string              `json:"id"`
+	Framework TestScriptFramework `json:"framework"`
+	// Path is where the file is written inside the workspace, and what the
+	// framework is pointed at.
 	Path    string `json:"path"`
 	Content string `json:"content"`
-}
-
-type TestScript struct {
-	Framework  TestScriptFramework `json:"framework"`
-	Entrypoint string              `json:"entrypoint"`
-	Files      []TestScriptFile    `json:"files"`
 	// Weight is given to every test the script reports.
 	Weight float64 `json:"weight"`
 }
@@ -126,23 +126,25 @@ type TestScript struct {
 // the only credential is CallbackToken, an HMAC over JobID that the worker
 // echoes back when reporting.
 type Job struct {
-	ContractVersion int         `json:"contractVersion"`
-	JobID           string      `json:"jobId"`
-	Kind            Kind        `json:"kind"`
-	SubmissionID    *string     `json:"submissionId"`
-	Language        Language    `json:"language"`
-	SourceCode      string      `json:"sourceCode"`
-	Limits          Limits      `json:"limits"`
-	TestCases       []TestCase  `json:"testCases"`
-	TestScript      *TestScript `json:"testScript"`
-	CallbackToken   string      `json:"callbackToken"`
+	ContractVersion int          `json:"contractVersion"`
+	JobID           string       `json:"jobId"`
+	Kind            Kind         `json:"kind"`
+	SubmissionID    *string      `json:"submissionId"`
+	Language        Language     `json:"language"`
+	SourceCode      string       `json:"sourceCode"`
+	Limits          Limits       `json:"limits"`
+	TestCases       []TestCase   `json:"testCases"`
+	TestScripts     []TestScript `json:"testScripts"`
+	CallbackToken   string       `json:"callbackToken"`
 }
 
 // TestResult is one case or one script test. Status is how that case alone
 // ended, and is only ever GRADED, RUNTIME_ERROR, TIME_LIMIT_EXCEEDED or
 // MEMORY_LIMIT_EXCEEDED: compiling and platform failure describe a whole job.
 type TestResult struct {
-	TestCaseID      *string  `json:"testCaseId"`
+	TestCaseID *string `json:"testCaseId"`
+	// TestScriptID names the script a script test came from; nil for a case.
+	TestScriptID    *string  `json:"testScriptId"`
 	Name            string   `json:"name"`
 	Status          Status   `json:"status"`
 	Passed          bool     `json:"passed"`
@@ -261,22 +263,39 @@ func ParseJob(raw []byte) (Job, error) {
 			return Job{}, fmt.Errorf("test case %d has a non-positive memory limit %d", i, *testCase.MemoryLimitMb)
 		}
 	}
-	if job.TestScript != nil && job.TestScript.Weight < 0 {
-		return Job{}, fmt.Errorf("test script has a negative weight %v", job.TestScript.Weight)
+	if job.TestScripts == nil {
+		return Job{}, fmt.Errorf("job has no testScripts list")
+	}
+	scriptIDs := make(map[string]bool, len(job.TestScripts))
+	for i, script := range job.TestScripts {
+		switch {
+		case script.ID == "":
+			return Job{}, fmt.Errorf("test script %d has an empty id", i)
+		case scriptIDs[script.ID]:
+			return Job{}, fmt.Errorf("test script id %q appears twice", script.ID)
+		case script.Weight < 0:
+			return Job{}, fmt.Errorf("test script %d has a negative weight %v", i, script.Weight)
+		}
+		switch script.Framework {
+		case FrameworkJUnit, FrameworkJest, FrameworkPytest, FrameworkCustom:
+		default:
+			return Job{}, fmt.Errorf("test script %d has unknown framework %q", i, script.Framework)
+		}
+		scriptIDs[script.ID] = true
 	}
 
-	// The producer refuses to put hidden cases or a test script on a RUN job.
-	// Re-check it here: a leak of expected output for a hidden case is a
-	// security defect, and this is the last place it can be caught before the
-	// data is echoed back in a Coder-visible excerpt.
+	// The producer refuses to put hidden cases on a RUN job. Re-check it here:
+	// a leak of expected output for a hidden case is a security defect, and
+	// this is the last place it can be caught before the data is echoed back in
+	// a Coder-visible excerpt.
+	//
+	// Test scripts are allowed on a RUN — a Practice Activity's are — because
+	// nothing of a script travels back: its rows carry no excerpts.
 	if job.Kind == KindRun {
 		for i, testCase := range job.TestCases {
 			if !testCase.IsPublic {
 				return Job{}, fmt.Errorf("run job carries non-public test case %d", i)
 			}
-		}
-		if job.TestScript != nil {
-			return Job{}, fmt.Errorf("run job carries a test script")
 		}
 	}
 	// A SUBMIT job with no submissionId is deliberately *not* rejected here.

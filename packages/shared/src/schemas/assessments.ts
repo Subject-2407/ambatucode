@@ -6,7 +6,6 @@ import {
   GRADING_STRATEGIES,
   LANGUAGES,
   TEST_CASE_KINDS,
-  TEST_SCRIPT_FRAMEWORKS,
   TIME_MODES,
   type AssessmentSessionStatus,
   type AttemptStatus,
@@ -15,10 +14,10 @@ import {
   type GradingStrategy,
   type Language,
   type TestCaseKind,
-  type TestScriptFramework,
   type TimeMode,
 } from "../enums";
 import { starterCodeMapSchema, utf8ByteLength, type StarterCodeMap } from "./content";
+import type { TestScriptView } from "./test-scripts";
 
 /**
  * Assessment authoring: the Assessment itself, its test cases, and its custom
@@ -183,79 +182,6 @@ export const updateTestCaseRequestSchema = z
   });
 export type UpdateTestCaseRequest = z.infer<typeof updateTestCaseRequestSchema>;
 
-// --- Test scripts -----------------------------------------------------------
-
-export const MAX_TEST_SCRIPT_FILES = 50;
-export const MAX_TEST_SCRIPT_BYTES = 512 * 1024;
-
-/**
- * A relative path of ordinary segments, and nothing else.
- *
- * Script files are written into the sandbox workspace, so a path names a place
- * on a filesystem. No leading slash, no drive letter, no backslash, and no
- * segment that starts with a dot — which rules out `.` and `..` along with
- * hidden files. The worker checks again before it writes; this is the first
- * gate, not the only one.
- */
-export const TEST_SCRIPT_PATH_PATTERN =
-  /^[A-Za-z0-9_][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$/;
-
-export const testScriptPathSchema = z
-  .string()
-  .min(1)
-  .max(200)
-  .regex(TEST_SCRIPT_PATH_PATTERN, "Paths must be relative and made of plain segments");
-
-/** Which language each packaged framework runs in. CUSTOM runs in any. */
-export const FRAMEWORK_LANGUAGE: Readonly<Record<TestScriptFramework, Language | null>> = {
-  JUNIT: "java",
-  JEST: "javascript",
-  PYTEST: "python",
-  CUSTOM: null,
-};
-
-export const uploadTestScriptRequestSchema = z
-  .object({
-    language: z.enum(LANGUAGES),
-    framework: z.enum(TEST_SCRIPT_FRAMEWORKS),
-    entrypoint: testScriptPathSchema,
-    files: z
-      .array(z.object({ path: testScriptPathSchema, content: z.string() }))
-      .min(1)
-      .max(MAX_TEST_SCRIPT_FILES),
-    weight: z.number().int().min(0).max(1_000).default(1),
-  })
-  .superRefine((value, context) => {
-    const paths = value.files.map((file) => file.path);
-    if (new Set(paths).size !== paths.length) {
-      context.addIssue({ code: "custom", message: "File paths must be unique", path: ["files"] });
-    }
-    if (!paths.includes(value.entrypoint)) {
-      context.addIssue({
-        code: "custom",
-        message: "The entrypoint must be one of the uploaded files",
-        path: ["entrypoint"],
-      });
-    }
-    const bytes = value.files.reduce((total, file) => total + utf8ByteLength(file.content), 0);
-    if (bytes > MAX_TEST_SCRIPT_BYTES) {
-      context.addIssue({
-        code: "custom",
-        message: `Script files must total at most ${MAX_TEST_SCRIPT_BYTES / 1024} KiB`,
-        path: ["files"],
-      });
-    }
-    const expected = FRAMEWORK_LANGUAGE[value.framework];
-    if (expected !== null && expected !== value.language) {
-      context.addIssue({
-        code: "custom",
-        message: `${value.framework} scripts run in ${expected}`,
-        path: ["framework"],
-      });
-    }
-  });
-export type UploadTestScriptRequest = z.infer<typeof uploadTestScriptRequestSchema>;
-
 // --- Views ------------------------------------------------------------------
 
 /** How an Assessment appears in a Module tree or a Section listing. */
@@ -282,17 +208,6 @@ export type TestCaseView = {
   comparison: ComparisonMode;
   timeLimitMs: number | null;
   memoryLimitMb: number | null;
-};
-
-export type TestScriptView = {
-  id: string;
-  assessmentId: string;
-  language: Language;
-  framework: TestScriptFramework;
-  entrypoint: string;
-  files: Array<{ path: string; content: string }>;
-  weight: number;
-  updatedAt: string;
 };
 
 /** The full definition, for the owning Architect only. */

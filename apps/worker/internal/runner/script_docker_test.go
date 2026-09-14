@@ -14,14 +14,10 @@ import (
 )
 
 func scriptJob(lang contract.Language, source string, framework contract.TestScriptFramework,
-	entrypoint string, files map[string]string, cases ...contract.TestCase) contract.Job {
+	path, content string, cases ...contract.TestCase) contract.Job {
 	j := job(lang, source, cases...)
 	j.Kind = contract.KindSubmit
-	script := &contract.TestScript{Framework: framework, Entrypoint: entrypoint, Weight: 2}
-	for name, content := range files {
-		script.Files = append(script.Files, contract.TestScriptFile{Path: name, Content: content})
-	}
-	j.TestScript = script
+	j.TestScripts = []contract.TestScript{{ID: "script-1", Framework: framework, Path: path, Content: content, Weight: 2}}
 	return j
 }
 
@@ -60,6 +56,9 @@ func assertScriptTests(t *testing.T, result contract.Result, want []wantTest) {
 		if got.Passed != expected.passed {
 			t.Fatalf("script test %q passed %v, want %v", got.Name, got.Passed, expected.passed)
 		}
+		if got.TestScriptID == nil || *got.TestScriptID == "" {
+			t.Fatalf("script test %q does not name its script", got.Name)
+		}
 		if got.Weight != 2 {
 			t.Fatalf("script test %q has weight %v, want the script's weight 2", got.Name, got.Weight)
 		}
@@ -77,9 +76,7 @@ func TestPytestScriptGradesTheSubmission(t *testing.T) {
 	result := execute(t, runner, scriptJob(contract.LanguagePython,
 		"def add(a, b):\n    return a + b\n",
 		contract.FrameworkPytest, "tests/test_main.py",
-		map[string]string{
-			"tests/test_main.py": "from main import add\n\ndef test_adds():\n    assert add(2, 3) == 5\n\ndef test_wrong():\n    assert add(2, 2) == 5\n",
-		},
+		"from main import add\n\ndef test_adds():\n    assert add(2, 3) == 5\n\ndef test_wrong():\n    assert add(2, 2) == 5\n",
 	))
 
 	assertScriptTests(t, result, []wantTest{{"test_adds", true}, {"test_wrong", false}})
@@ -95,7 +92,7 @@ func TestCasesAndScriptBothRun(t *testing.T) {
 	source := "import sys\n\ndef add(a, b):\n    return a + b\n\nif __name__ == '__main__':\n    a, b = map(int, sys.stdin.read().split())\n    print(add(a, b))\n"
 	result := execute(t, runner, scriptJob(contract.LanguagePython, source,
 		contract.FrameworkPytest, "test_add.py",
-		map[string]string{"test_add.py": "from main import add\n\ndef test_adds():\n    assert add(1, 1) == 2\n"},
+		"from main import add\n\ndef test_adds():\n    assert add(1, 1) == 2\n",
 		echoCase("sums stdin", "2 3", "5"),
 	))
 
@@ -120,7 +117,7 @@ print("LEAK " + " ".join(found) if found else "nothing")
 `
 	result := execute(t, runner, scriptJob(contract.LanguagePython, source,
 		contract.FrameworkPytest, "test_secret.py",
-		map[string]string{"test_secret.py": "def test_secret():\n    assert 'EXPECTED_SECRET' == 'EXPECTED_SECRET'\n"},
+		"def test_secret():\n    assert 'EXPECTED_SECRET' == 'EXPECTED_SECRET'\n",
 		echoCase("snoops", "", "nothing"),
 	))
 
@@ -138,7 +135,7 @@ func TestPytestImportFailureIsAFailedTest(t *testing.T) {
 
 	result := execute(t, runner, scriptJob(contract.LanguagePython, "def add(a, b)\n",
 		contract.FrameworkPytest, "test_main.py",
-		map[string]string{"test_main.py": "from main import add\n\ndef test_adds():\n    assert add(1, 1) == 2\n"},
+		"from main import add\n\ndef test_adds():\n    assert add(1, 1) == 2\n",
 	))
 
 	assertScriptTests(t, result, []wantTest{{"test_main", false}})
@@ -150,12 +147,10 @@ func TestJestScriptGradesTheSubmission(t *testing.T) {
 	result := execute(t, runner, scriptJob(contract.LanguageJavaScript,
 		"module.exports = { add: (a, b) => a + b };\n",
 		contract.FrameworkJest, "checks/add.check.js",
-		map[string]string{
-			"checks/add.check.js": `const { add } = require("../main");
+		`const { add } = require("../main");
 test("adds", () => { expect(add(2, 3)).toBe(5); });
 describe("group", () => { test("wrong", () => { expect(add(2, 2)).toBe(5); }); });
 `,
-		},
 	))
 
 	assertScriptTests(t, result, []wantTest{{"adds", true}, {"group wrong", false}})
@@ -167,8 +162,7 @@ func TestJUnitScriptGradesTheSubmission(t *testing.T) {
 	result := execute(t, runner, scriptJob(contract.LanguageJava,
 		"public class Solution {\n    public static int add(int a, int b) { return a + b; }\n}\n",
 		contract.FrameworkJUnit, "tests/SolutionTest.java",
-		map[string]string{
-			"tests/SolutionTest.java": `package tests;
+		`package tests;
 
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -178,7 +172,6 @@ public class SolutionTest {
     @Test void wrong() { assertEquals(5, Solution.add(2, 2)); }
 }
 `,
-		},
 	))
 
 	// A test in a package cannot see a class in the default package, so this
@@ -190,8 +183,7 @@ public class SolutionTest {
 	flat := execute(t, runner, scriptJob(contract.LanguageJava,
 		"public class Solution {\n    public static int add(int a, int b) { return a + b; }\n}\n",
 		contract.FrameworkJUnit, "SolutionTest.java",
-		map[string]string{
-			"SolutionTest.java": `import org.junit.jupiter.api.Test;
+		`import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class SolutionTest {
@@ -199,7 +191,6 @@ public class SolutionTest {
     @Test void wrong() { assertEquals(5, Solution.add(2, 2)); }
 }
 `,
-		},
 	))
 	assertScriptTests(t, flat, []wantTest{{"adds()", true}, {"wrong()", false}})
 }
@@ -211,15 +202,13 @@ func TestJUnitScriptAgainstAMissingMethodFailsAsATest(t *testing.T) {
 	result := execute(t, runner, scriptJob(contract.LanguageJava,
 		"public class Solution {}\n",
 		contract.FrameworkJUnit, "SolutionTest.java",
-		map[string]string{
-			"SolutionTest.java": `import org.junit.jupiter.api.Test;
+		`import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class SolutionTest {
     @Test void adds() { assertEquals(5, Solution.add(2, 3)); }
 }
 `,
-		},
 	))
 
 	assertScriptTests(t, result, []wantTest{{"did not compile", false}})
@@ -241,30 +230,30 @@ func TestCustomScriptsReportInEveryLanguage(t *testing.T) {
 			"python",
 			scriptJob(contract.LanguagePython, "def double(n):\n    return n * 2\n",
 				contract.FrameworkCustom, "check.py",
-				map[string]string{"check.py": `import json, os
+				`import json, os
 from main import double
 tests = [{"name": "doubles", "passed": double(4) == 8}, {"name": "wrong", "passed": double(1) == 3}]
 json.dump({"tests": tests}, open(os.environ["AMBATUCODE_REPORT"], "w"))
-`}),
+`),
 			[]wantTest{{"doubles", true}, {"wrong", false}},
 		},
 		{
 			"javascript",
 			scriptJob(contract.LanguageJavaScript, "module.exports = { double: (n) => n * 2 };\n",
 				contract.FrameworkCustom, "check.js",
-				map[string]string{"check.js": `const fs = require("fs");
+				`const fs = require("fs");
 const { double } = require("./main");
 fs.writeFileSync(process.env.AMBATUCODE_REPORT, JSON.stringify({ tests: [
   { name: "doubles", passed: double(4) === 8 },
 ] }));
-`}),
+`),
 			[]wantTest{{"doubles", true}},
 		},
 		{
 			"java",
 			scriptJob(contract.LanguageJava, "public class Solution {\n    public static int twice(int n) { return n * 2; }\n}\n",
 				contract.FrameworkCustom, "Check.java",
-				map[string]string{"Check.java": `import java.nio.file.*;
+				`import java.nio.file.*;
 
 public class Check {
     public static void main(String[] args) throws Exception {
@@ -273,14 +262,14 @@ public class Check {
         Files.writeString(Path.of(System.getenv("AMBATUCODE_REPORT")), json);
     }
 }
-`}),
+`),
 			[]wantTest{{"doubles", true}},
 		},
 		{
 			"cpp",
 			scriptJob(contract.LanguageCPP, "#include <iostream>\nint main() { int n; std::cin >> n; std::cout << n * 2; }\n",
 				contract.FrameworkCustom, "harness.cpp",
-				map[string]string{"harness.cpp": `#include <array>
+				`#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -296,7 +285,7 @@ int main() {
     std::ofstream(std::getenv("AMBATUCODE_REPORT"))
         << "{\"tests\":[{\"name\":\"doubles\",\"passed\":" << (out == "8" ? "true" : "false") << "}]}";
 }
-`}),
+`),
 			[]wantTest{{"doubles", true}},
 		},
 	}
@@ -314,7 +303,7 @@ func TestScriptWithNoReportIsASystemError(t *testing.T) {
 
 	result := execute(t, runner, scriptJob(contract.LanguagePython, "x = 1\n",
 		contract.FrameworkCustom, "check.py",
-		map[string]string{"check.py": "print('forgot to write the report')\n"},
+		"print('forgot to write the report')\n",
 	))
 
 	if result.Status != contract.StatusSystemError {
@@ -328,7 +317,7 @@ func TestScriptThatHangsIsATimeLimit(t *testing.T) {
 
 	j := scriptJob(contract.LanguagePython, "x = 1\n",
 		contract.FrameworkCustom, "check.py",
-		map[string]string{"check.py": "while True:\n    pass\n"},
+		"while True:\n    pass\n",
 	)
 	j.Limits.WallTimeoutMs = 6_000
 
@@ -347,7 +336,7 @@ func TestScriptPathTraversalIsRefused(t *testing.T) {
 	for _, escape := range []string{"../escape.py", "/etc/escape.py", "tests/../../escape.py", "main.py"} {
 		t.Run(escape, func(t *testing.T) {
 			result := execute(t, runner, scriptJob(contract.LanguagePython, "x = 1\n",
-				contract.FrameworkCustom, escape, map[string]string{escape: "print(1)\n"},
+				contract.FrameworkCustom, escape, "print(1)\n",
 				echoCase("never runs", "", ""),
 			))
 			if result.Status != contract.StatusSystemError {
@@ -358,5 +347,30 @@ func TestScriptPathTraversalIsRefused(t *testing.T) {
 			}
 			assertNoContainersLeft(t)
 		})
+	}
+}
+
+// Several scripts each report under their own id, and each runs in a fresh
+// container: a file one script leaves behind is not there for the next.
+func TestEveryScriptRunsInItsOwnContainer(t *testing.T) {
+	runner := newDockerRunner(t)
+
+	j := scriptJob(contract.LanguagePython, "def add(a, b):\n    return a + b\n",
+		contract.FrameworkCustom, "first.py", `import json, os
+open("/tmp/planted", "w").write("from the first script")
+json.dump({"tests": [{"name": "first adds", "passed": __import__("main").add(1, 2) == 3}]}, open(os.environ["AMBATUCODE_REPORT"], "w"))
+`)
+	j.TestScripts = append(j.TestScripts, contract.TestScript{
+		ID: "script-2", Framework: contract.FrameworkCustom, Path: "second.py", Weight: 2,
+		Content: `import json, os
+json.dump({"tests": [{"name": "second sees a clean container", "passed": not os.path.exists("/tmp/planted")}]}, open(os.environ["AMBATUCODE_REPORT"], "w"))
+`,
+	})
+
+	result := execute(t, runner, j)
+
+	assertScriptTests(t, result, []wantTest{{"first adds", true}, {"second sees a clean container", true}})
+	if *result.TestResults[0].TestScriptID != "script-1" || *result.TestResults[1].TestScriptID != "script-2" {
+		t.Fatalf("results are not attributed to their scripts in order: %+v", result.TestResults)
 	}
 }

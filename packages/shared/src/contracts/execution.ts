@@ -29,7 +29,7 @@ import {
  * Bump it whenever a field is added, removed, renamed, or changes meaning, and
  * update `apps/worker/internal/contract` in the same commit.
  */
-export const EXECUTION_CONTRACT_VERSION = 2;
+export const EXECUTION_CONTRACT_VERSION = 3;
 
 export const executionKindSchema = z.enum(["RUN", "SUBMIT"]);
 export type ExecutionKind = z.infer<typeof executionKindSchema>;
@@ -59,10 +59,17 @@ export const executionTestCaseSchema = z.object({
 });
 export type ExecutionTestCase = z.infer<typeof executionTestCaseSchema>;
 
+/**
+ * One Architect-authored test file. A job may carry several; the worker runs
+ * each in a container of its own and attributes every test it reports back to
+ * the script's id.
+ */
 export const executionTestScriptSchema = z.object({
+  id: z.string().min(1),
   framework: z.enum(TEST_SCRIPT_FRAMEWORKS),
-  entrypoint: z.string().min(1),
-  files: z.array(z.object({ path: z.string().min(1), content: z.string() })),
+  /** Where the file is written in the workspace, and what the framework runs. */
+  path: z.string().min(1),
+  content: z.string(),
   /** The weight every test the script reports is given, like a test case's. */
   weight: z.number().nonnegative(),
 });
@@ -77,7 +84,11 @@ export const executionJobSchema = z.object({
   sourceCode: z.string(),
   limits: executionLimitsSchema,
   testCases: z.array(executionTestCaseSchema),
-  testScript: executionTestScriptSchema.nullable(),
+  testScripts: z
+    .array(executionTestScriptSchema)
+    .refine((scripts) => new Set(scripts.map((script) => script.id)).size === scripts.length, {
+      message: "Test script ids must be unique",
+    }),
   callbackToken: z.string().min(1),
 });
 export type ExecutionJob = z.infer<typeof executionJobSchema>;
@@ -91,6 +102,8 @@ export type ExecutionJob = z.infer<typeof executionJobSchema>;
  */
 export const executionTestResultSchema = z.object({
   testCaseId: z.string().min(1).nullable(),
+  /** The script a script test came from; null for a stdin/stdout case. */
+  testScriptId: z.string().min(1).nullable(),
   name: z.string(),
   status: z.enum(TEST_RESULT_STATUSES),
   passed: z.boolean(),

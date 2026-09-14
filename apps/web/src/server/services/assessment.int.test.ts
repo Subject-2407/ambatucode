@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@ambatucode/db";
 import {
   EXECUTION_CONTRACT_VERSION,
+  MAX_TEST_SCRIPTS_PER_LANGUAGE,
   QUEUE_NAMES,
   deadlineJobId,
   isAppError,
@@ -126,8 +127,8 @@ async function individualAssessment(): Promise<AssessmentArchitectView> {
   await uploadTestScript(owner, assessment.id, {
     language: "python",
     framework: "PYTEST",
-    entrypoint: "test_solution.py",
-    files: [{ path: "test_solution.py", content: "SCRIPT_SECRET = True\n" }],
+    path: "test_solution.py",
+    content: "SCRIPT_SECRET = True\n",
     weight: 1,
   });
   return assessment;
@@ -281,31 +282,66 @@ describe("assessment authoring", () => {
     expect(serialized).not.toContain("WEIGHTED_AVERAGE");
   });
 
-  it("keeps one script per language, and refuses one the assessment cannot run", async () => {
+  it("keeps several scripts per language, replacing by path", async () => {
     const assessment = await individualAssessment();
     await uploadTestScript(owner, assessment.id, {
       language: "python",
       framework: "CUSTOM",
-      entrypoint: "check.py",
-      files: [{ path: "check.py", content: "replaced\n" }],
+      path: "check.py",
+      content: "first\n",
       weight: 2,
     });
+    await uploadTestScript(owner, assessment.id, {
+      language: "python",
+      framework: "CUSTOM",
+      path: "check.py",
+      content: "replaced\n",
+      weight: 3,
+    });
+
     const detail = await getAssessment(owner, assessment.id);
     if (detail.view !== "ARCHITECT") throw new Error("expected the Architect view");
-    expect(detail.assessment.testScripts).toHaveLength(1);
-    expect(detail.assessment.testScripts[0]?.entrypoint).toBe("check.py");
+    expect(detail.assessment.testScripts.map((script) => [script.path, script.content])).toEqual([
+      ["check.py", "replaced\n"],
+      ["test_solution.py", "SCRIPT_SECRET = True\n"],
+    ]);
+  });
 
+  it("refuses a script the assessment cannot run, or one too many", async () => {
+    const assessment = await individualAssessment();
     expect(
       await refusalCode(() =>
         uploadTestScript(owner, assessment.id, {
           language: "java",
           framework: "JUNIT",
-          entrypoint: "Test.java",
-          files: [{ path: "Test.java", content: "" }],
+          path: "Test.java",
+          content: "class Test {}\n",
           weight: 1,
         }),
       ),
     ).toBe("LANGUAGE_NOT_ALLOWED");
+
+    // The fixture already holds one python script.
+    for (let index = 1; index < MAX_TEST_SCRIPTS_PER_LANGUAGE; index += 1) {
+      await uploadTestScript(owner, assessment.id, {
+        language: "python",
+        framework: "PYTEST",
+        path: `test_${String(index)}.py`,
+        content: "def test_ok():\n    pass\n",
+        weight: 1,
+      });
+    }
+    expect(
+      await refusalCode(() =>
+        uploadTestScript(owner, assessment.id, {
+          language: "python",
+          framework: "PYTEST",
+          path: "test_one_too_many.py",
+          content: "def test_ok():\n    pass\n",
+          weight: 1,
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
 
     expect(
       await refusalCode(() =>
@@ -503,7 +539,7 @@ describe("attempts and submissions", () => {
     const job = await getRunQueue().getJob(jobId);
     expect(job?.data.testCases.every((testCase) => testCase.isPublic)).toBe(true);
     expect(JSON.stringify(job?.data)).not.toContain("HIDDEN_SECRET");
-    expect(job?.data.testScript).toBeNull();
+    expect(job?.data.testScripts).toEqual([]);
 
     const count = await prisma.submission.count({ where: { attemptId: attempt.id } });
     expect(count).toBe(0);
@@ -531,7 +567,9 @@ describe("attempts and submissions", () => {
     expect(job?.name).toBe(QUEUE_NAMES.SUBMIT);
     expect(job?.data.sourceCode).toBe("print('submitted')");
     expect(job?.data.testCases.map((testCase) => testCase.isPublic).sort()).toEqual([false, true]);
-    expect(job?.data.testScript?.framework).toBe("PYTEST");
+    expect(job?.data.testScripts.map((script) => [script.framework, script.path])).toEqual([
+      ["PYTEST", "test_solution.py"],
+    ]);
 
     expect(
       await refusalCode(() =>
@@ -666,6 +704,7 @@ describe("grading ingestion", () => {
       testResults: [
         {
           testCaseId: publicCase.id,
+          testScriptId: null,
           name: "Sample",
           status: "GRADED" as const,
           passed: true,
@@ -677,6 +716,7 @@ describe("grading ingestion", () => {
         },
         {
           testCaseId: hiddenCase.id,
+          testScriptId: null,
           name: "Hidden",
           status: "TIME_LIMIT_EXCEEDED" as const,
           passed: false,
@@ -688,6 +728,7 @@ describe("grading ingestion", () => {
         },
         {
           testCaseId: null,
+          testScriptId: null,
           name: "pytest",
           status: "GRADED" as const,
           passed: true,

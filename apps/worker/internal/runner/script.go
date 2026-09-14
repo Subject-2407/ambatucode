@@ -23,21 +23,20 @@ const maxReportBytes = 1 << 20
 // that the budget was spent.
 const minScriptBudget = time.Second
 
-// Names of the single result a script reports when it never produced a
-// per-test report. They are Architect-facing only: script rows never reach a
-// Coder.
+// Reasons given, after the script's path, for the single result a script
+// reports when it never produced a per-test report. The path is what tells an
+// Architect with several scripts which one it was.
 const (
-	scriptNotRunName     = "test script (not run: the submission's time budget was spent)"
-	scriptCompileName    = "test script (did not compile against the submission)"
-	scriptLimitName      = "test script (stopped at a limit)"
-	scriptResultTestName = "test script"
+	scriptNotRunReason  = "not run: the submission's time budget was spent"
+	scriptCompileReason = "did not compile against the submission"
+	scriptLimitReason   = "stopped at a limit"
 )
 
 // errScriptPlatform marks a script failure the platform owns — a framework
 // that crashed without a report — which becomes SYSTEM_ERROR for the job.
 var errScriptPlatform = errors.New("test script failed inside the platform")
 
-// runScript runs a job's test script and returns its tests as results.
+// runScript runs one of a job's test scripts and returns its tests as results.
 //
 // It runs in a container of its own, opened after the stdin/stdout cases have
 // finished and their container is gone. Nothing the Coder's program did in
@@ -51,21 +50,21 @@ var errScriptPlatform = errors.New("test script failed inside the platform")
 func (r *Runner) runScript(
 	ctx context.Context,
 	job contract.Job,
+	script contract.TestScript,
 	spec language.Spec,
 	deadline time.Time,
 ) ([]contract.TestResult, contract.Status, error) {
-	script := job.TestScript
-	notRun := func(name string, status contract.Status) ([]contract.TestResult, contract.Status, error) {
-		return []contract.TestResult{scriptResult(name, false, status, script.Weight, 0)}, status, nil
+	notRun := func(reason string, status contract.Status) ([]contract.TestResult, contract.Status, error) {
+		name := script.Path + " (" + reason + ")"
+		return []contract.TestResult{scriptResult(script, name, false, status, 0)}, status, nil
 	}
 
 	remaining := time.Until(deadline)
 	if remaining < minScriptBudget {
-		return notRun(scriptNotRunName, contract.StatusTimeLimitExceeded)
+		return notRun(scriptNotRunReason, contract.StatusTimeLimitExceeded)
 	}
 
-	paths, err := validateScriptPaths(script, spec)
-	if err != nil {
+	if err := validateScriptPath(script, spec); err != nil {
 		return nil, "", err
 	}
 	reportDir, err := newReportDir()
@@ -73,9 +72,8 @@ func (r *Runner) runScript(
 		return nil, "", err
 	}
 	plan, err := spec.PlanScript(script.Framework, language.ScriptInput{
-		Entrypoint: script.Entrypoint,
-		Files:      paths,
-		ReportDir:  reportDir,
+		Path:      script.Path,
+		ReportDir: reportDir,
 	})
 	if err != nil {
 		return nil, "", err
@@ -113,14 +111,12 @@ func (r *Runner) runScript(
 			if status == contract.StatusCompileError {
 				return nil, "", fmt.Errorf("%w: the submission compiled for its cases but not for its script", errScriptPlatform)
 			}
-			return notRun(scriptLimitName, status)
+			return notRun(scriptLimitReason, status)
 		}
 	}
 
-	for _, file := range script.Files {
-		if err := session.Write(ctx, sandbox.File{Name: file.Path, Content: []byte(file.Content)}); err != nil {
-			return nil, "", err
-		}
+	if err := session.Write(ctx, sandbox.File{Name: script.Path, Content: []byte(script.Content)}); err != nil {
+		return nil, "", err
 	}
 	if err := session.MakePrivateDir(ctx, reportDir); err != nil {
 		return nil, "", err
@@ -140,12 +136,12 @@ func (r *Runner) runScript(
 		}
 		switch status := classifyCase(outcome, meter.killedDuring(ctx, outcome), budget); {
 		case status != contract.StatusGraded && status != contract.StatusRuntimeError:
-			return notRun(scriptLimitName, status)
+			return notRun(scriptLimitReason, status)
 		case outcome.ExitCode != 0:
 			// Almost always a test calling something the submission does not
 			// define. That is the Coder's shortfall, so the script fails as a
 			// test; its compiler output stays out, since it quotes the script.
-			return notRun(scriptCompileName, contract.StatusRuntimeError)
+			return notRun(scriptCompileReason, contract.StatusRuntimeError)
 		}
 	}
 
@@ -163,7 +159,7 @@ func (r *Runner) runScript(
 	// not a verdict on the tests it did not reach.
 	status := classifyCase(outcome, meter.killedDuring(ctx, outcome), budget)
 	if status == contract.StatusTimeLimitExceeded || status == contract.StatusMemoryLimitExceeded {
-		return notRun(scriptLimitName, status)
+		return notRun(scriptLimitReason, status)
 	}
 
 	tests, err := readScriptReports(ctx, session, plan)
@@ -173,7 +169,7 @@ func (r *Runner) runScript(
 
 	results := make([]contract.TestResult, 0, len(tests))
 	for _, test := range tests {
-		results = append(results, scriptResult(test.Name, test.Passed, contract.StatusGraded, script.Weight, test.DurationMs))
+		results = append(results, scriptResult(script, test.Name, test.Passed, contract.StatusGraded, test.DurationMs))
 	}
 	// Failing tests leave the submission GRADED: the tests ran, and their
 	// failures are what the score records.
@@ -209,18 +205,19 @@ func readScriptReports(ctx context.Context, session *sandbox.Session, plan langu
 // scriptResult is one script test as a result row.
 //
 // Its excerpts are always empty. A framework's output quotes assertions and
-// the values they expected, and a script is grading data — script rows are
-// never shown to a Coder, but the excerpt is simply not the place for it.
-func scriptResult(name string, passed bool, status contract.Status, weight, durationMs float64) contract.TestResult {
+// the values they expected, and a script is Architect-only data — at most a
+// Coder is shown a test's name and whether it passed, never what it printed.
+func scriptResult(script contract.TestScript, name string, passed bool, status contract.Status, durationMs float64) contract.TestResult {
 	if name == "" {
-		name = scriptResultTestName
+		name = script.Path
 	}
 	return contract.TestResult{
 		TestCaseID:      nil,
+		TestScriptID:    stringPtr(script.ID),
 		Name:            name,
 		Status:          status,
 		Passed:          passed,
-		Weight:          weight,
+		Weight:          script.Weight,
 		ExecutionTimeMs: durationMs,
 	}
 }

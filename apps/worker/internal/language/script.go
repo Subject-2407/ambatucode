@@ -34,11 +34,10 @@ type ScriptPlan struct {
 	Reports []string
 }
 
-// ScriptInput is what a planner is given. Paths are already validated and
+// ScriptInput is what a planner is given. Path is already validated and
 // relative to the workspace.
 type ScriptInput struct {
-	Entrypoint string
-	Files      []string
+	Path string
 	// ReportDir is a fresh private directory for the framework's report.
 	ReportDir string
 }
@@ -75,7 +74,7 @@ func planPytest(input ScriptInput) (ScriptPlan, error) {
 			"-p", "no:cacheprovider",
 			"--rootdir=" + WorkspaceDir,
 			"--junit-xml=" + report,
-			workspacePath(input.Entrypoint),
+			workspacePath(input.Path),
 		},
 		// Tests in a subdirectory still import the Coder's main.py by name.
 		Env:     []string{"PYTHONPATH=" + WorkspaceDir},
@@ -86,7 +85,7 @@ func planPytest(input ScriptInput) (ScriptPlan, error) {
 
 func planPythonCustom(input ScriptInput) (ScriptPlan, error) {
 	return ScriptPlan{
-		Run:     []string{"python3", workspacePath(input.Entrypoint)},
+		Run:     []string{"python3", workspacePath(input.Path)},
 		Env:     []string{"PYTHONPATH=" + WorkspaceDir, reportEnv(input)},
 		Format:  grader.ReportCustomJSON,
 		Reports: []string{input.ReportDir + "/report.json"},
@@ -114,7 +113,7 @@ func planJest(input ScriptInput) (ScriptPlan, error) {
 			"--outputFile=" + report,
 			"--config", jestConfig,
 			"--no-cache",
-			"--runTestsByPath", workspacePath(input.Entrypoint),
+			"--runTestsByPath", workspacePath(input.Path),
 		},
 		Format:  grader.ReportJestJSON,
 		Reports: []string{report},
@@ -123,7 +122,7 @@ func planJest(input ScriptInput) (ScriptPlan, error) {
 
 func planNodeCustom(input ScriptInput) (ScriptPlan, error) {
 	return ScriptPlan{
-		Run:     []string{"node", workspacePath(input.Entrypoint)},
+		Run:     []string{"node", workspacePath(input.Path)},
 		Env:     []string{reportEnv(input)},
 		Format:  grader.ReportCustomJSON,
 		Reports: []string{input.ReportDir + "/report.json"},
@@ -136,47 +135,32 @@ var javaIdentifier = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 // javaClassName maps a source path to the class it must declare, following
 // Java's own convention that directories are packages: tests/SumTest.java is
 // tests.SumTest.
-func javaClassName(entrypoint string) (string, error) {
-	if !strings.HasSuffix(entrypoint, ".java") {
-		return "", fmt.Errorf("the Java test script entrypoint %q is not a .java file", entrypoint)
+func javaClassName(file string) (string, error) {
+	if !strings.HasSuffix(file, ".java") {
+		return "", fmt.Errorf("the Java test script %q is not a .java file", file)
 	}
-	segments := strings.Split(strings.TrimSuffix(entrypoint, ".java"), "/")
+	segments := strings.Split(strings.TrimSuffix(file, ".java"), "/")
 	for _, segment := range segments {
 		if !javaIdentifier.MatchString(segment) {
-			return "", fmt.Errorf("the Java test script entrypoint %q is not a valid class path", entrypoint)
+			return "", fmt.Errorf("the Java test script %q is not a valid class path", file)
 		}
 	}
 	return strings.Join(segments, "."), nil
 }
 
-// javaSources compiles every script .java file against the Coder's classes,
-// already built into the workspace root.
-func javaSources(input ScriptInput, classPath string) ([]string, error) {
-	cmd := []string{"javac", "-encoding", "UTF-8", "-d", WorkspaceDir, "-cp", classPath}
-	sources := 0
-	for _, file := range input.Files {
-		if strings.HasSuffix(file, ".java") {
-			cmd = append(cmd, workspacePath(file))
-			sources++
-		}
-	}
-	if sources == 0 {
-		return nil, fmt.Errorf("the Java test script has no .java files")
-	}
-	return cmd, nil
+// javaCompile builds the script against the Coder's classes, already built
+// into the workspace root.
+func javaCompile(input ScriptInput, classPath string) []string {
+	return []string{"javac", "-encoding", "UTF-8", "-d", WorkspaceDir, "-cp", classPath, workspacePath(input.Path)}
 }
 
 func planJUnit(input ScriptInput) (ScriptPlan, error) {
-	className, err := javaClassName(input.Entrypoint)
-	if err != nil {
-		return ScriptPlan{}, err
-	}
-	compile, err := javaSources(input, WorkspaceDir+":"+junitConsole)
+	className, err := javaClassName(input.Path)
 	if err != nil {
 		return ScriptPlan{}, err
 	}
 	return ScriptPlan{
-		Compile: compile,
+		Compile: javaCompile(input, WorkspaceDir+":"+junitConsole),
 		Run: []string{
 			"java", "-XX:-UsePerfData", "-jar", junitConsole, "execute",
 			"--class-path", WorkspaceDir,
@@ -190,16 +174,12 @@ func planJUnit(input ScriptInput) (ScriptPlan, error) {
 }
 
 func planJavaCustom(input ScriptInput) (ScriptPlan, error) {
-	className, err := javaClassName(input.Entrypoint)
-	if err != nil {
-		return ScriptPlan{}, err
-	}
-	compile, err := javaSources(input, WorkspaceDir)
+	className, err := javaClassName(input.Path)
 	if err != nil {
 		return ScriptPlan{}, err
 	}
 	return ScriptPlan{
-		Compile: compile,
+		Compile: javaCompile(input, WorkspaceDir),
 		Run:     []string{"java", "-XX:-UsePerfData", "-cp", WorkspaceDir, className},
 		Env:     []string{reportEnv(input)},
 		Format:  grader.ReportCustomJSON,
@@ -215,17 +195,11 @@ const cppHarness = WorkspaceDir + "/.ambatucode-harness"
 // Coder's source, which has its own main, so it receives the Coder's compiled
 // program's path instead and runs it.
 func planCppCustom(input ScriptInput) (ScriptPlan, error) {
-	if !isCppSource(input.Entrypoint) {
-		return ScriptPlan{}, fmt.Errorf("the C++ test script entrypoint %q is not a C++ source file", input.Entrypoint)
-	}
-	compile := []string{"g++", "-std=c++20", "-O2", "-w", "-o", cppHarness}
-	for _, file := range input.Files {
-		if isCppSource(file) {
-			compile = append(compile, workspacePath(file))
-		}
+	if !isCppSource(input.Path) {
+		return ScriptPlan{}, fmt.Errorf("the C++ test script %q is not a C++ source file", input.Path)
 	}
 	return ScriptPlan{
-		Compile: compile,
+		Compile: []string{"g++", "-std=c++20", "-O2", "-w", "-o", cppHarness, workspacePath(input.Path)},
 		Run:     []string{cppHarness},
 		Env:     []string{reportEnv(input), ProgramEnv + "=" + WorkspaceDir + "/program"},
 		Format:  grader.ReportCustomJSON,

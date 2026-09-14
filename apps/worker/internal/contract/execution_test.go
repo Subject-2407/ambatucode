@@ -23,7 +23,7 @@ func validJobMap() map[string]any {
 			"maxProcesses":     64,
 		},
 		"testCases":     []any{},
-		"testScript":    nil,
+		"testScripts":   []any{},
 		"callbackToken": "token",
 	}
 }
@@ -91,18 +91,60 @@ func TestParseJobRejectsHiddenTestCaseOnRunJob(t *testing.T) {
 	}
 }
 
-func TestParseJobRejectsTestScriptOnRunJob(t *testing.T) {
-	payload := validJobMap()
-	payload["testScript"] = map[string]any{
-		"framework":  "PYTEST",
-		"entrypoint": "test_main.py",
-		"files":      []any{},
-		"weight":     1,
+func validScriptMap(id string) map[string]any {
+	return map[string]any{
+		"id":        id,
+		"framework": "PYTEST",
+		"path":      "test_main.py",
+		"content":   "def test_ok():\n    pass\n",
+		"weight":    1,
 	}
+}
 
-	_, err := ParseJob(encode(t, payload))
-	if err == nil || !strings.Contains(err.Error(), "test script") {
-		t.Fatalf("expected a test-script rejection, got %v", err)
+// A Practice Activity's scripts ride on a RUN. Nothing of a script comes back
+// in an excerpt, so there is nothing for the hidden-case check to protect.
+func TestParseJobAcceptsTestScriptsOnRunJob(t *testing.T) {
+	payload := validJobMap()
+	payload["testScripts"] = []any{validScriptMap("script-1"), validScriptMap("script-2")}
+
+	job, err := ParseJob(encode(t, payload))
+	if err != nil {
+		t.Fatalf("expected the scripts to be accepted, got %v", err)
+	}
+	if len(job.TestScripts) != 2 || job.TestScripts[1].ID != "script-2" {
+		t.Fatalf("unexpected scripts: %+v", job.TestScripts)
+	}
+}
+
+func TestParseJobRejectsMalformedTestScripts(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"missing list": func(payload map[string]any) { delete(payload, "testScripts") },
+		"null list":    func(payload map[string]any) { payload["testScripts"] = nil },
+		"empty id": func(payload map[string]any) {
+			payload["testScripts"] = []any{validScriptMap("")}
+		},
+		"duplicate id": func(payload map[string]any) {
+			payload["testScripts"] = []any{validScriptMap("same"), validScriptMap("same")}
+		},
+		"negative weight": func(payload map[string]any) {
+			script := validScriptMap("script-1")
+			script["weight"] = -1
+			payload["testScripts"] = []any{script}
+		},
+		"unknown framework": func(payload map[string]any) {
+			script := validScriptMap("script-1")
+			script["framework"] = "MOCHA"
+			payload["testScripts"] = []any{script}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			payload := validJobMap()
+			mutate(payload)
+			if _, err := ParseJob(encode(t, payload)); err == nil {
+				t.Fatal("accepted")
+			}
+		})
 	}
 }
 

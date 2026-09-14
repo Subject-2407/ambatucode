@@ -572,7 +572,7 @@ describe("practice", () => {
     expect(job?.data.kind).toBe("RUN");
     expect(job?.data.submissionId).toBeNull();
     expect(job?.data.testCases.every((testCase) => testCase.isPublic)).toBe(true);
-    expect(job?.data.testScript).toBeNull();
+    expect(job?.data.testScripts).toEqual([]);
 
     // The owner record is the only thing that says who the result belongs to.
     expect(await getRedis().get(runOwnerKey(jobId))).toBe(enrolledCoder.id);

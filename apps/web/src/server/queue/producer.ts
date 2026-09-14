@@ -122,9 +122,6 @@ export async function enqueueExecutionJob(
     if (leaked.length > 0) {
       throw new Error("RUN jobs may only carry public test cases");
     }
-    if (parsed.testScript !== null) {
-      throw new Error("RUN jobs may not carry a test script");
-    }
     // Written before the job is queued. The worker can finish a trivial run in
     // well under a second, and a result that arrives before its owner is
     // recorded has nowhere to go.

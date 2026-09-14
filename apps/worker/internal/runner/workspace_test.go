@@ -50,42 +50,35 @@ func TestValidateWorkspacePathAcceptsPlainRelativePaths(t *testing.T) {
 	}
 }
 
-func script(entrypoint string, paths ...string) *contract.TestScript {
-	files := make([]contract.TestScriptFile, 0, len(paths))
-	for _, name := range paths {
-		files = append(files, contract.TestScriptFile{Path: name, Content: "x"})
-	}
-	return &contract.TestScript{Framework: contract.FrameworkPytest, Entrypoint: entrypoint, Files: files, Weight: 1}
+func script(path string) contract.TestScript {
+	return contract.TestScript{ID: "script-1", Framework: contract.FrameworkPytest, Path: path, Content: "x", Weight: 1}
 }
 
-func TestValidateScriptPathsProtectsTheSubmission(t *testing.T) {
+func TestValidateScriptPathProtectsTheSubmission(t *testing.T) {
 	python, _ := language.Lookup(contract.LanguagePython)
 	cpp, _ := language.Lookup(contract.LanguageCPP)
 
 	cases := []struct {
 		name   string
 		spec   language.Spec
-		script *contract.TestScript
+		script contract.TestScript
 	}{
-		{"overwrites the Coder's source", python, script("main.py", "main.py")},
-		{"overwrites the compiled program", cpp, script("check.cpp", "check.cpp", "program")},
-		{"declares a file twice", python, script("t.py", "t.py", "t.py")},
-		{"entrypoint is not a file", python, script("other.py", "t.py")},
-		{"entrypoint escapes", python, script("../t.py", "t.py")},
-		{"a file inside another file", python, script("t.py", "t.py", "t.py/inner.py")},
-		{"no files", python, &contract.TestScript{Entrypoint: "t.py"}},
-		{"a file escapes", python, script("t.py", "t.py", "../../etc/cron.d/x")},
+		{"overwrites the Coder's source", python, script("main.py")},
+		{"overwrites the compiled program", cpp, script("program")},
+		{"sits beneath the compiled program", cpp, script("program/check.cpp")},
+		{"escapes", python, script("../t.py")},
+		{"escapes deeper", python, script("../../etc/cron.d/x")},
+		{"is empty", python, script("")},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := validateScriptPaths(testCase.script, testCase.spec); err == nil {
+			if err := validateScriptPath(testCase.script, testCase.spec); err == nil {
 				t.Fatal("accepted")
 			}
 		})
 	}
 
-	paths, err := validateScriptPaths(script("tests/test_main.py", "tests/test_main.py", "tests/conftest.py"), python)
-	if err != nil || len(paths) != 2 {
-		t.Fatalf("a valid script was refused: %v %v", paths, err)
+	if err := validateScriptPath(script("tests/test_main.py"), python); err != nil {
+		t.Fatalf("a valid script was refused: %v", err)
 	}
 }

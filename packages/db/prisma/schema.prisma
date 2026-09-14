@@ -172,6 +172,7 @@ model PracticeActivity {
   @@index([materialId, orderIndex])
 }
 
+
 // ---------------------------------------------------------------------------
 // Assessment
 // ---------------------------------------------------------------------------
@@ -274,9 +275,11 @@ model AssessmentTestScript {
 
   assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
 
-  // One script per language: a submission job carries exactly one, chosen by
-  // the language the Coder submitted in.
-  @@unique([assessmentId, language])
+  // Each script is a single file: filesJson holds exactly that one, at
+  // `entrypoint`. A language may have several; a submission job carries every
+  // script for the language the Coder submitted in, and uploading to a path
+  // the language already has replaces that script.
+  @@unique([assessmentId, language, entrypoint])
 }
 
 enum AssessmentSessionStatus {

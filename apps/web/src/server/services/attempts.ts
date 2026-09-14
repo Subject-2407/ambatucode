@@ -15,6 +15,7 @@ import {
   type AutoSubmitReason,
   type ExecutionLimits,
   type ExecutionTestCase,
+  type ExecutionTestScript,
   type Language,
   type MonitorEventPayload,
   type RunAttemptRequest,
@@ -32,7 +33,7 @@ import { enqueueExecutionJob } from "../queue/producer";
 import { publishAssessmentBroadcast, publishExecutionStatus } from "../realtime/publish";
 import {
   clockFor,
-  readScriptFiles,
+  readScriptContent,
   toAssessmentWorkspaceView,
   toAttemptView,
   toSubmissionSummary,
@@ -348,7 +349,7 @@ export async function saveDraft(
 function limitsFor(
   assessment: { timeLimitMs: number; memoryLimitMb: number },
   testCases: ReadonlyArray<{ timeLimitMs: number | null }>,
-  hasScript: boolean,
+  scriptCount: number,
 ): ExecutionLimits {
   // Each case runs for its own limit when it has one, so the budget is the sum
   // of what every case may actually take.
@@ -364,14 +365,14 @@ function limitsFor(
     ...DEFAULT_EXECUTION_LIMITS,
     runTimeoutMs: assessment.timeLimitMs,
     memoryLimitMb: assessment.memoryLimitMb,
-    // The wall clock covers compilation plus every case in sequence, and a
-    // script run on top, so it grows with the work rather than killing a
-    // legitimate multi-case submission for taking as long as configured.
+    // The wall clock covers compilation plus every case in sequence, and each
+    // script run on top in its own container, so it grows with the work rather
+    // than killing a legitimate submission for taking as long as configured.
     wallTimeoutMs: Math.max(
       DEFAULT_EXECUTION_LIMITS.wallTimeoutMs,
       DEFAULT_EXECUTION_LIMITS.compileTimeoutMs +
         caseBudgetMs +
-        (hasScript ? DEFAULT_EXECUTION_LIMITS.wallTimeoutMs : 0),
+        scriptCount * DEFAULT_EXECUTION_LIMITS.wallTimeoutMs,
     ),
   };
 }
@@ -456,9 +457,11 @@ export async function runAttempt(
       submissionId: null,
       language: input.language,
       sourceCode: input.sourceCode,
-      limits: limitsFor(assessment, testCases, false),
+      limits: limitsFor(assessment, testCases, 0),
       testCases,
-      testScript: null,
+      // An attempt's Run shows public cases only. Scripts grade the formal
+      // submission, and running them here would preview hidden grading.
+      testScripts: [],
     },
     { userId: actor.id },
   );
@@ -501,7 +504,9 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
             },
           },
           testScripts: {
+            orderBy: { entrypoint: "asc" },
             select: {
+              id: true,
               language: true,
               framework: true,
               entrypoint: true,
@@ -519,9 +524,15 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
       throw new Error(`Submission language "${submission.language}" is not a known language`);
     }
     const language = submission.language;
-    const script =
-      submission.assessment.testScripts.find((candidate) => candidate.language === language) ??
-      null;
+    const testScripts: ExecutionTestScript[] = submission.assessment.testScripts
+      .filter((script) => script.language === language)
+      .map((script) => ({
+        id: script.id,
+        framework: script.framework,
+        path: script.entrypoint,
+        content: readScriptContent(script),
+        weight: script.weight,
+      }));
     const testCases: ExecutionTestCase[] = submission.assessment.testCases.map((testCase) => ({
       id: testCase.id,
       name: testCase.name,
@@ -543,17 +554,9 @@ async function dispatchSubmission(submissionId: string): Promise<SubmissionSumma
         submissionId: submission.id,
         language,
         sourceCode: submission.sourceCode,
-        limits: limitsFor(submission.assessment, testCases, script !== null),
+        limits: limitsFor(submission.assessment, testCases, testScripts.length),
         testCases,
-        testScript:
-          script === null
-            ? null
-            : {
-                framework: script.framework,
-                entrypoint: script.entrypoint,
-                files: readScriptFiles(script.filesJson),
-                weight: script.weight,
-              },
+        testScripts,
       },
       { userId: submission.userId },
     );

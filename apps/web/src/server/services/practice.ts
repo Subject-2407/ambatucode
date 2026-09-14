@@ -318,7 +318,7 @@ export async function runPracticeActivity(
       ),
     },
     testCases,
-    testScript: null,
+    testScripts: [],
   };
 
   return { jobId: await enqueueExecutionJob(job, { userId: actor.id }) };

@@ -60,8 +60,8 @@ export function TestScriptsTab({ assessment }: { assessment: AssessmentArchitect
     <Stack gap="4">
       <HStack justify="space-between" gap="3" wrap="wrap">
         <Text fontSize="sm" color="fg.muted">
-          Scripts run inside the sandbox alongside the Coder&apos;s code. Uploading one for a
-          language replaces the script already there.
+          Each script is one file, run in its own sandbox against the Coder&apos;s code. Uploading
+          to a path a language already has replaces that script.
         </Text>
         <Button size="sm" onClick={() => setAdding(true)}>
           <Plus aria-hidden />
@@ -93,8 +93,7 @@ export function TestScriptsTab({ assessment }: { assessment: AssessmentArchitect
                   <Text fontSize="sm">{LANGUAGE_LABEL[script.language]}</Text>
                 </HStack>
                 <Text fontSize="xs" color="fg.muted" truncate>
-                  {script.entrypoint} · {script.files.length}{" "}
-                  {script.files.length === 1 ? "file" : "files"} · weight {script.weight}
+                  {script.path} · weight {script.weight}
                 </Text>
               </Stack>
               <IconButton
@@ -163,8 +162,8 @@ function TestScriptDialog({
     const parsed = uploadTestScriptRequestSchema.safeParse({
       language,
       framework,
-      entrypoint: path,
-      files: [{ path, content }],
+      path,
+      content,
       weight: Number.parseInt(weight, 10),
     });
     if (!parsed.success) {

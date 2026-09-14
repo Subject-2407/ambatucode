@@ -12,54 +12,25 @@ import (
 // maxScriptPathLength matches what the upload schema allows.
 const maxScriptPathLength = 200
 
-// validateScriptPaths checks every path a test script declares before any of
-// it is written.
+// validateScriptPath checks the path a test script declares before it is
+// written.
 //
-// The producer validates these on upload, and they are validated again here
-// because this is where they become real files: a path that escapes the
-// workspace, or that lands on the Coder's own source, would let a script
-// overwrite what it is supposed to be grading.
-func validateScriptPaths(script *contract.TestScript, spec language.Spec) ([]string, error) {
-	if len(script.Files) == 0 {
-		return nil, fmt.Errorf("the test script has no files")
+// The producer validates it on upload, and it is validated again here because
+// this is where it becomes a real file: a path that escapes the workspace, or
+// that lands on the Coder's own source, would let a script overwrite what it
+// is supposed to be grading.
+func validateScriptPath(script contract.TestScript, spec language.Spec) error {
+	if err := validateWorkspacePath(script.Path); err != nil {
+		return err
 	}
-
-	reserved := make(map[string]bool)
-	for _, name := range spec.ReservedPaths() {
-		reserved[name] = true
-	}
-
-	seen := make(map[string]bool, len(script.Files))
-	paths := make([]string, 0, len(script.Files))
-	for _, file := range script.Files {
-		if err := validateWorkspacePath(file.Path); err != nil {
-			return nil, err
-		}
-		if reserved[file.Path] {
-			return nil, fmt.Errorf("test script file %q would overwrite the submission", file.Path)
-		}
-		if seen[file.Path] {
-			return nil, fmt.Errorf("test script file %q is declared twice", file.Path)
-		}
-		seen[file.Path] = true
-		paths = append(paths, file.Path)
-	}
-
-	// A declared file that is also a directory of another — "a" and "a/b" —
-	// cannot both exist, and would fail midway through writing the workspace.
-	for _, candidate := range paths {
-		if seen[path.Dir(candidate)] {
-			return nil, fmt.Errorf("test script file %q sits inside another declared file", candidate)
+	for _, reserved := range spec.ReservedPaths() {
+		// "program" and "program/x" both collide: one is the file, the other
+		// cannot be created beneath it.
+		if script.Path == reserved || strings.HasPrefix(script.Path, reserved+"/") {
+			return fmt.Errorf("test script file %q would overwrite the submission", script.Path)
 		}
 	}
-
-	if err := validateWorkspacePath(script.Entrypoint); err != nil {
-		return nil, fmt.Errorf("test script entrypoint: %w", err)
-	}
-	if !seen[script.Entrypoint] {
-		return nil, fmt.Errorf("the test script entrypoint %q is not one of its files", script.Entrypoint)
-	}
-	return paths, nil
+	return nil
 }
 
 // validateWorkspacePath accepts only a plain relative path that stays inside

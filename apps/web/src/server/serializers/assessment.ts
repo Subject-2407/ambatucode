@@ -85,8 +85,17 @@ function readStarterCode(value: unknown): StarterCodeMap {
 
 const storedScriptFilesSchema = z.array(z.object({ path: z.string(), content: z.string() }));
 
-export function readScriptFiles(value: unknown): Array<{ path: string; content: string }> {
-  return parseStored(storedScriptFilesSchema, value, "AssessmentTestScript.filesJson");
+/**
+ * The one file a script is. `filesJson` predates single-file scripts and
+ * stays a list, so the file is found by the entrypoint that names it.
+ */
+export function readScriptContent(row: { entrypoint: string; filesJson: unknown }): string {
+  const files = parseStored(storedScriptFilesSchema, row.filesJson, "AssessmentTestScript.filesJson");
+  const file = files.find((candidate) => candidate.path === row.entrypoint);
+  if (file === undefined) {
+    throw new AppError("INTERNAL", "Stored AssessmentTestScript has no file at its entrypoint");
+  }
+  return file.content;
 }
 
 // --- Assessment ---------------------------------------------------------------
@@ -162,8 +171,8 @@ export function toTestScriptView(row: TestScriptRow): TestScriptView {
     assessmentId: row.assessmentId,
     language: storedLanguage(row.language),
     framework: row.framework,
-    entrypoint: row.entrypoint,
-    files: readScriptFiles(row.filesJson),
+    path: row.entrypoint,
+    content: readScriptContent(row),
     weight: row.weight,
     updatedAt: row.updatedAt.toISOString(),
   };

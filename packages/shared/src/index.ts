@@ -29,4 +29,5 @@ export * from "./schemas/modules";
 export * from "./schemas/practice";
 export * from "./schemas/sections";
 export * from "./schemas/sessions";
+export * from "./schemas/test-scripts";
 export * from "./session-readiness";

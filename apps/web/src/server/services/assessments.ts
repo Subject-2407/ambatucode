@@ -10,6 +10,7 @@ import {
   AppError,
   EXECUTABLE_LANGUAGES,
   MAX_TEST_CASES_PER_ASSESSMENT,
+  MAX_TEST_SCRIPTS_PER_LANGUAGE,
   isExecutableLanguage,
   timingProblem,
   type AssessmentArchitectView,
@@ -138,7 +139,10 @@ async function loadArchitectView(assessmentId: string): Promise<AssessmentArchit
     select: {
       ...ASSESSMENT_SELECT,
       testCases: { select: TEST_CASE_SELECT, orderBy: { orderIndex: "asc" } },
-      testScripts: { select: TEST_SCRIPT_SELECT, orderBy: { language: "asc" } },
+      testScripts: {
+        select: TEST_SCRIPT_SELECT,
+        orderBy: [{ language: "asc" }, { entrypoint: "asc" }],
+      },
     },
   });
   return toAssessmentArchitectView(row);
@@ -331,9 +335,10 @@ export async function updateAssessment(
     (script) => !allowedLanguages.includes(script.language),
   );
   if (orphaned.length > 0) {
+    const languages = [...new Set(orphaned.map((script) => script.language))];
     throw new AppError(
       "VALIDATION_FAILED",
-      `Remove the ${orphaned.map((script) => script.language).join(", ")} test script before disallowing that language`,
+      `Remove the ${languages.join(", ")} test scripts before disallowing that language`,
     );
   }
 
@@ -481,9 +486,9 @@ export async function deleteTestCase(actor: AuthenticatedUser, testCaseId: strin
 // --- Test scripts -------------------------------------------------------------
 
 /**
- * One script per language: uploading for a language that already has one
- * replaces it, because a submission job carries exactly one script — the one
- * for the language the Coder submitted in.
+ * Adds one script file. A language may hold several, and a submission job
+ * carries all of them; uploading to a path the language already has replaces
+ * that script, which is how an Architect edits one.
  */
 export async function uploadTestScript(
   actor: AuthenticatedUser,
@@ -505,17 +510,35 @@ export async function uploadTestScript(
     );
   }
 
+  const key = { assessmentId, language: input.language, entrypoint: input.path };
   const data = {
     framework: input.framework,
-    entrypoint: input.entrypoint,
-    filesJson: toJsonInput(input.files),
+    filesJson: toJsonInput([{ path: input.path, content: input.content }]),
     weight: input.weight,
   };
-  const saved = await prisma.assessmentTestScript.upsert({
-    where: { assessmentId_language: { assessmentId, language: input.language } },
-    create: { assessmentId, language: input.language, ...data },
-    update: data,
-    select: TEST_SCRIPT_SELECT,
+
+  const saved = await prisma.$transaction(async (tx) => {
+    const existing = await tx.assessmentTestScript.findUnique({
+      where: { assessmentId_language_entrypoint: key },
+      select: { id: true },
+    });
+    if (existing === null) {
+      const count = await tx.assessmentTestScript.count({
+        where: { assessmentId, language: input.language },
+      });
+      if (count >= MAX_TEST_SCRIPTS_PER_LANGUAGE) {
+        throw new AppError(
+          "VALIDATION_FAILED",
+          `A language holds at most ${MAX_TEST_SCRIPTS_PER_LANGUAGE} test scripts`,
+        );
+      }
+    }
+    return tx.assessmentTestScript.upsert({
+      where: { assessmentId_language_entrypoint: key },
+      create: { ...key, ...data },
+      update: data,
+      select: TEST_SCRIPT_SELECT,
+    });
   });
   return toTestScriptView(saved);
 }

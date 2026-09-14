@@ -57,7 +57,7 @@ function buildRunJob(overrides: Partial<ExecutionJobInput> = {}): ExecutionJobIn
         memoryLimitMb: null,
       },
     ],
-    testScript: null,
+    testScripts: [],
     ...overrides,
   };
 }
@@ -119,14 +119,24 @@ describe("enqueueExecutionJob", () => {
     );
   });
 
-  it("refuses to put a test script in a RUN payload", async () => {
+  // A Practice Activity's scripts ride on its Run. Nothing of a script comes
+  // back to the Coder but test names and verdicts, so there is nothing to strip.
+  it("carries test scripts in a RUN payload", async () => {
     const input = buildRunJob({
-      testScript: { framework: "PYTEST", entrypoint: "test_main.py", files: [], weight: 1 },
+      testScripts: [
+        {
+          id: "script-1",
+          framework: "PYTEST",
+          path: "test_main.py",
+          content: "def test_ok():\n    pass\n",
+          weight: 1,
+        },
+      ],
     });
+    const jobId = await enqueueExecutionJob(input, OWNER);
 
-    await expect(enqueueExecutionJob(input, OWNER)).rejects.toThrow(
-      /RUN jobs may not carry a test script/,
-    );
+    const job = await getRunQueue().getJob(jobId);
+    expect(job?.data.testScripts.map((script) => script.id)).toEqual(["script-1"]);
   });
 
   /**

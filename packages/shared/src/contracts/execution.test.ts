@@ -16,7 +16,7 @@ function validJob(): unknown {
     sourceCode: "print(1)",
     limits: DEFAULT_EXECUTION_LIMITS,
     testCases: [],
-    testScript: null,
+    testScripts: [],
     callbackToken: "token",
   };
 }
@@ -35,7 +35,7 @@ function validResult(): unknown {
   };
 }
 
-describe("execution contract v2 shapes", () => {
+describe("execution contract shapes", () => {
   it("carries per-case limit overrides, null meaning the job's own limit", () => {
     const job = {
       ...(validJob() as Record<string, unknown>),
@@ -79,6 +79,7 @@ describe("execution contract v2 shapes", () => {
   it("requires a status on every test result", () => {
     const row = {
       testCaseId: "case-1",
+      testScriptId: null,
       name: "case",
       passed: false,
       weight: 1,
@@ -100,6 +101,24 @@ describe("execution contract v2 shapes", () => {
     expect(() =>
       executionResultSchema.parse(result({ ...row, status: "COMPILE_ERROR" })),
     ).toThrow();
+  });
+
+  it("carries several test scripts, each under a unique id", () => {
+    const script = (id: string) => ({
+      id,
+      framework: "PYTEST",
+      path: "test_main.py",
+      content: "def test_ok():\n    pass\n",
+      weight: 1,
+    });
+    const job = (scripts: unknown[]) => ({
+      ...(validJob() as Record<string, unknown>),
+      testScripts: scripts,
+    });
+
+    expect(executionJobSchema.parse(job([script("a"), script("b")])).testScripts).toHaveLength(2);
+    expect(() => executionJobSchema.parse(job([script("a"), script("a")]))).toThrow();
+    expect(() => executionJobSchema.parse({ ...job([]), testScripts: null })).toThrow();
   });
 });
 

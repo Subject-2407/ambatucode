@@ -40,6 +40,7 @@ function fabricateResult(job: ExecutionJob): ExecutionResult {
     memoryUsedKb: 4_096,
     testResults: job.testCases.map((testCase) => ({
       testCaseId: testCase.id,
+      testScriptId: null,
       name: testCase.name,
       status: "GRADED",
       passed: true,

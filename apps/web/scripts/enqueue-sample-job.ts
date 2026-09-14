@@ -56,7 +56,7 @@ async function main(): Promise<void> {
           memoryLimitMb: null,
         },
       ],
-      testScript: null,
+      testScripts: [],
     },
     { userId: owner.id },
   );

@@ -4,7 +4,6 @@ import {
   createAssessmentRequestSchema,
   createTestCaseRequestSchema,
   timingProblem,
-  uploadTestScriptRequestSchema,
 } from "./assessments";
 
 describe("timingProblem", () => {
@@ -52,60 +51,5 @@ describe("createTestCaseRequestSchema", () => {
     const heavy = "界".repeat(Math.floor(MAX_TEST_CASE_IO_BYTES / 3) + 1);
     expect(heavy.length).toBeLessThan(MAX_TEST_CASE_IO_BYTES);
     expect(createTestCaseRequestSchema.safeParse({ ...base, input: heavy }).success).toBe(false);
-  });
-});
-
-describe("uploadTestScriptRequestSchema", () => {
-  const script = (overrides: Record<string, unknown> = {}) => ({
-    language: "python",
-    framework: "PYTEST",
-    entrypoint: "tests/test_solution.py",
-    files: [{ path: "tests/test_solution.py", content: "def test_ok():\n    assert True\n" }],
-    ...overrides,
-  });
-
-  it("accepts a well-formed script", () => {
-    expect(uploadTestScriptRequestSchema.safeParse(script()).success).toBe(true);
-  });
-
-  it.each([
-    "../escape.py",
-    "tests/../../escape.py",
-    "/etc/passwd",
-    "C:\\Windows\\win.ini",
-    "tests\\test.py",
-    ".hidden.py",
-    "tests/.hidden/test.py",
-    "tests//test.py",
-    "tests/",
-    "",
-  ])("refuses the path %j", (path) => {
-    const result = uploadTestScriptRequestSchema.safeParse(
-      script({ entrypoint: path, files: [{ path, content: "" }] }),
-    );
-    expect(result.success).toBe(false);
-  });
-
-  it("requires the entrypoint to be one of the files", () => {
-    expect(
-      uploadTestScriptRequestSchema.safeParse(script({ entrypoint: "missing.py" })).success,
-    ).toBe(false);
-  });
-
-  it("refuses duplicate paths", () => {
-    const file = { path: "tests/test_solution.py", content: "" };
-    expect(uploadTestScriptRequestSchema.safeParse(script({ files: [file, file] })).success).toBe(
-      false,
-    );
-  });
-
-  it("refuses a packaged framework in the wrong language", () => {
-    expect(uploadTestScriptRequestSchema.safeParse(script({ framework: "JUNIT" })).success).toBe(
-      false,
-    );
-    expect(
-      uploadTestScriptRequestSchema.safeParse(script({ framework: "CUSTOM", language: "cpp" }))
-        .success,
-    ).toBe(true);
   });
 });
