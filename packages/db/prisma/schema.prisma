@@ -314,6 +314,10 @@ model AssessmentTestScript {
   entrypoint          String
   filesJson           Json                       @default("[]")
   weight              Int                        @default(1)
+  // Opt-in: a Coder sees each of this script's test names and whether it
+  // passed on their graded submission. Never its source or its output. Fixed
+  // on each result row when it is graded, so changing it rewrites no history.
+  showTestNames       Boolean                    @default(false)
   // Validation against the reference solution. Reset to UNVALIDATED whenever
   // the script or the reference solution for its language changes;
   // validationJobId ties a result to the request that asked for it, so a
@@ -325,7 +329,8 @@ model AssessmentTestScript {
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
 
-  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  assessment Assessment             @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  results    SubmissionTestResult[]
 
   // Each script is a single file: filesJson holds exactly that one, at
   // `entrypoint`. A language may have several; a submission job carries every
@@ -502,6 +507,9 @@ model SubmissionTestResult {
   id              String            @id @default(cuid())
   submissionId    String
   testCaseId      String?
+  // The script a script test came from. Null for a case, and once that script
+  // is deleted; the row itself, with its name and verdict, stays.
+  testScriptId    String?
   name            String
   // How this case alone ended. Null on rows graded before it was recorded.
   status          SubmissionStatus?
@@ -515,8 +523,9 @@ model SubmissionTestResult {
   isPublic        Boolean           @default(false)
   createdAt       DateTime          @default(now())
 
-  submission Submission          @relation(fields: [submissionId], references: [id], onDelete: Cascade)
-  testCase   AssessmentTestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  submission Submission            @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  testCase   AssessmentTestCase?   @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  testScript AssessmentTestScript? @relation(fields: [testScriptId], references: [id], onDelete: SetNull)
 
   @@index([submissionId])
 }

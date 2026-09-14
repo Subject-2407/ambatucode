@@ -112,6 +112,7 @@ export type SubmissionCoderView = SubmissionSummary & {
 
 export type SubmissionTestResultArchitectView = SubmissionTestResultCoderView & {
   testCaseId: string | null;
+  testScriptId: string | null;
   weight: number;
   isPublic: boolean;
   memoryUsedKb: number | null;

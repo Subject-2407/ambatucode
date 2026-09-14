@@ -173,6 +173,7 @@ export type TestScriptRow = {
   entrypoint: string;
   filesJson: unknown;
   weight: number;
+  showTestNames: boolean;
   validationStatus: TestScriptValidationStatus;
   validationSummary: string | null;
   validationChangedAt: Date | null;
@@ -188,6 +189,7 @@ export function toTestScriptView(row: TestScriptRow): TestScriptView {
     path: row.entrypoint,
     content: readScriptContent(row),
     weight: row.weight,
+    showTestNames: row.showTestNames,
     validation: toValidationView(row),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -449,6 +451,7 @@ export function toAttemptView(input: {
 
 export type SubmissionResultRow = {
   testCaseId: string | null;
+  testScriptId: string | null;
   name: string;
   status: SubmissionStatus | null;
   passed: boolean;
@@ -519,6 +522,7 @@ export function toSubmissionArchitectView(row: SubmissionRow): SubmissionArchite
     systemError: row.systemError,
     testResults: row.results.map((result) => ({
       testCaseId: result.testCaseId,
+      testScriptId: result.testScriptId,
       name: result.name,
       status: toTestResultStatus(result.status),
       passed: result.passed,

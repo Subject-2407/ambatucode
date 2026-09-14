@@ -40,6 +40,7 @@ const SUBMISSION_SELECT = {
     orderBy: { createdAt: "asc" },
     select: {
       testCaseId: true,
+      testScriptId: true,
       name: true,
       status: true,
       passed: true,

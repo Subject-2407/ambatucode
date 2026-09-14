@@ -134,6 +134,12 @@ export const uploadTestScriptRequestSchema = z
   .object({
     ...testScriptFileShape,
     weight: z.number().int().min(0).max(1_000).default(1),
+    /**
+     * Shows Coders each of the script's test names and whether it passed, on
+     * their graded submission. Off by default: a test name can give away what
+     * the tests are looking for.
+     */
+    showTestNames: z.boolean().default(false),
   })
   .superRefine(checkTestScriptFile);
 export type UploadTestScriptRequest = z.infer<typeof uploadTestScriptRequestSchema>;
@@ -158,6 +164,7 @@ export type TestScriptView = {
   path: string;
   content: string;
   weight: number;
+  showTestNames: boolean;
   validation: TestScriptValidation;
   updatedAt: string;
 };

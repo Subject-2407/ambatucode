@@ -430,7 +430,7 @@ export async function uploadPracticeTestScript(
   const saved = await prisma.$transaction(async (tx) => {
     const existing = await tx.practiceTestScript.findUnique({
       where: { practiceActivityId_language_path: key },
-      select: { id: true },
+      select: { framework: true, content: true },
     });
     if (existing === null) {
       const count = await tx.practiceTestScript.count({
@@ -443,8 +443,16 @@ export async function uploadPracticeTestScript(
         );
       }
     }
-    // New content has not been run against anything yet.
-    const data = { framework: input.framework, content: input.content, ...resetValidation() };
+    // Only new content needs validating again.
+    const unchanged =
+      existing !== null &&
+      existing.framework === input.framework &&
+      existing.content === input.content;
+    const data = {
+      framework: input.framework,
+      content: input.content,
+      ...(unchanged ? {} : resetValidation()),
+    };
     return tx.practiceTestScript.upsert({
       where: { practiceActivityId_language_path: key },
       create: { ...key, ...data },

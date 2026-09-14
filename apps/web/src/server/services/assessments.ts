@@ -106,6 +106,7 @@ const TEST_SCRIPT_SELECT = {
   entrypoint: true,
   filesJson: true,
   weight: true,
+  showTestNames: true,
   ...VALIDATION_SELECT,
   updatedAt: true,
 } satisfies Prisma.AssessmentTestScriptSelect;
@@ -526,19 +527,26 @@ export async function uploadTestScript(
   }
 
   const key = { assessmentId, language: input.language, entrypoint: input.path };
-  const data = {
-    framework: input.framework,
-    filesJson: toJsonInput([{ path: input.path, content: input.content }]),
-    weight: input.weight,
-    // New content has not been run against anything yet.
-    ...resetValidation(),
-  };
 
   const saved = await prisma.$transaction(async (tx) => {
     const existing = await tx.assessmentTestScript.findUnique({
       where: { assessmentId_language_entrypoint: key },
-      select: { id: true },
+      select: { framework: true, entrypoint: true, filesJson: true },
     });
+    // Only new content needs validating again. A change of weight or of what
+    // Coders are shown leaves the script exactly as it was validated.
+    const unchanged =
+      existing !== null &&
+      existing.framework === input.framework &&
+      readScriptContent(existing) === input.content;
+    const data = {
+      framework: input.framework,
+      filesJson: toJsonInput([{ path: input.path, content: input.content }]),
+      weight: input.weight,
+      showTestNames: input.showTestNames,
+      ...(unchanged ? {} : resetValidation()),
+    };
+
     if (existing === null) {
       const count = await tx.assessmentTestScript.count({
         where: { assessmentId, language: input.language },

@@ -113,7 +113,7 @@ export function TestScriptsTab({ assessment }: { assessment: AssessmentArchitect
           <TestScriptForm
             languages={assessment.allowedLanguages}
             initial={editing === "new" ? undefined : editing}
-            showWeight
+            graded
             pending={upload.isPending}
             onSave={save}
             onCancel={() => setEditing(null)}

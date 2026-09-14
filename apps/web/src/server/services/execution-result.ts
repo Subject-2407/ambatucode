@@ -98,6 +98,7 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
       status: true,
       userId: true,
       score: true,
+      assessmentId: true,
       assessment: { select: { gradingStrategy: true } },
     },
   });
@@ -154,37 +155,64 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
     })),
   );
 
-  // Only a case marked PUBLIC on the Assessment may be shown to a Coder.
-  // Anything unlinked (a custom test script row) stays private.
-  const linkedIds = result.testResults
+  // Only a case marked PUBLIC on the Assessment may be shown to a Coder, and
+  // a script's tests only when that script opted in. Both are looked up within
+  // this submission's own Assessment: an id the worker echoes back is not proof
+  // it belongs here.
+  const linkedCaseIds = result.testResults
     .map((testResult) => testResult.testCaseId)
     .filter((id): id is string => id !== null);
+  const linkedScriptIds = result.testResults
+    .map((testResult) => testResult.testScriptId)
+    .filter((id): id is string => id !== null);
 
-  const publicCaseIds = new Set(
-    (
-      await prisma.assessmentTestCase.findMany({
-        where: { id: { in: linkedIds }, kind: "PUBLIC" },
-        select: { id: true },
-      })
-    ).map((testCase) => testCase.id),
-  );
+  const [publicCases, scripts] = await Promise.all([
+    prisma.assessmentTestCase.findMany({
+      where: { id: { in: linkedCaseIds }, assessmentId: submission.assessmentId, kind: "PUBLIC" },
+      select: { id: true },
+    }),
+    prisma.assessmentTestScript.findMany({
+      where: { id: { in: linkedScriptIds }, assessmentId: submission.assessmentId },
+      select: { id: true, showTestNames: true },
+    }),
+  ]);
+  const publicCaseIds = new Set(publicCases.map((testCase) => testCase.id));
+  const scriptShowsNames = new Map(scripts.map((script) => [script.id, script.showTestNames]));
+
+  function isPublicRow(testResult: (typeof result.testResults)[number]): boolean {
+    if (testResult.testCaseId !== null) return publicCaseIds.has(testResult.testCaseId);
+    if (testResult.testScriptId !== null)
+      return scriptShowsNames.get(testResult.testScriptId) ?? false;
+    return false;
+  }
 
   const [, , updated] = await prisma.$transaction([
     prisma.submissionTestResult.deleteMany({ where: { submissionId: submission.id } }),
     prisma.submissionTestResult.createMany({
-      data: result.testResults.map((testResult) => ({
-        submissionId: submission.id,
-        testCaseId: testResult.testCaseId,
-        name: testResult.name,
-        status: testResult.status,
-        passed: testResult.passed,
-        weight: Math.round(testResult.weight),
-        executionTimeMs: Math.round(testResult.executionTimeMs),
-        memoryUsedKb: testResult.memoryUsedKb === null ? null : Math.round(testResult.memoryUsedKb),
-        stdoutExcerpt: testResult.stdoutExcerpt,
-        stderrExcerpt: testResult.stderrExcerpt,
-        isPublic: testResult.testCaseId !== null && publicCaseIds.has(testResult.testCaseId),
-      })),
+      data: result.testResults.map((testResult) => {
+        const scriptId =
+          testResult.testScriptId !== null && scriptShowsNames.has(testResult.testScriptId)
+            ? testResult.testScriptId
+            : null;
+        // A script row's output is never kept, shown or not: a framework's
+        // output quotes the assertions and the values they expected.
+        const fromScript = testResult.testScriptId !== null;
+        return {
+          submissionId: submission.id,
+          testCaseId: testResult.testCaseId,
+          testScriptId: scriptId,
+          name: testResult.name,
+          status: testResult.status,
+          passed: testResult.passed,
+          weight: Math.round(testResult.weight),
+          executionTimeMs: Math.round(testResult.executionTimeMs),
+          memoryUsedKb:
+            testResult.memoryUsedKb === null ? null : Math.round(testResult.memoryUsedKb),
+          stdoutExcerpt: fromScript ? "" : testResult.stdoutExcerpt,
+          stderrExcerpt: fromScript ? "" : testResult.stderrExcerpt,
+          isPublic: isPublicRow(testResult),
+        };
+      }),
     }),
     prisma.submission.update({
       where: { id: submission.id },

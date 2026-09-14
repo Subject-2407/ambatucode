@@ -47,7 +47,7 @@ export function PracticeTestScriptsDialog({
   const [editing, setEditing] = useState<"new" | PracticeTestScriptView | null>(null);
   const [deleting, setDeleting] = useState<PracticeTestScriptView | null>(null);
 
-  async function save({ weight: _weight, ...draft }: TestScriptDraft) {
+  async function save({ weight: _weight, showTestNames: _shown, ...draft }: TestScriptDraft) {
     await upload.mutateAsync(draft);
     toaster.success({ title: `Saved ${draft.path}` });
     setEditing(null);
@@ -73,8 +73,8 @@ export function PracticeTestScriptsDialog({
       return (
         <TestScriptForm
           languages={activity.allowedLanguages}
-          initial={editing === "new" ? undefined : { ...editing, weight: 1 }}
-          showWeight={false}
+          initial={editing === "new" ? undefined : { ...editing, weight: 1, showTestNames: true }}
+          graded={false}
           pending={upload.isPending}
           onSave={save}
           onCancel={() => setEditing(null)}

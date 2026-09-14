@@ -16,6 +16,8 @@ export type ListedTestScript = {
   path: string;
   /** Absent for Practice, which grades nothing. */
   weight?: number;
+  /** Absent for Practice, whose test names Coders always see. */
+  showTestNames?: boolean;
   validation: TestScriptValidation;
 };
 
@@ -57,6 +59,7 @@ export function TestScriptList<Script extends ListedTestScript>({
             <HStack gap="2" wrap="wrap">
               <Badge tone="accent">{script.framework}</Badge>
               <Text fontSize="sm">{LANGUAGE_LABEL[script.language]}</Text>
+              {script.showTestNames ? <Badge tone="info">Names shown to Coders</Badge> : null}
               <Badge tone={VALIDATION_BADGE[script.validation.status].tone}>
                 {VALIDATION_BADGE[script.validation.status].label}
               </Badge>

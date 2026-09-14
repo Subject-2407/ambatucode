@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type ChangeEvent } from "react";
-import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
+import { Box, Checkbox, Flex, HStack, Stack, Text } from "@chakra-ui/react";
 import { LayoutTemplate, Upload } from "lucide-react";
 import {
   MAX_TEST_SCRIPT_BYTES,
@@ -31,6 +31,7 @@ export type TestScriptDraft = {
   path: string;
   content: string;
   weight: number;
+  showTestNames: boolean;
 };
 
 /**
@@ -45,15 +46,18 @@ export type TestScriptDraft = {
 export function TestScriptForm({
   languages,
   initial,
-  showWeight,
+  graded,
   pending,
   onSave,
   onCancel,
 }: {
   languages: Language[];
   initial?: TestScriptDraft;
-  /** Practice produces no grade, so its scripts have no weight to set. */
-  showWeight: boolean;
+  /**
+   * An Assessment's scripts grade, so they carry a weight and a choice of what
+   * Coders see. Practice produces no grade and always shows test names.
+   */
+  graded: boolean;
   pending: boolean;
   onSave: (draft: TestScriptDraft) => Promise<void>;
   onCancel: () => void;
@@ -69,6 +73,7 @@ export function TestScriptForm({
   );
   const [content, setContent] = useState(initial?.content ?? "");
   const [weight, setWeight] = useState(String(initial?.weight ?? 1));
+  const [showTestNames, setShowTestNames] = useState(initial?.showTestNames ?? false);
   const [error, setError] = useState<string | null>(null);
   /** A template waiting on the Architect's word, because applying it loses their script. */
   const [pendingTemplate, setPendingTemplate] = useState<ScriptTemplate | null>(null);
@@ -135,6 +140,7 @@ export function TestScriptForm({
       path,
       content,
       weight: Number.parseInt(weight, 10),
+      showTestNames,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Check the fields above.");
@@ -180,7 +186,9 @@ export function TestScriptForm({
         <Text fontSize="sm">{guidance.submission}</Text>
         <Text fontSize="sm" color="fg.muted">
           {guidance.results}
-          {showWeight ? " Each test counts as one case with this script's weight." : null}
+          {graded
+            ? " Each test counts as one case with this script's weight."
+            : " Coders see each test's name and whether it passed."}
         </Text>
       </Stack>
 
@@ -198,7 +206,7 @@ export function TestScriptForm({
             }
           />
         </Box>
-        {showWeight ? (
+        {graded ? (
           <Box width="7rem">
             <TextField
               label="Weight"
@@ -211,6 +219,25 @@ export function TestScriptForm({
           </Box>
         ) : null}
       </Flex>
+
+      {graded ? (
+        <Checkbox.Root
+          checked={showTestNames}
+          onCheckedChange={(details) => setShowTestNames(details.checked === true)}
+          alignItems="start"
+        >
+          <Checkbox.HiddenInput />
+          <Checkbox.Control mt="0.5" />
+          <Stack gap="0">
+            <Checkbox.Label>Show Coders the test names</Checkbox.Label>
+            <Text fontSize="xs" color="fg.muted">
+              On a graded submission, each test&apos;s name and whether it passed — never the script
+              or its output. Off by default, since a name can hint at what is checked. Applies to
+              submissions graded from now on.
+            </Text>
+          </Stack>
+        </Checkbox.Root>
+      ) : null}
 
       <Stack gap="1">
         <Flex justify="space-between" align="center" gap="3">

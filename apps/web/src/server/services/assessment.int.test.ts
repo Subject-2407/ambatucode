@@ -132,6 +132,7 @@ async function individualAssessment(): Promise<AssessmentArchitectView> {
     path: "test_solution.py",
     content: "SCRIPT_SECRET = True\n",
     weight: 1,
+    showTestNames: false,
   });
   return assessment;
 }
@@ -292,6 +293,7 @@ describe("assessment authoring", () => {
       path: "check.py",
       content: "first\n",
       weight: 2,
+      showTestNames: false,
     });
     await uploadTestScript(owner, assessment.id, {
       language: "python",
@@ -299,6 +301,7 @@ describe("assessment authoring", () => {
       path: "check.py",
       content: "replaced\n",
       weight: 3,
+      showTestNames: false,
     });
 
     const detail = await getAssessment(owner, assessment.id);
@@ -319,6 +322,7 @@ describe("assessment authoring", () => {
           path: "Test.java",
           content: "class Test {}\n",
           weight: 1,
+          showTestNames: false,
         }),
       ),
     ).toBe("LANGUAGE_NOT_ALLOWED");
@@ -331,6 +335,7 @@ describe("assessment authoring", () => {
         path: `test_${String(index)}.py`,
         content: "def test_ok():\n    pass\n",
         weight: 1,
+        showTestNames: false,
       });
     }
     expect(
@@ -341,6 +346,7 @@ describe("assessment authoring", () => {
           path: "test_one_too_many.py",
           content: "def test_ok():\n    pass\n",
           weight: 1,
+          showTestNames: false,
         }),
       ),
     ).toBe("VALIDATION_FAILED");
@@ -872,6 +878,7 @@ describe("test script validation", () => {
       path: script.path,
       content: "def test_changed():\n    pass\n",
       weight: 1,
+      showTestNames: false,
     });
 
     await ingestExecutionResult({
@@ -923,3 +930,128 @@ describe("test script validation", () => {
     ).toBe("LANGUAGE_NOT_ALLOWED");
   });
 });
+
+describe("test names shown to Coders", () => {
+  it("shows a Coder an opted-in script's test names and verdicts, and nothing else of it", async () => {
+    const assessment = await individualAssessment();
+    const shown = await uploadTestScript(owner, assessment.id, {
+      language: "python",
+      framework: "PYTEST",
+      path: "test_visible.py",
+      content: "VISIBLE_SCRIPT_SECRET = True\n",
+      weight: 1,
+      showTestNames: true,
+    });
+    const hidden = (await architectView(assessment.id)).testScripts.find(
+      (script) => script.path === "test_solution.py",
+    );
+    if (!hidden) throw new Error("fixture script missing");
+    // An id from some other Assessment's script must not decide anything here.
+    const elsewhere = await individualAssessment();
+    const foreign = await uploadTestScript(owner, elsewhere.id, {
+      language: "python",
+      framework: "PYTEST",
+      path: "test_foreign.py",
+      content: "x = 1\n",
+      weight: 1,
+      showTestNames: true,
+    });
+
+    const session = await startedSession(assessment.id, "Visible names");
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+    const { submission } = await submitAttempt(coderA, attempt.id, {
+      language: "python",
+      sourceCode: "print(1)",
+    });
+
+    const row = (testScriptId: string, name: string, passed: boolean) => ({
+      testCaseId: null,
+      testScriptId,
+      name,
+      status: "GRADED" as const,
+      passed,
+      weight: 1,
+      executionTimeMs: 5,
+      memoryUsedKb: null,
+      stdoutExcerpt: "ASSERTION_OUTPUT",
+      stderrExcerpt: "ASSERTION_OUTPUT",
+    });
+    await ingestExecutionResult({
+      contractVersion: EXECUTION_CONTRACT_VERSION,
+      jobId: submission.id,
+      submissionId: submission.id,
+      status: "GRADED",
+      compilerOutput: null,
+      systemError: null,
+      executionTimeMs: 20,
+      memoryUsedKb: null,
+      testResults: [
+        row(shown.id, "test_visible_passes", true),
+        row(shown.id, "test_visible_fails", false),
+        row(hidden.id, "test_hidden_name", true),
+        row(foreign.id, "test_foreign_name", true),
+      ],
+    });
+
+    const coderView = await getSubmission(coderA, submission.id);
+    expect(coderView.testResults.map((result) => [result.name, result.passed])).toEqual([
+      ["test_visible_passes", true],
+      ["test_visible_fails", false],
+    ]);
+    const serialized = JSON.stringify(coderView);
+    expect(serialized).not.toContain("ASSERTION_OUTPUT");
+    expect(serialized).not.toContain("test_hidden_name");
+    expect(serialized).not.toContain("test_foreign_name");
+    expect(serialized).not.toContain("VISIBLE_SCRIPT_SECRET");
+
+    // The Architect sees every row, attributed to the script it came from.
+    const architect = await getSubmission(owner, submission.id);
+    expect(
+      architect.testResults.map((result) =>
+        "testScriptId" in result ? result.testScriptId : "not the Architect view",
+      ),
+    ).toEqual([shown.id, shown.id, hidden.id, null]);
+    expect(JSON.stringify(architect)).not.toContain("ASSERTION_OUTPUT");
+  });
+
+  it("keeps a script's validation when only its weight or visibility changes", async () => {
+    const assessment = await individualAssessment();
+    const script = (await architectView(assessment.id)).testScripts[0];
+    if (!script) throw new Error("fixture script missing");
+    await prisma.assessmentTestScript.update({
+      where: { id: script.id },
+      data: { validationStatus: "PASSED", validationSummary: "Its test passed" },
+    });
+
+    await uploadTestScript(owner, assessment.id, {
+      language: script.language,
+      framework: script.framework,
+      path: script.path,
+      content: script.content,
+      weight: 5,
+      showTestNames: true,
+    });
+    const settingsOnly = (await architectView(assessment.id)).testScripts[0];
+    expect(settingsOnly?.validation.status).toBe("PASSED");
+    expect(settingsOnly?.showTestNames).toBe(true);
+
+    await uploadTestScript(owner, assessment.id, {
+      language: script.language,
+      framework: script.framework,
+      path: script.path,
+      content: `${script.content}# edited\n`,
+      weight: 5,
+      showTestNames: true,
+    });
+    expect((await architectView(assessment.id)).testScripts[0]?.validation.status).toBe(
+      "UNVALIDATED",
+    );
+  });
+});
+
+async function architectView(assessmentId: string): Promise<AssessmentArchitectView> {
+  const detail = await getAssessment(owner, assessmentId);
+  if (detail.view !== "ARCHITECT") throw new Error("expected the Architect view");
+  return detail.assessment;
+}
