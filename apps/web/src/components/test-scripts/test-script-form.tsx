@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ChangeEvent } from "react";
 import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { Upload } from "lucide-react";
+import { LayoutTemplate, Upload } from "lucide-react";
 import {
   MAX_TEST_SCRIPT_BYTES,
   TEST_SCRIPT_EXTENSIONS,
@@ -22,6 +22,7 @@ import {
   frameworksFor,
   readPickedScriptFile,
 } from "./script-file";
+import { templatesFor, type ScriptTemplate } from "./templates";
 import { describeScriptContract } from "./test-script-guidance";
 
 export type TestScriptDraft = {
@@ -69,6 +70,8 @@ export function TestScriptForm({
   const [content, setContent] = useState(initial?.content ?? "");
   const [weight, setWeight] = useState(String(initial?.weight ?? 1));
   const [error, setError] = useState<string | null>(null);
+  /** A template waiting on the Architect's word, because applying it loses their script. */
+  const [pendingTemplate, setPendingTemplate] = useState<ScriptTemplate | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   /** Keeps a path the Architect typed; replaces one that was only a suggestion. */
@@ -108,6 +111,22 @@ export function TestScriptForm({
     setContent(picked.content);
   }
 
+  function applyTemplate(template: ScriptTemplate) {
+    setPendingTemplate(null);
+    setContent(template.content);
+    // A template's file name matters (JUnit selects the class it names), so it
+    // replaces a suggested path, but never one the script is already saved at.
+    if (!editing) setPath(template.path);
+  }
+
+  function chooseTemplate(template: ScriptTemplate) {
+    if (content.trim() === "" || content === template.content) {
+      applyTemplate(template);
+      return;
+    }
+    setPendingTemplate(template);
+  }
+
   async function save() {
     setError(null);
     const parsed = uploadTestScriptRequestSchema.safeParse({
@@ -129,6 +148,7 @@ export function TestScriptForm({
   }
 
   const guidance = describeScriptContract(framework, language);
+  const templates = templatesFor(framework, language);
 
   return (
     <Stack gap="4">
@@ -210,6 +230,46 @@ export function TestScriptForm({
             onChange={(event) => void pickFile(event)}
           />
         </Flex>
+        {templates.length === 0 ? null : (
+          <HStack gap="2" wrap="wrap">
+            <HStack gap="1" color="fg.muted">
+              <LayoutTemplate size={14} aria-hidden />
+              <Text fontSize="xs">Start from a template:</Text>
+            </HStack>
+            {templates.map((template) => (
+              <Button
+                key={template.id}
+                size="xs"
+                variant="outline"
+                title={template.description}
+                onClick={() => chooseTemplate(template)}
+              >
+                {template.label}
+              </Button>
+            ))}
+          </HStack>
+        )}
+        {pendingTemplate === null ? null : (
+          <HStack
+            gap="2"
+            wrap="wrap"
+            borderWidth="1px"
+            borderColor="border.default"
+            borderRadius="md"
+            bg="bg.subtle"
+            padding="2"
+          >
+            <Text fontSize="xs" flex="1" minWidth="12rem">
+              Replace the script below with the “{pendingTemplate.label}” template?
+            </Text>
+            <Button size="xs" variant="ghost" onClick={() => setPendingTemplate(null)}>
+              Keep mine
+            </Button>
+            <Button size="xs" onClick={() => applyTemplate(pendingTemplate)}>
+              Replace
+            </Button>
+          </HStack>
+        )}
         <Box borderWidth="1px" borderColor="border.default" borderRadius="md" overflow="hidden">
           <SourceEditor
             monacoLanguage={MONACO_LANGUAGE_ID[language]}
