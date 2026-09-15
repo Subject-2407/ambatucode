@@ -83,7 +83,7 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 		slog.String("queue", queueJob.Queue),
 	)
 
-	result := s.runner.Run(ctx, job)
+	result, daemonErr := s.runner.Execute(ctx, job)
 
 	// A cancelled context means the worker is shutting down, and whatever the
 	// runner produced describes the interruption rather than the program.
@@ -97,12 +97,18 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 
 	// A platform failure with the daemon gone is the daemon's doing, not the
 	// program's. Reporting it would grade a Coder on an outage; the job goes
-	// back to wait for Docker instead.
+	// back to wait for Docker instead. The runner names a daemon failure it
+	// saw directly; the probe catches one it could only see as a generic error,
+	// and the runner's word stands even if the daemon is already back by now.
 	if result.Status == contract.StatusSystemError {
-		if probeErr := s.sandboxReachable(ctx); probeErr != nil {
-			logger.Warn("job could not run because the docker daemon is unreachable; requeueing",
-				slog.String("error", probeErr.Error()))
-			return queue.Requeue(fmt.Errorf("docker daemon unreachable: %w", probeErr))
+		cause := daemonErr
+		if cause == nil {
+			cause = s.sandboxReachable(ctx)
+		}
+		if cause != nil {
+			logger.Warn("job could not run because the docker daemon failed; requeueing",
+				slog.String("error", cause.Error()))
+			return queue.Requeue(fmt.Errorf("docker daemon unavailable: %w", cause))
 		}
 	}
 

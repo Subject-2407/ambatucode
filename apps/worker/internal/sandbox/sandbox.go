@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -60,6 +61,26 @@ const (
 	// the job's wall clock, so our deadline is always the one that fires.
 	keeperMargin = 30 * time.Second
 )
+
+// ErrDaemonUnavailable marks a failure of the connection to the Docker daemon,
+// or of a container the daemon stopped underneath a job — as opposed to the
+// daemon answering and refusing. A job that fails this way was never given a
+// fair run, and must not be graded on it.
+var ErrDaemonUnavailable = errors.New("docker daemon unavailable")
+
+// daemonFailure wraps err with ErrDaemonUnavailable when it is a transport
+// failure: no connection, or a request that never got its response. An error
+// the daemon itself returned is left alone — a full disk is not an outage.
+func daemonFailure(err error) error {
+	if err == nil || errors.Is(err, ErrDaemonUnavailable) {
+		return err
+	}
+	var urlErr *url.Error
+	if client.IsErrConnectionFailed(err) || errors.As(err, &urlErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("%w: %w", ErrDaemonUnavailable, err)
+	}
+	return err
+}
 
 // File is one workspace entry written into the container before a run.
 type File struct {
@@ -228,7 +249,7 @@ func (s *Sandbox) Open(ctx context.Context, spec SessionSpec) (*Session, error) 
 	if err := s.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
 		s.remove(id, spec.JobID)
 		s.countCreateFailure(ctx)
-		return nil, fmt.Errorf("start container: %w", err)
+		return nil, fmt.Errorf("start container: %w", daemonFailure(err))
 	}
 	s.metrics.ContainerOpened()
 
@@ -262,7 +283,7 @@ func (sn *Session) SetMemoryLimit(ctx context.Context, memoryLimitMb int64) erro
 		Resources: container.Resources{Memory: bytes, MemorySwap: bytes},
 	})
 	if err != nil {
-		return fmt.Errorf("set memory limit to %d MB: %w", memoryLimitMb, err)
+		return fmt.Errorf("set memory limit to %d MB: %w", memoryLimitMb, daemonFailure(err))
 	}
 	sn.memoryLimitMb = memoryLimitMb
 	return nil
@@ -432,7 +453,7 @@ func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) 
 	// auto-generated name keeps job ids out of the daemon's namespace.
 	created, err := s.client.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
 	if err != nil {
-		return "", fmt.Errorf("create container for job %s: %w", spec.JobID, err)
+		return "", fmt.Errorf("create container for job %s: %w", spec.JobID, daemonFailure(err))
 	}
 	return created.ID, nil
 }
@@ -566,16 +587,22 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 		// Our deadline fired. Kill the container rather than stopping it: a
 		// program that ignores signals must not get extra time, and the
 		// container is being destroyed regardless.
-		outcome.TimedOut = true
 		sn.killed = true
 		killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer killCancel()
-		if killErr := sn.box.client.ContainerKill(killCtx, sn.id, "SIGKILL"); killErr != nil &&
-			!client.IsErrNotFound(killErr) {
+		if killErr := sn.box.client.ContainerKill(killCtx, sn.id, "SIGKILL"); killErr != nil {
+			// A genuine timeout always has a container to kill: its keeper
+			// outlives the job's wall clock. Failing to kill it means the daemon
+			// is gone or stopped the container itself — and an exec stream
+			// cut off that way hangs until this deadline rather than failing.
+			// That is an outage, not a program that ran out of time.
 			sn.box.logger.Warn("kill timed-out container failed",
 				slog.String("jobId", sn.jobID),
 				slog.String("error", killErr.Error()))
+			return RunOutcome{}, fmt.Errorf("%w: run deadline passed and the container could not be killed: %w",
+				ErrDaemonUnavailable, killErr)
 		}
+		outcome.TimedOut = true
 	} else {
 		outcome.ExitCode = result.exitCode
 	}
@@ -639,12 +666,12 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 		Env:        request.env,
 	})
 	if err != nil {
-		return execResult{}, fmt.Errorf("create exec: %w", err)
+		return execResult{}, fmt.Errorf("create exec: %w", daemonFailure(err))
 	}
 
 	attached, err := s.client.ContainerExecAttach(ctx, created.ID, container.ExecStartOptions{})
 	if err != nil {
-		return execResult{}, fmt.Errorf("attach exec: %w", err)
+		return execResult{}, fmt.Errorf("attach exec: %w", daemonFailure(err))
 	}
 	defer attached.Close()
 
@@ -684,7 +711,7 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 	// A stream that broke is not a program that finished. Grading what little
 	// arrived — often nothing — would pass or fail a Coder on a connection.
 	if copyErr != nil {
-		return result, fmt.Errorf("read exec output: %w", copyErr)
+		return result, fmt.Errorf("%w: read exec output: %w", ErrDaemonUnavailable, copyErr)
 	}
 
 	inspected, err := s.awaitExecExit(ctx, created.ID)
@@ -712,13 +739,14 @@ func (s *Sandbox) awaitExecExit(ctx context.Context, execID string) (container.E
 	for {
 		inspected, err := s.client.ContainerExecInspect(ctx, execID)
 		if err != nil {
-			return inspected, fmt.Errorf("inspect exec: %w", err)
+			return inspected, fmt.Errorf("inspect exec: %w", daemonFailure(err))
 		}
 		if !inspected.Running {
 			return inspected, nil
 		}
 		if time.Now().After(deadline) {
-			return inspected, fmt.Errorf("exec output ended while the process was still running")
+			return inspected, fmt.Errorf("%w: exec output ended while the process was still running",
+				ErrDaemonUnavailable)
 		}
 		select {
 		case <-ctx.Done():

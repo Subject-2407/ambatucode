@@ -4,6 +4,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -62,9 +63,18 @@ func (r *Runner) SandboxReachable(ctx context.Context) error {
 // return: a submission with no result at all is worse than one marked as
 // having failed inside the platform.
 func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
+	result, _ := r.Execute(ctx, job)
+	return result
+}
+
+// Execute is Run that also says why a SYSTEM_ERROR happened. The error is
+// non-nil only when the Docker daemon failed underneath the job — wrapping
+// sandbox.ErrDaemonUnavailable — in which case the result describes the outage
+// rather than the program, and must not be reported as its grade.
+func (r *Runner) Execute(ctx context.Context, job contract.Job) (contract.Result, error) {
 	base, err := language.Lookup(job.Language)
 	if err != nil {
-		return r.systemError(job, err)
+		return r.fail(job, err)
 	}
 	// Java needs the file named after the public class the program declares.
 	// Every other language ignores its source here.
@@ -79,13 +89,13 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 	// after every case has already spent its time.
 	for _, script := range job.TestScripts {
 		if err := validateScriptPath(script, spec); err != nil {
-			return r.systemError(job, err)
+			return r.fail(job, err)
 		}
 	}
 
-	result, compiled := r.runProgram(ctx, job, spec, deadline)
+	result, compiled, infra := r.runProgram(ctx, job, spec, deadline)
 	if !compiled || len(job.TestScripts) == 0 || result.Status == contract.StatusSystemError {
-		return result
+		return result, infra
 	}
 
 	// Scripts run one after another, each in a fresh container, so one
@@ -95,24 +105,25 @@ func (r *Runner) Run(ctx context.Context, job contract.Job) contract.Result {
 	for _, script := range job.TestScripts {
 		scriptResults, scriptStatus, err := r.runScript(ctx, job, script, spec, deadline)
 		if err != nil {
-			return r.systemError(job, err)
+			return r.fail(job, err)
 		}
 		result.TestResults = append(result.TestResults, scriptResults...)
 		result.Status = escalate(result.Status, scriptStatus)
 	}
 	result.ExecutionTimeMs += float64(time.Since(scriptStarted).Milliseconds())
-	return result
+	return result, nil
 }
 
 // runProgram compiles the submission and runs its stdin/stdout cases in one
 // container, closed before any script phase opens its own. The second return
-// is false when the program never built, so there is nothing left to test.
+// is false when the program never built, so there is nothing left to test;
+// the third is the daemon failure behind a SYSTEM_ERROR, if that is what it was.
 func (r *Runner) runProgram(
 	ctx context.Context,
 	job contract.Job,
 	spec language.Spec,
 	deadline time.Time,
-) (contract.Result, bool) {
+) (contract.Result, bool, error) {
 	session, err := r.sandbox.Open(ctx, sandbox.SessionSpec{
 		JobID:          job.JobID,
 		Image:          spec.Image,
@@ -123,7 +134,8 @@ func (r *Runner) runProgram(
 		DeniedSyscalls: spec.DeniedSyscalls,
 	})
 	if err != nil {
-		return r.systemError(job, err), false
+		result, infra := r.fail(job, err)
+		return result, false, infra
 	}
 	defer session.Close()
 
@@ -131,7 +143,8 @@ func (r *Runner) runProgram(
 		Name:    spec.SourceFile,
 		Content: []byte(job.SourceCode),
 	}); err != nil {
-		return r.systemError(job, err), false
+		result, infra := r.fail(job, err)
+		return result, false, infra
 	}
 
 	result := baseResult(job)
@@ -142,7 +155,8 @@ func (r *Runner) runProgram(
 			Timeout: capToDeadline(time.Duration(job.Limits.CompileTimeoutMs)*time.Millisecond, deadline),
 		})
 		if err != nil {
-			return r.systemError(job, err), false
+			result, infra := r.fail(job, err)
+			return result, false, infra
 		}
 
 		// A compiler writes its diagnostics to stderr and says nothing useful
@@ -158,11 +172,12 @@ func (r *Runner) runProgram(
 			// the program never got as far as running.
 			result.Status = status
 			result.ExecutionTimeMs = float64(outcome.Duration.Milliseconds())
-			return result, false
+			return result, false, nil
 		}
 	}
 
-	return r.runCases(ctx, job, spec, session, deadline, result), true
+	result, infra := r.runCases(ctx, job, spec, session, deadline, result)
+	return result, true, infra
 }
 
 // caseRun is one case's execution, classified.
@@ -185,13 +200,13 @@ func (r *Runner) runCases(
 	session *sandbox.Session,
 	deadline time.Time,
 	result contract.Result,
-) contract.Result {
+) (contract.Result, error) {
 	meter := newOOMMeter(ctx, session)
 
 	// A job with only scripts has nothing to run here: the scripts exercise
 	// the program themselves.
 	if len(job.TestCases) == 0 && len(job.TestScripts) > 0 {
-		return result
+		return result, nil
 	}
 
 	// A job with no cases still runs once, so a program that cannot start is
@@ -199,11 +214,11 @@ func (r *Runner) runCases(
 	if len(job.TestCases) == 0 {
 		run, err := r.runCase(ctx, session, spec, meter, "", job.Limits.RunTimeoutMs, job.Limits.MemoryLimitMb, deadline)
 		if err != nil {
-			return r.systemError(job, err)
+			return r.fail(job, err)
 		}
 		result.Status = run.status
 		result.ExecutionTimeMs = float64(run.duration.Milliseconds())
-		return result
+		return result, nil
 	}
 
 	worst := contract.StatusGraded
@@ -225,7 +240,7 @@ func (r *Runner) runCases(
 		run, err := r.runCase(ctx, session, spec, meter, testCase.Input,
 			testCase.RunTimeout(job.Limits), testCase.MemoryLimit(job.Limits), deadline)
 		if err != nil {
-			return r.systemError(job, err)
+			return r.fail(job, err)
 		}
 		totalDuration += run.duration
 		worst = escalate(worst, run.status)
@@ -234,7 +249,7 @@ func (r *Runner) runCases(
 		if run.status == contract.StatusGraded {
 			matched, compareErr := grader.Compare(testCase.Comparison, testCase.ExpectedOutput, run.outcome.Stdout)
 			if compareErr != nil {
-				return r.systemError(job, compareErr)
+				return r.fail(job, compareErr)
 			}
 			passed = matched
 		}
@@ -260,7 +275,7 @@ func (r *Runner) runCases(
 
 	result.Status = worst
 	result.ExecutionTimeMs = float64(totalDuration.Milliseconds())
-	return result
+	return result, nil
 }
 
 // runCase runs the program once under one case's limits and classifies it.
@@ -479,6 +494,16 @@ func (r *Runner) systemError(job contract.Job, err error) contract.Result {
 	message := fmt.Sprintf("execution failed inside the platform: %s", sanitize(err.Error()))
 	result.SystemError = &message
 	return result
+}
+
+// fail builds the SYSTEM_ERROR result for err, and passes err on when the
+// Docker daemon is what failed.
+func (r *Runner) fail(job contract.Job, err error) (contract.Result, error) {
+	result := r.systemError(job, err)
+	if errors.Is(err, sandbox.ErrDaemonUnavailable) {
+		return result, err
+	}
+	return result, nil
 }
 
 func stringPtr(value string) *string { return &value }

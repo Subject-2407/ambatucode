@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -153,6 +155,24 @@ func TestSystemErrorResultDoesNotLeakInternals(t *testing.T) {
 	}
 	if result.TestResults == nil {
 		t.Fatal("test results must be an empty slice, not null")
+	}
+}
+
+// Only a daemon failure is handed on, so only a daemon failure can keep a
+// SYSTEM_ERROR from being reported as the job's grade.
+func TestFailPassesOnOnlyDaemonFailures(t *testing.T) {
+	job := contract.Job{JobID: "job-1"}
+	runner := newTestRunner()
+
+	outage := fmt.Errorf("create container: %w", sandbox.ErrDaemonUnavailable)
+	result, err := runner.fail(job, outage)
+	if result.Status != contract.StatusSystemError || !errors.Is(err, sandbox.ErrDaemonUnavailable) {
+		t.Fatalf("an outage gave status %s and error %v", result.Status, err)
+	}
+
+	result, err = runner.fail(job, errorWithWorkspacePath())
+	if result.Status != contract.StatusSystemError || err != nil {
+		t.Fatalf("an ordinary platform failure gave status %s and error %v", result.Status, err)
 	}
 }
 
