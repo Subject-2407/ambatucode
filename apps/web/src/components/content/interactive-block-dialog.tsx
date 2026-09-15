@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { Box, Flex, Grid, Text } from "@chakra-ui/react";
 import {
   MAX_BLOCK_BYTES_PER_MATERIAL,
@@ -17,7 +17,7 @@ import { SourceEditor } from "@/components/editor/code-editor";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { TextField } from "@/components/ui/input";
-import { TabBar } from "@/components/ui/tabs";
+import { TabBar, TabPanel } from "@/components/ui/tabs";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { InteractiveBlock } from "./interactive-block";
 
@@ -63,6 +63,7 @@ export function InteractiveBlockDialog({
   const [draft, setDraft] = useState(block);
   const [activePane, setActivePane] = useState<PaneKey>("html");
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const panelId = useId();
 
   // Every new document tears the frame down and restarts it, so previewing on
   // each keystroke would never let an animation reach its second frame.
@@ -125,31 +126,34 @@ export function InteractiveBlockDialog({
                 value: pane.key,
                 label: paneLabel(pane, draft[pane.key]),
               }))}
+              controls={panelId}
             />
-            {PANES.map((pane) => (
-              // Every pane stays mounted. Monaco is expensive to create, and
-              // unmounting one would throw away the undo history an Architect
-              // built up in it.
-              <Box
-                key={pane.key}
-                display={pane.key === activePane ? "block" : "none"}
-                height="20rem"
-                borderWidth="1px"
-                borderColor={
-                  utf8ByteLength(draft[pane.key]) > pane.limit ? "border.error" : "border.default"
-                }
-                borderRadius="md"
-                overflow="hidden"
-              >
-                <SourceEditor
-                  monacoLanguage={pane.monaco}
-                  tabSize={2}
-                  value={draft[pane.key]}
-                  onChange={(value) => update(pane.key, value)}
-                  ariaLabel={`Interactive block ${pane.label}`}
-                />
-              </Box>
-            ))}
+            <TabPanel id={panelId} value={activePane}>
+              {PANES.map((pane) => (
+                // Every pane stays mounted. Monaco is expensive to create, and
+                // unmounting one would throw away the undo history an Architect
+                // built up in it.
+                <Box
+                  key={pane.key}
+                  display={pane.key === activePane ? "block" : "none"}
+                  height="20rem"
+                  borderWidth="1px"
+                  borderColor={
+                    utf8ByteLength(draft[pane.key]) > pane.limit ? "border.error" : "border.default"
+                  }
+                  borderRadius="md"
+                  overflow="hidden"
+                >
+                  <SourceEditor
+                    monacoLanguage={pane.monaco}
+                    tabSize={2}
+                    value={draft[pane.key]}
+                    onChange={(value) => update(pane.key, value)}
+                    ariaLabel={`Interactive block ${pane.label}`}
+                  />
+                </Box>
+              ))}
+            </TabPanel>
           </Flex>
 
           <Flex direction="column" gap="2" minWidth="0">

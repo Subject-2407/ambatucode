@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Stack } from "@chakra-ui/react";
 import type { LeaderboardScope } from "@ambatucode/shared";
-import { TabBar, type TabItem } from "@/components/ui/tabs";
+import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
 import { LeaderboardPanel } from "./leaderboard-panel";
 
 /**
@@ -26,6 +26,7 @@ export function ModuleLeaderboards({
   sections: ReadonlyArray<{ id: string; title: string }>;
 }) {
   const [selected, setSelected] = useState(moduleId);
+  const panelId = useId();
 
   const tabs = useMemo<TabItem[]>(
     () => [
@@ -40,16 +41,24 @@ export function ModuleLeaderboards({
   return (
     <Stack gap="4">
       {sections.length > 0 ? (
-        <TabBar items={tabs} value={selected} onValueChange={setSelected} aria-label="Leaderboard" />
+        <TabBar
+          items={tabs}
+          value={selected}
+          onValueChange={setSelected}
+          controls={panelId}
+          aria-label="Leaderboard"
+        />
       ) : null}
-      <LeaderboardPanel
-        // Remounting on scope change drops the previous board's socket room
-        // rather than leaving the socket in two at once.
-        key={selected}
-        scope={scope}
-        scopeId={selected}
-        viewerId={viewerId}
-      />
+      <TabPanel id={panelId} value={selected}>
+        <LeaderboardPanel
+          // Remounting on scope change drops the previous board's socket room
+          // rather than leaving the socket in two at once.
+          key={selected}
+          scope={scope}
+          scopeId={selected}
+          viewerId={viewerId}
+        />
+      </TabPanel>
     </Stack>
   );
 }

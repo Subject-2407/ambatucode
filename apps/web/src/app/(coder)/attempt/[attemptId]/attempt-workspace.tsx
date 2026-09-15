@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
 import { CircleDot, Play, Send } from "lucide-react";
@@ -8,7 +8,7 @@ import type { AttemptView, Language } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { TabBar } from "@/components/ui/tabs";
+import { TabBar, TabPanel } from "@/components/ui/tabs";
 import { toaster } from "@/components/ui/toaster";
 import { CodeEditor } from "@/components/editor/code-editor";
 import { LanguagePicker } from "@/components/editor/language-picker";
@@ -82,6 +82,7 @@ export function AttemptWorkspace({
    */
   const [autoSubmitSeen, setAutoSubmitSeen] = useState(false);
   const [mobileTab, setMobileTab] = useState("problem");
+  const mobilePanelId = useId();
 
   const socket = useAttemptSocket({
     attemptId: attempt.id,
@@ -479,6 +480,7 @@ export function AttemptWorkspace({
             aria-label="Workspace panels"
             value={mobileTab}
             onValueChange={setMobileTab}
+            controls={mobilePanelId}
             items={[
               { value: "problem", label: "Problem" },
               { value: "code", label: "Code" },
@@ -486,11 +488,11 @@ export function AttemptWorkspace({
             ]}
           />
         </Box>
-        <Box flex="1" minHeight="0">
+        <TabPanel id={mobilePanelId} value={mobileTab} flex="1" minHeight="0">
           {mobileTab === "problem" ? problemPanel : null}
           {mobileTab === "code" ? editorPanel : null}
           {mobileTab === "console" ? consolePanel : null}
-        </Box>
+        </TabPanel>
       </Stack>
 
       <SubmitDialog

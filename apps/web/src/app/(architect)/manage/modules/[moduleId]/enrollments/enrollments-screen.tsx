@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import NextLink from "next/link";
 import { Flex, HStack, InputGroup, Stack, Text } from "@chakra-ui/react";
 import { Check, ChevronLeft, Search, UserCheck, X } from "lucide-react";
@@ -13,7 +13,7 @@ import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
 import { DataTable, Table } from "@/components/ui/table";
 import { TableRowsSkeleton } from "@/components/ui/skeleton";
-import { TabBar, type TabItem } from "@/components/ui/tabs";
+import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
 import { toaster } from "@/components/ui/toaster";
 import { useDecideEnrollment, useEnrollments } from "@/hooks/use-enrollments";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -62,6 +62,7 @@ export function EnrollmentsScreen({ moduleId }: { moduleId: string }) {
   const [tab, setTab] = useState<string>("PENDING");
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput.trim(), 300);
+  const panelId = useId();
 
   const query = useMemo(
     () => ({
@@ -114,6 +115,7 @@ export function EnrollmentsScreen({ moduleId }: { moduleId: string }) {
             items={STATUS_TABS}
             value={tab}
             onValueChange={setTab}
+            controls={panelId}
             aria-label="Enrollment status"
           />
           <InputGroup startElement={<Search size={16} aria-hidden />} maxWidth={{ md: "20rem" }}>
@@ -126,26 +128,28 @@ export function EnrollmentsScreen({ moduleId }: { moduleId: string }) {
           </InputGroup>
         </Flex>
 
-        {isError ? (
-          <ErrorState error={error} onRetry={() => void refetch()} />
-        ) : !isPending && items.length === 0 ? (
-          <EmptyState
-            icon={<UserCheck aria-hidden />}
-            title={tab === "PENDING" ? "Nothing waiting" : "No enrollments here"}
-            description={
-              tab === "PENDING"
-                ? "Requests appear here as Coders ask to join."
-                : "Try another tab or a different search."
-            }
-          />
-        ) : (
-          <EnrollmentTable
-            items={items}
-            isPending={isPending}
-            busy={decide.isPending}
-            onDecide={(enrollment, status) => void apply(enrollment, status)}
-          />
-        )}
+        <TabPanel id={panelId} value={tab}>
+          {isError ? (
+            <ErrorState error={error} onRetry={() => void refetch()} />
+          ) : !isPending && items.length === 0 ? (
+            <EmptyState
+              icon={<UserCheck aria-hidden />}
+              title={tab === "PENDING" ? "Nothing waiting" : "No enrollments here"}
+              description={
+                tab === "PENDING"
+                  ? "Requests appear here as Coders ask to join."
+                  : "Try another tab or a different search."
+              }
+            />
+          ) : (
+            <EnrollmentTable
+              items={items}
+              isPending={isPending}
+              busy={decide.isPending}
+              onDecide={(enrollment, status) => void apply(enrollment, status)}
+            />
+          )}
+        </TabPanel>
       </Stack>
     </PageContainer>
   );

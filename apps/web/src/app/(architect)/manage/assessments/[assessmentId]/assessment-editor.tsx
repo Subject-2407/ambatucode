@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import NextLink from "next/link";
-import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
+import { Flex, HStack, Stack, Text } from "@chakra-ui/react";
 import { ChevronLeft, Save } from "lucide-react";
 import { timingProblem, type AssessmentArchitectView } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TabBar } from "@/components/ui/tabs";
+import { TabBar, TabPanel } from "@/components/ui/tabs";
 import { toaster } from "@/components/ui/toaster";
 import { useAssessment, useUpdateAssessment } from "@/hooks/use-assessments";
 import { isApiError } from "@/lib/api-client";
@@ -98,6 +98,7 @@ function EditorBody({
   onTabChange: (tab: string) => void;
 }) {
   const [draft, setDraft] = useState<AssessmentDraft>(() => draftFrom(assessment));
+  const panelId = useId();
 
   const update = useUpdateAssessment(assessment.id, assessment.moduleId);
   const patch = useMemo(() => diffAssessment(assessment, draft), [assessment, draft]);
@@ -173,9 +174,12 @@ function EditorBody({
           items={TABS}
           value={tab}
           onValueChange={onTabChange}
+          controls={panelId}
         />
 
-        <Box
+        <TabPanel
+          id={panelId}
+          value={tab}
           borderWidth="1px"
           borderColor="border.default"
           borderRadius="lg"
@@ -189,7 +193,7 @@ function EditorBody({
           {tab === "limits" ? <LimitsTab draft={draft} onChange={change} /> : null}
           {tab === "timing" ? <TimingTab draft={draft} onChange={change} /> : null}
           {tab === "anticheat" ? <AntiCheatTab draft={draft} onChange={change} /> : null}
-        </Box>
+        </TabPanel>
 
         {dirty ? (
           <Flex justify="flex-end">

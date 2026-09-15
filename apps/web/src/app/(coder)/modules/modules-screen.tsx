@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import NextLink from "next/link";
 import { Flex, Grid, HStack, InputGroup, Stack, Text } from "@chakra-ui/react";
 import { BookOpen, Lock, Search } from "lucide-react";
@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TabBar, type TabItem } from "@/components/ui/tabs";
+import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useModules } from "@/hooks/use-modules";
 import { routes } from "@/lib/routes";
@@ -36,6 +36,7 @@ export function ModulesScreen() {
   const [scope, setScope] = useState<"catalog" | "enrolled">("catalog");
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput.trim(), 300);
+  const panelId = useId();
 
   const query = useMemo(
     () => ({ page: 1, pageSize: PAGE_SIZE, scope, search: search || undefined }),
@@ -57,6 +58,7 @@ export function ModulesScreen() {
             items={SCOPE_TABS}
             value={scope}
             onValueChange={(next) => setScope(next as "catalog" | "enrolled")}
+            controls={panelId}
             aria-label="Module scope"
           />
           <InputGroup startElement={<Search size={16} aria-hidden />} maxWidth={{ md: "20rem" }}>
@@ -69,44 +71,46 @@ export function ModulesScreen() {
           </InputGroup>
         </Flex>
 
-        {isError ? (
-          <ErrorState error={error} onRetry={() => void refetch()} />
-        ) : isPending ? (
-          <Grid
-            templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
-            gap="4"
-          >
-            {Array.from({ length: 6 }, (_, index) => (
-              <Skeleton key={index} height="10rem" borderRadius="lg" />
-            ))}
-          </Grid>
-        ) : items.length === 0 ? (
-          <EmptyState
-            icon={<BookOpen aria-hidden />}
-            title={scope === "enrolled" ? "You have not joined a module yet" : "No modules found"}
-            description={
-              scope === "enrolled"
-                ? "Browse all modules and enroll in one to get started."
-                : "Nothing matches that search. Try a different word."
-            }
-            action={
-              scope === "enrolled" ? (
-                <Button variant="outline" onClick={() => setScope("catalog")}>
-                  Browse all modules
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <Grid
-            templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
-            gap="4"
-          >
-            {items.map((module) => (
-              <ModuleCard key={module.id} module={module} />
-            ))}
-          </Grid>
-        )}
+        <TabPanel id={panelId} value={scope}>
+          {isError ? (
+            <ErrorState error={error} onRetry={() => void refetch()} />
+          ) : isPending ? (
+            <Grid
+              templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
+              gap="4"
+            >
+              {Array.from({ length: 6 }, (_, index) => (
+                <Skeleton key={index} height="10rem" borderRadius="lg" />
+              ))}
+            </Grid>
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={<BookOpen aria-hidden />}
+              title={scope === "enrolled" ? "You have not joined a module yet" : "No modules found"}
+              description={
+                scope === "enrolled"
+                  ? "Browse all modules and enroll in one to get started."
+                  : "Nothing matches that search. Try a different word."
+              }
+              action={
+                scope === "enrolled" ? (
+                  <Button variant="outline" onClick={() => setScope("catalog")}>
+                    Browse all modules
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <Grid
+              templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
+              gap="4"
+            >
+              {items.map((module) => (
+                <ModuleCard key={module.id} module={module} />
+              ))}
+            </Grid>
+          )}
+        </TabPanel>
       </Stack>
     </PageContainer>
   );

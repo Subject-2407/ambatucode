@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { Box, Checkbox, HStack, Stack, Text, Textarea } from "@chakra-ui/react";
+import { useId, useState } from "react";
+import { Checkbox, HStack, Stack, Text, Textarea } from "@chakra-ui/react";
 import { EXECUTABLE_LANGUAGES, type Language } from "@ambatucode/shared";
 import { SourceEditor } from "@/components/editor/code-editor";
 import { LANGUAGE_LABEL, MONACO_LANGUAGE_ID, TAB_SIZE } from "@/components/editor/language-labels";
 import { TextField } from "@/components/ui/input";
-import { TabBar } from "@/components/ui/tabs";
+import { TabBar, TabPanel } from "@/components/ui/tabs";
 import type { AssessmentDraft } from "./draft";
 
 export type TabProps = {
@@ -105,6 +105,7 @@ function toggleLanguage(
 export function StarterCodeTab({ draft, onChange }: TabProps) {
   const languages = draft.allowedLanguages;
   const [selected, setSelected] = useState<Language | null>(languages[0] ?? null);
+  const panelId = useId();
   const active =
     selected !== null && languages.includes(selected) ? selected : (languages[0] ?? null);
 
@@ -126,9 +127,17 @@ export function StarterCodeTab({ draft, onChange }: TabProps) {
           value: language,
           label: LANGUAGE_LABEL[language],
         }))}
+        controls={panelId}
       />
 
-      <Box borderWidth="1px" borderColor="border.default" borderRadius="md" overflow="hidden">
+      <TabPanel
+        id={panelId}
+        value={active}
+        borderWidth="1px"
+        borderColor="border.default"
+        borderRadius="md"
+        overflow="hidden"
+      >
         <SourceEditor
           monacoLanguage={MONACO_LANGUAGE_ID[active]}
           tabSize={TAB_SIZE[active]}
@@ -137,7 +146,7 @@ export function StarterCodeTab({ draft, onChange }: TabProps) {
           height="24rem"
           ariaLabel={`Starter code for ${LANGUAGE_LABEL[active]}`}
         />
-      </Box>
+      </TabPanel>
 
       <Text fontSize="xs" color="fg.muted">
         Leave a language blank to open its editor empty.

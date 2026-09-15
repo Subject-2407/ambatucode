@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Box, Flex, Grid, HStack, Stack, Text } from "@chakra-ui/react";
 import { Lock, Trophy } from "lucide-react";
 import {
@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TabBar, type TabItem } from "@/components/ui/tabs";
+import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
 import { useAchievements } from "@/hooks/use-achievements";
 import { AchievementIcon } from "./achievement-icon";
 
@@ -101,6 +101,7 @@ function entriesFor(showcase: AchievementShowcaseView, category: string): Entry[
 
 export function AchievementShowcase({ userId }: { userId: string }) {
   const [category, setCategory] = useState<string>(ALL);
+  const panelId = useId();
   const { data, isPending, isError, error, refetch } = useAchievements(userId);
 
   const tabs = useMemo<TabItem[]>(
@@ -137,29 +138,37 @@ export function AchievementShowcase({ userId }: { userId: string }) {
         </Text>
       </HStack>
 
-      <TabBar items={tabs} value={category} onValueChange={setCategory} aria-label="Category" />
+      <TabBar
+        items={tabs}
+        value={category}
+        onValueChange={setCategory}
+        controls={panelId}
+        aria-label="Category"
+      />
 
-      {entries.length === 0 ? (
-        <EmptyState
-          icon={<Trophy aria-hidden />}
-          title="Nothing here yet"
-          description="Titles in this category appear once there is work to earn them on."
-        />
-      ) : (
-        <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap="3">
-          {entries.map((entry) =>
-            entry.kind === "earned" ? (
-              <AchievementCard
-                key={entry.achievement.code}
-                achievement={entry.achievement}
-                awardedAt={entry.achievement.awardedAt}
-              />
-            ) : (
-              <AchievementCard key={entry.achievement.code} achievement={entry.achievement} />
-            ),
-          )}
-        </Grid>
-      )}
+      <TabPanel id={panelId} value={category}>
+        {entries.length === 0 ? (
+          <EmptyState
+            icon={<Trophy aria-hidden />}
+            title="Nothing here yet"
+            description="Titles in this category appear once there is work to earn them on."
+          />
+        ) : (
+          <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap="3">
+            {entries.map((entry) =>
+              entry.kind === "earned" ? (
+                <AchievementCard
+                  key={entry.achievement.code}
+                  achievement={entry.achievement}
+                  awardedAt={entry.achievement.awardedAt}
+                />
+              ) : (
+                <AchievementCard key={entry.achievement.code} achievement={entry.achievement} />
+              ),
+            )}
+          </Grid>
+        )}
+      </TabPanel>
     </Stack>
   );
 }

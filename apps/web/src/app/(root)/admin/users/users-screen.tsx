@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Flex, HStack, InputGroup, Menu, Portal, Stack, Text } from "@chakra-ui/react";
 import { Ellipsis, KeyRound, Pencil, Search, Trash, UserPlus, Users } from "lucide-react";
 import { USER_ROLES, type AdminUser, type UserRole } from "@ambatucode/shared";
@@ -12,7 +12,7 @@ import { DataTable, Table as ChakraTable } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
-import { TabBar, type TabItem } from "@/components/ui/tabs";
+import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
 import { TableRowsSkeleton } from "@/components/ui/skeleton";
 import { useAdminUsers } from "@/hooks/use-admin-users";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -50,6 +50,7 @@ export function UsersScreen({ currentUserId }: { currentUserId: string }) {
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [resetting, setResetting] = useState<AdminUser | null>(null);
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
+  const panelId = useId();
 
   const search = useDebouncedValue(searchInput.trim(), 300);
   const role = roleTab === ALL_ROLES ? undefined : (roleTab as UserRole);
@@ -97,6 +98,7 @@ export function UsersScreen({ currentUserId }: { currentUserId: string }) {
             onValueChange={(value) => {
               changeFilter(() => setRoleTab(value));
             }}
+            controls={panelId}
             aria-label="Filter by role"
           />
           <InputGroup maxWidth={{ md: "xs" }} startElement={<Search size={16} aria-hidden />}>
@@ -112,103 +114,105 @@ export function UsersScreen({ currentUserId }: { currentUserId: string }) {
           </InputGroup>
         </Flex>
 
-        {isError ? (
-          <ErrorState error={error} onRetry={() => void refetch()} title="Could not load users" />
-        ) : (
-          <>
-            <DataTable caption="Global user accounts">
-              <ChakraTable.Header>
-                <ChakraTable.Row>
-                  <ChakraTable.ColumnHeader>Name</ChakraTable.ColumnHeader>
-                  <ChakraTable.ColumnHeader>Role</ChakraTable.ColumnHeader>
-                  <ChakraTable.ColumnHeader>Status</ChakraTable.ColumnHeader>
-                  <ChakraTable.ColumnHeader>Created</ChakraTable.ColumnHeader>
-                  <ChakraTable.ColumnHeader textAlign="end">Actions</ChakraTable.ColumnHeader>
-                </ChakraTable.Row>
-              </ChakraTable.Header>
-              <ChakraTable.Body>
-                {isPending ? (
-                  <TableRowsSkeleton rows={6} columns={COLUMN_COUNT} />
-                ) : items.length === 0 ? (
+        <TabPanel id={panelId} value={roleTab} display="flex" flexDirection="column" gap="4">
+          {isError ? (
+            <ErrorState error={error} onRetry={() => void refetch()} title="Could not load users" />
+          ) : (
+            <>
+              <DataTable caption="Global user accounts">
+                <ChakraTable.Header>
                   <ChakraTable.Row>
-                    <ChakraTable.Cell colSpan={COLUMN_COUNT} border="none">
-                      <EmptyState
-                        icon={<Users size={28} aria-hidden />}
-                        title="No accounts match"
-                        description={
-                          search || role
-                            ? "Try a different search term or role filter."
-                            : "Create the first account to get started."
-                        }
-                      />
-                    </ChakraTable.Cell>
+                    <ChakraTable.ColumnHeader>Name</ChakraTable.ColumnHeader>
+                    <ChakraTable.ColumnHeader>Role</ChakraTable.ColumnHeader>
+                    <ChakraTable.ColumnHeader>Status</ChakraTable.ColumnHeader>
+                    <ChakraTable.ColumnHeader>Created</ChakraTable.ColumnHeader>
+                    <ChakraTable.ColumnHeader textAlign="end">Actions</ChakraTable.ColumnHeader>
                   </ChakraTable.Row>
-                ) : (
-                  items.map((user) => (
-                    <ChakraTable.Row key={user.id}>
-                      <ChakraTable.Cell>
-                        <Stack gap="0">
-                          <Text fontWeight="medium">{user.displayName}</Text>
-                          <Text fontSize="xs" color="fg.muted">
-                            {user.username}
-                          </Text>
-                        </Stack>
-                      </ChakraTable.Cell>
-                      <ChakraTable.Cell>
-                        <Badge tone={user.role === "ROOT" ? "accent" : "neutral"}>
-                          {ROLE_LABEL[user.role]}
-                        </Badge>
-                      </ChakraTable.Cell>
-                      <ChakraTable.Cell>
-                        <Badge tone={user.isActive ? "success" : "danger"}>
-                          {user.isActive ? "Active" : "Deactivated"}
-                        </Badge>
-                      </ChakraTable.Cell>
-                      <ChakraTable.Cell color="fg.muted">
-                        {formatDate(user.createdAt)}
-                      </ChakraTable.Cell>
-                      <ChakraTable.Cell textAlign="end">
-                        <RowActions
-                          user={user}
-                          isSelf={user.id === currentUserId}
-                          onEdit={() => setEditing(user)}
-                          onResetPassword={() => setResetting(user)}
-                          onDelete={() => setDeleting(user)}
+                </ChakraTable.Header>
+                <ChakraTable.Body>
+                  {isPending ? (
+                    <TableRowsSkeleton rows={6} columns={COLUMN_COUNT} />
+                  ) : items.length === 0 ? (
+                    <ChakraTable.Row>
+                      <ChakraTable.Cell colSpan={COLUMN_COUNT} border="none">
+                        <EmptyState
+                          icon={<Users size={28} aria-hidden />}
+                          title="No accounts match"
+                          description={
+                            search || role
+                              ? "Try a different search term or role filter."
+                              : "Create the first account to get started."
+                          }
                         />
                       </ChakraTable.Cell>
                     </ChakraTable.Row>
-                  ))
-                )}
-              </ChakraTable.Body>
-            </DataTable>
+                  ) : (
+                    items.map((user) => (
+                      <ChakraTable.Row key={user.id}>
+                        <ChakraTable.Cell>
+                          <Stack gap="0">
+                            <Text fontWeight="medium">{user.displayName}</Text>
+                            <Text fontSize="xs" color="fg.muted">
+                              {user.username}
+                            </Text>
+                          </Stack>
+                        </ChakraTable.Cell>
+                        <ChakraTable.Cell>
+                          <Badge tone={user.role === "ROOT" ? "accent" : "neutral"}>
+                            {ROLE_LABEL[user.role]}
+                          </Badge>
+                        </ChakraTable.Cell>
+                        <ChakraTable.Cell>
+                          <Badge tone={user.isActive ? "success" : "danger"}>
+                            {user.isActive ? "Active" : "Deactivated"}
+                          </Badge>
+                        </ChakraTable.Cell>
+                        <ChakraTable.Cell color="fg.muted">
+                          {formatDate(user.createdAt)}
+                        </ChakraTable.Cell>
+                        <ChakraTable.Cell textAlign="end">
+                          <RowActions
+                            user={user}
+                            isSelf={user.id === currentUserId}
+                            onEdit={() => setEditing(user)}
+                            onResetPassword={() => setResetting(user)}
+                            onDelete={() => setDeleting(user)}
+                          />
+                        </ChakraTable.Cell>
+                      </ChakraTable.Row>
+                    ))
+                  )}
+                </ChakraTable.Body>
+              </DataTable>
 
-            <HStack justify="space-between">
-              <Text fontSize="sm" color="fg.muted">
-                {total === 0
-                  ? "No accounts"
-                  : `${String(firstOnPage)}-${String(lastOnPage)} of ${String(total)}`}
-              </Text>
-              <HStack gap="2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={page === 1 || isPending}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!hasNextPage || isPending}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </Button>
+              <HStack justify="space-between">
+                <Text fontSize="sm" color="fg.muted">
+                  {total === 0
+                    ? "No accounts"
+                    : `${String(firstOnPage)}-${String(lastOnPage)} of ${String(total)}`}
+                </Text>
+                <HStack gap="2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page === 1 || isPending}
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!hasNextPage || isPending}
+                    onClick={() => setPage((current) => current + 1)}
+                  >
+                    Next
+                  </Button>
+                </HStack>
               </HStack>
-            </HStack>
-          </>
-        )}
+            </>
+          )}
+        </TabPanel>
       </Stack>
 
       {createOpen ? <UserFormDialog onClose={() => setCreateOpen(false)} /> : null}
