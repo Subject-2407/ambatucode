@@ -93,6 +93,7 @@ export function EventStream({
               insetStart="0"
               width="100%"
               height={`${String(item.size)}px`}
+              transform={`translateY(${String(item.start)}px)`}
               px="1"
             >
               <EventRow event={event} name={nameFor(event.userId)} />

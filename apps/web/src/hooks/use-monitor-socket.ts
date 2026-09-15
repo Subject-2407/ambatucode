@@ -8,6 +8,7 @@ import {
   type MonitorParticipantPayload,
   type SessionStatePayload,
 } from "@ambatucode/shared";
+import { mergeEvents } from "@/lib/monitor-events";
 import { getSocket } from "@/lib/socket";
 
 /**
@@ -47,6 +48,21 @@ export function useMonitorSocket(input: {
     initialEvents ? [...initialEvents].reverse() : [],
   );
   const [connected, setConnected] = useState(false);
+
+  /**
+   * The snapshot usually arrives after the first render — the screen mounts
+   * while it is still loading — so the initial state above rarely sees it.
+   * Seeding once, when it does arrive, is what shows an Architect who opens the
+   * monitor mid-session everything that already happened. Anything the socket
+   * delivered in the meantime is kept, and an event present in both is shown
+   * once.
+   */
+  const seeded = useRef(initialEvents !== undefined);
+  useEffect(() => {
+    if (seeded.current || initialEvents === undefined) return;
+    seeded.current = true;
+    setEvents((current) => mergeEvents(current, initialEvents, MAX_EVENTS));
+  }, [initialEvents]);
 
   /** Arrivals since the last frame. Flushed together, never applied one by one. */
   const pendingParticipants = useRef<MonitorParticipantPayload[]>([]);
