@@ -669,8 +669,9 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 	}()
 
 	result := execResult{}
+	var copyErr error
 	select {
-	case <-copyDone:
+	case copyErr = <-copyDone:
 	case <-ctx.Done():
 		result.stdout, result.stdoutTruncated = stdout.result()
 		result.stderr, result.stderrTruncated = stderr.result()
@@ -680,12 +681,51 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 	result.stdout, result.stdoutTruncated = stdout.result()
 	result.stderr, result.stderrTruncated = stderr.result()
 
-	inspected, err := s.client.ContainerExecInspect(ctx, created.ID)
+	// A stream that broke is not a program that finished. Grading what little
+	// arrived — often nothing — would pass or fail a Coder on a connection.
+	if copyErr != nil {
+		return result, fmt.Errorf("read exec output: %w", copyErr)
+	}
+
+	inspected, err := s.awaitExecExit(ctx, created.ID)
 	if err != nil {
-		return result, fmt.Errorf("inspect exec: %w", err)
+		return result, err
 	}
 	result.exitCode = inspected.ExitCode
 	return result, nil
+}
+
+// execExitWait bounds how long an exec may still read as running after its
+// output stream closed. The daemon records the exit a moment after closing the
+// stream; a process still running well past that was cut off from us.
+const execExitWait = 2 * time.Second
+
+// awaitExecExit returns the exec's final state once the daemon records that it
+// has exited.
+//
+// An exit code read while the process still runs is zero, and zero is a pass.
+// The stream closing early — a severed connection to the daemon, a proxy that
+// dropped the attach — would otherwise grade as a program that printed nothing
+// and succeeded.
+func (s *Sandbox) awaitExecExit(ctx context.Context, execID string) (container.ExecInspect, error) {
+	deadline := time.Now().Add(execExitWait)
+	for {
+		inspected, err := s.client.ContainerExecInspect(ctx, execID)
+		if err != nil {
+			return inspected, fmt.Errorf("inspect exec: %w", err)
+		}
+		if !inspected.Running {
+			return inspected, nil
+		}
+		if time.Now().After(deadline) {
+			return inspected, fmt.Errorf("exec output ended while the process was still running")
+		}
+		select {
+		case <-ctx.Done():
+			return inspected, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
 }
 
 // Managed is one container this worker created, as the reaper sees it.
