@@ -62,7 +62,11 @@ export const semanticColors = defineSemanticTokens.colors({
     DEFAULT: { value: { _light: "{colors.brand.950}", _dark: "{colors.brand.50}" } },
     default: { value: { _light: "{colors.brand.950}", _dark: "{colors.brand.50}" } },
     muted: { value: { _light: "{colors.brand.700}", _dark: "{colors.brand.300}" } },
-    subtle: { value: { _light: "{colors.brand.600}", _dark: "{colors.brand.400}" } },
+    // The same stops as muted, and not by oversight. Subtle carries real text —
+    // hints, sample-case labels, footnotes — and the next lighter stop in each
+    // theme falls below 4.5:1 on the subtle and canvas backgrounds. A quieter
+    // look has to come from size or weight, not from contrast nobody can read.
+    subtle: { value: { _light: "{colors.brand.700}", _dark: "{colors.brand.300}" } },
     inverted: { value: { _light: "{colors.brand.50}", _dark: "{colors.brand.950}" } },
     success: { value: { _light: "{colors.moss.700}", _dark: "{colors.moss.300}" } },
     warning: { value: { _light: "{colors.amber.700}", _dark: "{colors.amber.300}" } },

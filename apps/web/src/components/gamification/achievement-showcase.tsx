@@ -53,8 +53,11 @@ function AchievementCard({
       borderWidth="1px"
       borderRadius="lg"
       borderColor={earned ? "accent.solid" : "border.default"}
-      bg="bg.surface"
-      opacity={earned ? 1 : 0.6}
+      // Locked is a dashed outline and a muted icon, not a faded card: the
+      // description is the goal, and fading it would fail contrast for the
+      // very text a Coder is meant to read.
+      borderStyle={earned ? "solid" : "dashed"}
+      bg={earned ? "bg.surface" : "bg.subtle"}
       align="start"
     >
       <Box color={earned ? "accent.solid" : "fg.muted"} paddingTop="0.5" flexShrink={0}>
