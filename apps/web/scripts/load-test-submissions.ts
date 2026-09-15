@@ -105,7 +105,9 @@ function summarise(label: string, values: number[]): string {
     `mean=${mean.toFixed(0).padStart(5)}ms`,
     `p50=${percentile(values, 0.5).toFixed(0).padStart(5)}ms`,
     `p95=${percentile(values, 0.95).toFixed(0).padStart(5)}ms`,
-    `max=${Math.max(...values).toFixed(0).padStart(5)}ms`,
+    `max=${Math.max(...values)
+      .toFixed(0)
+      .padStart(5)}ms`,
   ].join("  ");
 }
 
@@ -118,7 +120,9 @@ async function main(): Promise<void> {
   const architect = new Client("architect1");
   await architect.signIn("architect1");
 
-  console.info(`Building the fixture: ${String(SESSION_COUNT)} sessions × ${String(CODER_COUNT)} coders`);
+  console.info(
+    `Building the fixture: ${String(SESSION_COUNT)} sessions × ${String(CODER_COUNT)} coders`,
+  );
 
   const module = await architect.call<{ id: string }>("POST", "/api/modules", {
     title: `Load test ${stamp}`,
@@ -260,8 +264,12 @@ async function main(): Promise<void> {
   const idleP95 = percentile(baseline, 0.95);
 
   console.info("");
-  console.info(`Burst of ${String(attempts.length)} submissions finished in ${burstMs.toFixed(0)}ms`);
-  console.info(`  throughput: ${(attempts.length / (burstMs / 1000)).toFixed(1)} submissions/second`);
+  console.info(
+    `Burst of ${String(attempts.length)} submissions finished in ${burstMs.toFixed(0)}ms`,
+  );
+  console.info(
+    `  throughput: ${(attempts.length / (burstMs / 1000)).toFixed(1)} submissions/second`,
+  );
   console.info(`  accepted: ${String(submitLatencies.length)}, refused: ${String(refused.length)}`);
   for (const reason of refused.slice(0, 5)) console.info(`    ${reason}`);
   console.info("");
