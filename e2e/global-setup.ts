@@ -22,6 +22,13 @@ const WARM_ROUTES = [
   "/manage/modules",
   "/manage/grades",
   "/admin/users",
+  // Dynamic screens compile from a placeholder id the same way.
+  "/modules/warm",
+  "/modules/warm/materials/warm",
+  "/modules/warm/assessments/warm",
+  "/attempt/warm",
+  "/manage/sessions/warm",
+  "/manage/sessions/warm/monitor",
 ];
 
 /**
@@ -51,7 +58,14 @@ const WARM_API_ROUTES = [
   "/api/assessments/warm/leaderboard",
   "/api/assessments/warm/test-cases",
   "/api/assessments/warm/sessions",
+  "/api/sessions/warm",
   "/api/sessions/warm/start",
+  "/api/sessions/warm/end",
+  "/api/sessions/warm/participants",
+  "/api/sessions/warm/readiness",
+  "/api/sessions/warm/monitor",
+  "/api/attempts/warm/run",
+  "/api/admin/users",
   "/api/sessions/warm/attempt/start",
   "/api/attempts/warm",
   "/api/attempts/warm/draft",
