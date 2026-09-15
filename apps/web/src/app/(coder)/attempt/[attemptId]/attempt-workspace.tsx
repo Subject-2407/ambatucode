@@ -75,6 +75,12 @@ export function AttemptWorkspace({
   const [pendingLanguage, setPendingLanguage] = useState<Language | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [awaitingDeadline, setAwaitingDeadline] = useState(false);
+  /**
+   * The auto-submit explanation is read once. The attempt stays auto-submitted,
+   * so without this the modal — which cannot be dismissed any other way — would
+   * cover the very result it offers to show.
+   */
+  const [autoSubmitSeen, setAutoSubmitSeen] = useState(false);
   const [mobileTab, setMobileTab] = useState("problem");
 
   const socket = useAttemptSocket({
@@ -510,9 +516,12 @@ export function AttemptWorkspace({
       />
 
       <AutoSubmittedModal
-        open={terminal.kind === "AUTO_SUBMITTED"}
+        open={terminal.kind === "AUTO_SUBMITTED" && !autoSubmitSeen}
         submissionId={terminal.kind === "AUTO_SUBMITTED" ? terminal.submissionId : null}
-        onView={() => setAwaitingDeadline(false)}
+        onView={() => {
+          setAwaitingDeadline(false);
+          setAutoSubmitSeen(true);
+        }}
       />
 
       <SupersededModal
