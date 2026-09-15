@@ -302,16 +302,22 @@ export function AttemptWorkspace({
 
   // Ctrl/Cmd+Enter runs; adding Shift opens the submit confirmation. Submit is
   // never sent by a chord alone — the dialog is the whole point.
+  //
+  // Captured, not bubbled. Monaco binds both chords to "insert line" and stops
+  // the event there, so a bubbling listener never heard them from the one
+  // place a Coder presses them: the editor. Stopping the event here also keeps
+  // Monaco from adding a stray line to the buffer on the way.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || event.key !== "Enter") return;
       event.preventDefault();
+      event.stopPropagation();
       if (locked) return;
       if (event.shiftKey) setSubmitOpen(true);
       else if (!isRunning) void run();
     }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [isRunning, locked, run]);
 
   // --- Panels ---------------------------------------------------------------
