@@ -25,8 +25,23 @@ groups:
         annotations:
           summary: "Graded submissions are not reaching the LMS"
           description: >-
-            The result callback failed after every retry. Check that apps/web is
-            up and that EXECUTION_CALLBACK_URL points at it.
+            The worker is holding graded results it cannot deliver and has
+            stopped claiming new work while it does. Nothing is lost for 30
+            minutes from each submission's enqueue, when its callback token
+            expires. Check that apps/web is up and that EXECUTION_CALLBACK_URL
+            points at it.
+
+      - alert: ClaimingPaused
+        expr: max_over_time(claiming_paused[2m]) == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker {{ $labels.instance }} has paused grading"
+          description: >-
+            Jobs cannot run, almost always because the Docker daemon is not
+            answering. Submissions wait in the queue and resume on their own
+            when it returns; check the daemon.
 
       - alert: ContainerCreateFailures
         expr: increase(container_create_failures_total[5m]) > 0

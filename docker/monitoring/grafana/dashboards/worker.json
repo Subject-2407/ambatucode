@@ -46,10 +46,29 @@
       "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
     },
     {
+      "id": 12,
+      "type": "stat",
+      "title": "Claiming",
+      "description": "PAUSED while jobs cannot run, usually because the Docker daemon is unreachable. Grading resumes on its own.",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "max(claiming_paused{instance=~\"$worker\"}) or vector(0)" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "ACTIVE", "color": "green" }, "1": { "text": "PAUSED", "color": "red" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
       "id": 2,
       "type": "stat",
       "title": "Containers active",
-      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "refId": "A", "expr": "sum(containers_active{instance=~\"$worker\"})" }],
       "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
@@ -59,7 +78,7 @@
       "id": 3,
       "type": "stat",
       "title": "Submissions graded (1h)",
-      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "refId": "A", "expr": "sum(increase(jobs_processed_total{kind=\"SUBMIT\", instance=~\"$worker\"}[1h]))" }],
       "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
@@ -68,9 +87,9 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Undelivered submission results (1h)",
-      "description": "Results the LMS never received after every retry. Anything above zero needs an operator.",
-      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "title": "Failed result deliveries (1h)",
+      "description": "Delivery rounds the LMS did not accept. Submission results are held and retried, so this means the LMS was unreachable, not that grades were lost.",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "refId": "A", "expr": "sum(increase(result_delivery_failures_total{kind=\"SUBMIT\", instance=~\"$worker\"}[1h])) or vector(0)" }],
       "fieldConfig": {
@@ -86,7 +105,7 @@
       "id": 5,
       "type": "stat",
       "title": "Container create failures (1h)",
-      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "refId": "A", "expr": "sum(increase(container_create_failures_total{instance=~\"$worker\"}[1h])) or vector(0)" }],
       "fieldConfig": {
