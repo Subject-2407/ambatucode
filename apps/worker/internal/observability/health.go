@@ -14,18 +14,25 @@ type Prober func(ctx context.Context) error
 // PoolStats exposes saturation without the health server reaching into the pool.
 type PoolStats func() (active int64, saturated bool)
 
-// HealthServer answers GET /healthz.
+// HealthServer answers GET /healthz and serves GET /metrics.
 //
 // It reports Docker daemon reachability, Redis connectivity, and pool
 // saturation, because those are the three ways this worker stops being able to
 // grade anything while its process is still alive.
+//
+// Neither endpoint carries anything about a job's content, which is why the
+// port can be scraped without authentication — but it is still meant for the
+// worker's own host network, never for a Coder's.
 type HealthServer struct {
 	server *http.Server
 	logger *slog.Logger
 }
 
-func NewHealthServer(addr string, docker, redis Prober, stats PoolStats, logger *slog.Logger) *HealthServer {
+func NewHealthServer(
+	addr string, docker, redis Prober, stats PoolStats, metrics *Metrics, logger *slog.Logger,
+) *HealthServer {
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", metrics.Handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()

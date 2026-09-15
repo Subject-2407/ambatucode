@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -24,6 +25,9 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	units "github.com/docker/go-units"
+
+	"github.com/Subject-2407/ambatucode/apps/worker/internal/observability"
+	"github.com/Subject-2407/ambatucode/apps/worker/internal/seccomp"
 )
 
 const (
@@ -58,6 +62,26 @@ const (
 	keeperMargin = 30 * time.Second
 )
 
+// ErrDaemonUnavailable marks a failure of the connection to the Docker daemon,
+// or of a container the daemon stopped underneath a job — as opposed to the
+// daemon answering and refusing. A job that fails this way was never given a
+// fair run, and must not be graded on it.
+var ErrDaemonUnavailable = errors.New("docker daemon unavailable")
+
+// daemonFailure wraps err with ErrDaemonUnavailable when it is a transport
+// failure: no connection, or a request that never got its response. An error
+// the daemon itself returned is left alone — a full disk is not an outage.
+func daemonFailure(err error) error {
+	if err == nil || errors.Is(err, ErrDaemonUnavailable) {
+		return err
+	}
+	var urlErr *url.Error
+	if client.IsErrConnectionFailed(err) || errors.As(err, &urlErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("%w: %w", ErrDaemonUnavailable, err)
+	}
+	return err
+}
+
 // File is one workspace entry written into the container before a run.
 type File struct {
 	Name    string
@@ -76,6 +100,10 @@ type SessionSpec struct {
 	MemoryLimitMb  int64
 	MaxProcesses   int64
 	MaxOutputBytes int64
+
+	// DeniedSyscalls narrows the seccomp profile further. Leaving it empty
+	// still applies the full base profile; nothing here can loosen it.
+	DeniedSyscalls []string
 }
 
 // ExecSpec is one command inside an open session.
@@ -108,17 +136,19 @@ type RunOutcome struct {
 }
 
 type Sandbox struct {
-	client *client.Client
-	logger *slog.Logger
+	client  *client.Client
+	logger  *slog.Logger
+	metrics *observability.Metrics
 }
 
-// New connects to the Docker daemon and negotiates an API version.
-func New(logger *slog.Logger) (*Sandbox, error) {
+// New connects to the Docker daemon and negotiates an API version. metrics may
+// be nil.
+func New(logger *slog.Logger, metrics *observability.Metrics) (*Sandbox, error) {
 	docker, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
-	return &Sandbox{client: docker, logger: logger}, nil
+	return &Sandbox{client: docker, logger: logger, metrics: metrics}, nil
 }
 
 func (s *Sandbox) Close() error { return s.client.Close() }
@@ -148,6 +178,43 @@ func (s *Sandbox) EnsureImages(ctx context.Context, images []string) error {
 	return nil
 }
 
+// EnsureSeccomp verifies the daemon can enforce a seccomp profile and that
+// every profile the worker will use builds.
+//
+// A daemon without seccomp support accepts the option and silently ignores
+// it, so the only honest check is to ask it — and a worker that cannot filter
+// syscalls must not run participant code at all.
+func (s *Sandbox) EnsureSeccomp(ctx context.Context, deniedSets map[string][]string) error {
+	info, err := s.client.Info(ctx)
+	if err != nil {
+		return fmt.Errorf("read docker daemon security options: %w", err)
+	}
+	if !hasSeccomp(info.SecurityOptions) {
+		return fmt.Errorf(
+			"docker daemon does not support seccomp (security options %v); refusing to run participant code without a syscall filter",
+			info.SecurityOptions,
+		)
+	}
+	for language, denied := range deniedSets {
+		if _, err := seccomp.Build(denied); err != nil {
+			return fmt.Errorf("seccomp profile for %s: %w", language, err)
+		}
+	}
+	return nil
+}
+
+// hasSeccomp reads the daemon's `name=seccomp,profile=...` security option.
+func hasSeccomp(options []string) bool {
+	for _, option := range options {
+		for _, field := range strings.Split(option, ",") {
+			if field == "name=seccomp" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Session is one container, held open for the duration of one job.
 //
 // One container per *execution* rather than per test case is a deliberate
@@ -175,13 +242,16 @@ type Session struct {
 func (s *Sandbox) Open(ctx context.Context, spec SessionSpec) (*Session, error) {
 	id, err := s.create(ctx, spec)
 	if err != nil {
+		s.countCreateFailure(ctx)
 		return nil, err
 	}
 
 	if err := s.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
 		s.remove(id, spec.JobID)
-		return nil, fmt.Errorf("start container: %w", err)
+		s.countCreateFailure(ctx)
+		return nil, fmt.Errorf("start container: %w", daemonFailure(err))
 	}
+	s.metrics.ContainerOpened()
 
 	return &Session{
 		box:            s,
@@ -213,7 +283,7 @@ func (sn *Session) SetMemoryLimit(ctx context.Context, memoryLimitMb int64) erro
 		Resources: container.Resources{Memory: bytes, MemorySwap: bytes},
 	})
 	if err != nil {
-		return fmt.Errorf("set memory limit to %d MB: %w", memoryLimitMb, err)
+		return fmt.Errorf("set memory limit to %d MB: %w", memoryLimitMb, daemonFailure(err))
 	}
 	sn.memoryLimitMb = memoryLimitMb
 	return nil
@@ -262,7 +332,16 @@ func (sn *Session) Close() {
 		return
 	}
 	sn.box.remove(sn.id, sn.jobID)
+	sn.box.metrics.ContainerClosed()
 	sn.id = ""
+}
+
+// countCreateFailure counts a container the daemon would not create or start.
+// A job cancelled by shutdown mid-create is not the daemon failing.
+func (s *Sandbox) countCreateFailure(ctx context.Context) {
+	if ctx.Err() == nil {
+		s.metrics.ContainerCreateFailed()
+	}
 }
 
 func (s *Sandbox) remove(id, jobID string) {
@@ -286,6 +365,12 @@ func (s *Sandbox) remove(id, jobID string) {
 }
 
 func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) {
+	profile, err := seccomp.Build(spec.DeniedSyscalls)
+	if err != nil {
+		// Never fall back to Docker's default, and never to no profile.
+		return "", fmt.Errorf("build seccomp profile for job %s: %w", spec.JobID, err)
+	}
+
 	pids := spec.MaxProcesses
 	memoryBytes := spec.MemoryLimitMb * 1024 * 1024
 
@@ -342,11 +427,10 @@ func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) 
 			),
 		},
 		CapDrop: strslice.StrSlice{"ALL"},
-		// Docker's default seccomp profile stays in force — it is already
-		// restrictive. A per-language profile is a later hardening step; what
-		// must never happen is passing seccomp=unconfined to make something
-		// work.
-		SecurityOpt: []string{"no-new-privileges"},
+		// The profile travels as JSON content, which is what the Engine API
+		// expects; the CLI's `seccomp=<file>` is only the CLI reading the file.
+		// What must never happen is seccomp=unconfined to make something work.
+		SecurityOpt: []string{"no-new-privileges", "seccomp=" + profile},
 		// AutoRemove is deliberately off. It would delete the container before
 		// the OOMKilled state could be read, and that state is the only
 		// reliable way to tell a memory kill from an ordinary crash.
@@ -369,7 +453,7 @@ func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) 
 	// auto-generated name keeps job ids out of the daemon's namespace.
 	created, err := s.client.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
 	if err != nil {
-		return "", fmt.Errorf("create container for job %s: %w", spec.JobID, err)
+		return "", fmt.Errorf("create container for job %s: %w", spec.JobID, daemonFailure(err))
 	}
 	return created.ID, nil
 }
@@ -503,16 +587,22 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 		// Our deadline fired. Kill the container rather than stopping it: a
 		// program that ignores signals must not get extra time, and the
 		// container is being destroyed regardless.
-		outcome.TimedOut = true
 		sn.killed = true
 		killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer killCancel()
-		if killErr := sn.box.client.ContainerKill(killCtx, sn.id, "SIGKILL"); killErr != nil &&
-			!client.IsErrNotFound(killErr) {
+		if killErr := sn.box.client.ContainerKill(killCtx, sn.id, "SIGKILL"); killErr != nil {
+			// A genuine timeout always has a container to kill: its keeper
+			// outlives the job's wall clock. Failing to kill it means the daemon
+			// is gone or stopped the container itself — and an exec stream
+			// cut off that way hangs until this deadline rather than failing.
+			// That is an outage, not a program that ran out of time.
 			sn.box.logger.Warn("kill timed-out container failed",
 				slog.String("jobId", sn.jobID),
 				slog.String("error", killErr.Error()))
+			return RunOutcome{}, fmt.Errorf("%w: run deadline passed and the container could not be killed: %w",
+				ErrDaemonUnavailable, killErr)
 		}
+		outcome.TimedOut = true
 	} else {
 		outcome.ExitCode = result.exitCode
 	}
@@ -576,12 +666,12 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 		Env:        request.env,
 	})
 	if err != nil {
-		return execResult{}, fmt.Errorf("create exec: %w", err)
+		return execResult{}, fmt.Errorf("create exec: %w", daemonFailure(err))
 	}
 
 	attached, err := s.client.ContainerExecAttach(ctx, created.ID, container.ExecStartOptions{})
 	if err != nil {
-		return execResult{}, fmt.Errorf("attach exec: %w", err)
+		return execResult{}, fmt.Errorf("attach exec: %w", daemonFailure(err))
 	}
 	defer attached.Close()
 
@@ -606,8 +696,9 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 	}()
 
 	result := execResult{}
+	var copyErr error
 	select {
-	case <-copyDone:
+	case copyErr = <-copyDone:
 	case <-ctx.Done():
 		result.stdout, result.stdoutTruncated = stdout.result()
 		result.stderr, result.stderrTruncated = stderr.result()
@@ -617,12 +708,52 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 	result.stdout, result.stdoutTruncated = stdout.result()
 	result.stderr, result.stderrTruncated = stderr.result()
 
-	inspected, err := s.client.ContainerExecInspect(ctx, created.ID)
+	// A stream that broke is not a program that finished. Grading what little
+	// arrived — often nothing — would pass or fail a Coder on a connection.
+	if copyErr != nil {
+		return result, fmt.Errorf("%w: read exec output: %w", ErrDaemonUnavailable, copyErr)
+	}
+
+	inspected, err := s.awaitExecExit(ctx, created.ID)
 	if err != nil {
-		return result, fmt.Errorf("inspect exec: %w", err)
+		return result, err
 	}
 	result.exitCode = inspected.ExitCode
 	return result, nil
+}
+
+// execExitWait bounds how long an exec may still read as running after its
+// output stream closed. The daemon records the exit a moment after closing the
+// stream; a process still running well past that was cut off from us.
+const execExitWait = 2 * time.Second
+
+// awaitExecExit returns the exec's final state once the daemon records that it
+// has exited.
+//
+// An exit code read while the process still runs is zero, and zero is a pass.
+// The stream closing early — a severed connection to the daemon, a proxy that
+// dropped the attach — would otherwise grade as a program that printed nothing
+// and succeeded.
+func (s *Sandbox) awaitExecExit(ctx context.Context, execID string) (container.ExecInspect, error) {
+	deadline := time.Now().Add(execExitWait)
+	for {
+		inspected, err := s.client.ContainerExecInspect(ctx, execID)
+		if err != nil {
+			return inspected, fmt.Errorf("inspect exec: %w", daemonFailure(err))
+		}
+		if !inspected.Running {
+			return inspected, nil
+		}
+		if time.Now().After(deadline) {
+			return inspected, fmt.Errorf("%w: exec output ended while the process was still running",
+				ErrDaemonUnavailable)
+		}
+		select {
+		case <-ctx.Done():
+			return inspected, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
 }
 
 // Managed is one container this worker created, as the reaper sees it.

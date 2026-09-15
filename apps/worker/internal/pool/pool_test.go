@@ -539,6 +539,70 @@ func TestFailedJobIsNotMarkedProcessed(t *testing.T) {
 	}
 }
 
+// A job that could not run for want of Docker goes back untouched — no attempt
+// spent, nothing failed — and the pool claims nothing more until Docker
+// answers, rather than cycling every waiting submission through the same
+// outage.
+func TestRequeuedJobIsReleasedAndClaimingPausesUntilReady(t *testing.T) {
+	submit := newFakeQueue("submit")
+	submit.push("job-1", "job-2", "job-3")
+
+	var dockerUp atomic.Bool
+	processor := &stubProcessor{fn: func(context.Context, *queue.Job) error {
+		if !dockerUp.Load() {
+			return queue.Requeue(errors.New("docker daemon unreachable"))
+		}
+		return nil
+	}}
+	var probes atomic.Int64
+	p := newTestPool(submit, nil, processor, Options{
+		Concurrency:   1,
+		MaxContainers: 1,
+		Ready: func(context.Context) error {
+			probes.Add(1)
+			if dockerUp.Load() {
+				return nil
+			}
+			return errors.New("docker daemon unreachable")
+		},
+	})
+	p.readyProbeInterval = 5 * time.Millisecond
+
+	accept, stopAccepting := context.WithCancel(context.Background())
+	wait := start(p, accept, context.Background())
+
+	eventually(t, "the first job to be released", func() bool {
+		_, _, released := submit.snapshot()
+		return len(released) == 1
+	})
+	eventually(t, "the pool to probe while paused", func() bool { return probes.Load() >= 3 })
+	if !p.Paused() {
+		t.Fatal("the pool is not paused after a requeue")
+	}
+	if calls := processor.calls.Load(); calls != 1 {
+		t.Fatalf("processed %d jobs while paused, want only the one that was requeued", calls)
+	}
+
+	dockerUp.Store(true)
+	eventually(t, "the remaining jobs to complete", func() bool {
+		completed, _, _ := submit.snapshot()
+		return len(completed) == 2
+	})
+	stopAccepting()
+	wait(t)
+
+	_, failed, released := submit.snapshot()
+	if len(failed) != 0 {
+		t.Fatalf("a requeued job was failed, spending an attempt: %v", failed)
+	}
+	if len(released) != 1 || released[0] != "job-1" {
+		t.Fatalf("released %v, want [job-1]", released)
+	}
+	if p.Paused() {
+		t.Fatal("the pool stayed paused after Docker returned")
+	}
+}
+
 func TestReleaseInFlightIsSafeWithNothingRunning(t *testing.T) {
 	p := newTestPool(nil, nil, &stubProcessor{}, Options{Concurrency: 1, MaxContainers: 1})
 

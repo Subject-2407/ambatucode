@@ -80,7 +80,9 @@ func run() error {
 		return fmt.Errorf("connect to redis: %w", err)
 	}
 
-	box, err := sandbox.New(logger)
+	metrics := observability.NewMetrics()
+
+	box, err := sandbox.New(logger, metrics)
 	if err != nil {
 		return err
 	}
@@ -92,6 +94,9 @@ func run() error {
 	// Fail here rather than one submission at a time. The worker never pulls,
 	// so a missing image would otherwise surface as every job erroring.
 	if err := box.EnsureImages(startupCtx, language.Images()); err != nil {
+		return err
+	}
+	if err := box.EnsureSeccomp(startupCtx, language.DeniedSyscallSets()); err != nil {
 		return err
 	}
 
@@ -131,6 +136,7 @@ func run() error {
 		runner.New(box, logger),
 		report.New(cfg.CallbackURL, logger),
 		logger,
+		metrics,
 	)
 	// Submissions are claimed first and hold a reserve of container slots — a
 	// flood of practice runs must never starve formal grading.
@@ -142,6 +148,13 @@ func run() error {
 		// leaves the lock standing until the next.
 		LockRenewInterval: cfg.LockDuration / 2,
 		StalledInterval:   cfg.StalledInterval,
+		// A daemon that stops answering pauses claiming until it answers again.
+		Ready: func(ctx context.Context) error {
+			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return box.Ping(probeCtx)
+		},
+		Metrics: metrics,
 	}, logger)
 
 	health := observability.NewHealthServer(
@@ -149,10 +162,11 @@ func run() error {
 		box.Ping,
 		func(ctx context.Context) error { return redisClient.Ping(ctx).Err() },
 		func() (int64, bool) { return workerPool.ActiveJobs(), workerPool.Saturated() },
+		metrics,
 		logger,
 	)
 	health.Start()
-	logger.Info("health endpoint listening", slog.String("addr", cfg.HealthAddr))
+	logger.Info("health and metrics endpoints listening", slog.String("addr", cfg.HealthAddr))
 
 	// The signal only stops new claims. Running jobs execute under work, which
 	// is cancelled separately once the grace period is spent — tying jobs to

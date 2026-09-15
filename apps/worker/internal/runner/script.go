@@ -94,6 +94,7 @@ func (r *Runner) runScript(
 		MemoryLimitMb:  job.Limits.MemoryLimitMb,
 		MaxProcesses:   job.Limits.MaxProcesses,
 		MaxOutputBytes: job.Limits.MaxOutputBytes,
+		DeniedSyscalls: spec.DeniedSyscalls,
 	})
 	if err != nil {
 		return nil, "", err

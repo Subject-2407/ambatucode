@@ -1,0 +1,77 @@
+# Alert rules for the execution worker.
+#
+# There is no Alertmanager in the offline stack; firing alerts show on the
+# Prometheus Alerts page and on the Grafana dashboard. Each rule names the
+# failure an operator acts on, not a symptom to stare at.
+
+groups:
+  - name: ambatucode-worker
+    rules:
+      - alert: WorkerDown
+        expr: up{job="ambatucode-worker"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Execution worker {{ $labels.instance }} is not answering /metrics"
+          description: >-
+            Nothing is grading. Submissions wait safely in Redis, but every Run
+            shows Queued until a worker is running again.
+
+      - alert: ResultsNotDelivered
+        expr: increase(result_delivery_failures_total{kind="SUBMIT"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Graded submissions are not reaching the LMS"
+          description: >-
+            The worker is holding graded results it cannot deliver and has
+            stopped claiming new work while it does. Nothing is lost for 30
+            minutes from each submission's enqueue, when its callback token
+            expires. Check that apps/web is up and that EXECUTION_CALLBACK_URL
+            points at it.
+
+      - alert: ClaimingPaused
+        expr: max_over_time(claiming_paused[2m]) == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker {{ $labels.instance }} has paused grading"
+          description: >-
+            Jobs cannot run, almost always because the Docker daemon is not
+            answering. Submissions wait in the queue and resume on their own
+            when it returns; check the daemon.
+
+      - alert: ContainerCreateFailures
+        expr: increase(container_create_failures_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "The Docker daemon is refusing to create sandbox containers"
+          description: >-
+            Jobs are failing inside the platform. Check the daemon, its disk,
+            and that every sandbox image is still present.
+
+      - alert: SubmissionsWaitingLong
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le) (rate(queue_wait_seconds_bucket{queue="execution-submit"}[5m]))) > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Formal submissions are waiting more than two minutes to start"
+          description: >-
+            The worker is saturated. Queueing is correct during a spike; a
+            sustained wait means the lab needs more worker capacity.
+
+      - alert: ContainersNotReturningToZero
+        expr: min_over_time(containers_active[30m]) > 0 and on() sum(rate(jobs_processed_total[30m])) == 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sandbox containers stay open while no jobs run"
+          description: >-
+            A container leak. The reaper should remove them; check its log
+            lines and `docker ps --filter label=ambatucode.worker=1`.

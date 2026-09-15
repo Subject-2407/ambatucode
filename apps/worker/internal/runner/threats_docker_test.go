@@ -57,7 +57,7 @@ func threatJob(t *testing.T, runner *Runner, source string, tune func(*contract.
 
 func assertNoContainersLeft(t *testing.T) {
 	t.Helper()
-	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("connect to docker: %v", err)
 	}
@@ -362,6 +362,75 @@ print(" ".join(report))
 		if mib < 32 {
 			t.Fatalf("%s stopped at %d MiB, far below its bound (report %q)", directory, mib, stdout)
 		}
+	}
+}
+
+// 4.1: The seccomp profile is in force, and the syscalls it removes from
+// Docker's default answer "not implemented" rather than doing anything.
+func TestThreatSyscallFilterRefusesProcessIntrospectionAndNamespaces(t *testing.T) {
+	runner := newDockerRunner(t)
+
+	// glibc and Python wrappers rather than raw syscall numbers, which differ
+	// between x86_64 and arm64 hosts.
+	source := `import ctypes, errno, os
+findings = []
+
+status = open("/proc/self/status").read()
+if status.split("Seccomp:")[1].split()[0] != "2":
+    findings.append("SECCOMP_NOT_FILTERING")
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.ptrace.restype = ctypes.c_long
+if libc.ptrace(0, 0, None, None) != -1:
+    findings.append("PTRACE_ALLOWED")
+elif ctypes.get_errno() != errno.ENOSYS:
+    findings.append("PTRACE_ERRNO_%d" % ctypes.get_errno())
+
+libc.process_vm_readv.restype = ctypes.c_ssize_t
+if libc.process_vm_readv(os.getppid(), None, 0, None, 0, 0) != -1:
+    findings.append("PROCESS_VM_READV_ALLOWED")
+
+try:
+    os.memfd_create("payload")
+    findings.append("MEMFD_CREATE_ALLOWED")
+except OSError as error:
+    if error.errno != errno.ENOSYS:
+        findings.append("MEMFD_ERRNO_%d" % error.errno)
+
+try:
+    os.unshare(os.CLONE_NEWUSER)
+    findings.append("UNSHARE_ALLOWED")
+except OSError:
+    pass
+
+print(" ".join(findings) if findings else "filtered")
+`
+	result, stdout := threatJob(t, runner, source, nil)
+	if result.Status != contract.StatusGraded || stdout != "filtered" {
+		t.Fatalf("status %s, syscall filter findings %q", result.Status, stdout)
+	}
+}
+
+// The per-language narrowing reaches a compiled program too: native code can
+// call anything glibc exposes, so the filter is the only thing in its way.
+func TestThreatCompiledProgramCannotCreateAnInMemoryExecutable(t *testing.T) {
+	runner := newDockerRunner(t)
+
+	source := `#include <cerrno>
+#include <cstdio>
+#include <sys/mman.h>
+int main() {
+    int fd = memfd_create("payload", 0);
+    if (fd >= 0) { std::puts("ALLOWED"); return 0; }
+    std::puts(errno == ENOSYS ? "filtered" : "unexpected-errno");
+    return 0;
+}
+`
+	j := job(contract.LanguageCPP, source, echoCase("memfd", "", "filtered"))
+	result := execute(t, runner, j)
+	assertNoContainersLeft(t)
+	if result.Status != contract.StatusGraded || !result.TestResults[0].Passed {
+		t.Fatalf("status %s, stdout %q", result.Status, result.TestResults[0].StdoutExcerpt)
 	}
 }
 

@@ -40,7 +40,7 @@ import (
 
 func newDockerRunner(t *testing.T) *Runner {
 	t.Helper()
-	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("connect to docker: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestContainersDoNotSurviveAJob(t *testing.T) {
 	j.Limits.RunTimeoutMs = 2_000
 	execute(t, runner, j)
 
-	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("connect to docker: %v", err)
 	}

@@ -180,6 +180,9 @@ type Identity struct {
 	JobID         string
 	SubmissionID  *string
 	CallbackToken string
+	// Kind is whatever the payload claimed, unvalidated. It labels metrics and
+	// must not drive any decision.
+	Kind Kind
 }
 
 // ProbeIdentity extracts reporting identity from an otherwise invalid payload.
@@ -189,6 +192,7 @@ func ProbeIdentity(raw []byte) (Identity, bool) {
 		JobID         string  `json:"jobId"`
 		SubmissionID  *string `json:"submissionId"`
 		CallbackToken string  `json:"callbackToken"`
+		Kind          Kind    `json:"kind"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return Identity{}, false
@@ -200,6 +204,7 @@ func ProbeIdentity(raw []byte) (Identity, bool) {
 		JobID:         probe.JobID,
 		SubmissionID:  probe.SubmissionID,
 		CallbackToken: probe.CallbackToken,
+		Kind:          probe.Kind,
 	}, true
 }
 

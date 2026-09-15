@@ -24,6 +24,23 @@ func (e *unrecoverableError) Error() string        { return e.cause.Error() }
 func (e *unrecoverableError) Unwrap() error        { return e.cause }
 func (e *unrecoverableError) Is(target error) bool { return target == ErrUnrecoverable }
 
+// ErrRequeue marks a job that could not run because something the worker
+// depends on is unavailable — not because of anything in the job. Such a job
+// is handed back to its wait list untouched: it spends no attempt, since no
+// attempt was made, and nothing is reported for it.
+var ErrRequeue = errors.New("requeue")
+
+// Requeue wraps cause so the pool releases the job instead of failing it.
+func Requeue(cause error) error {
+	return &requeueError{cause: cause}
+}
+
+type requeueError struct{ cause error }
+
+func (e *requeueError) Error() string        { return e.cause.Error() }
+func (e *requeueError) Unwrap() error        { return e.cause }
+func (e *requeueError) Is(target error) bool { return target == ErrRequeue }
+
 // backoff is BullMQ's normalized backoff option.
 type backoff struct {
 	Type   string  `json:"type"`
