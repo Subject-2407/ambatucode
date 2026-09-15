@@ -162,23 +162,48 @@ func (q *queues) enqueue(t *testing.T, job contract.Job) time.Time {
 
 	ctx := context.Background()
 	now := time.Now()
-	_, err = q.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HSet(ctx, q.key(queue, job.JobID),
-			"name", queue,
-			"data", string(payload),
-			"opts", opts,
-			"timestamp", strconv.FormatInt(now.UnixMilli(), 10),
-			"delay", "0",
-			"priority", "0",
-		)
-		pipe.LPush(ctx, q.key(queue, "wait"), job.JobID)
-		pipe.ZAdd(ctx, q.key(queue, "marker"), redis.Z{Score: 0, Member: "0"})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("enqueue %s: %v", job.JobID, err)
+	// The transaction is all-or-nothing, so retrying it after a dropped
+	// connection cannot enqueue a job twice.
+	for attempt := 1; ; attempt++ {
+		_, err = q.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HSet(ctx, q.key(queue, job.JobID),
+				"name", queue,
+				"data", string(payload),
+				"opts", opts,
+				"timestamp", strconv.FormatInt(now.UnixMilli(), 10),
+				"delay", "0",
+				"priority", "0",
+			)
+			pipe.LPush(ctx, q.key(queue, "wait"), job.JobID)
+			pipe.ZAdd(ctx, q.key(queue, "marker"), redis.Z{Score: 0, Member: "0"})
+			return nil
+		})
+		if err == nil {
+			return now
+		}
+		if attempt == 10 {
+			t.Fatalf("enqueue %s: %v", job.JobID, err)
+		}
+		time.Sleep(time.Second)
 	}
-	return now
+}
+
+// awaitRedis waits until Redis answers again after a restart.
+func (q *queues) awaitRedis(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := q.client.Ping(ctx).Err()
+		cancel()
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("redis did not come back within %s: %v", timeout, err)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // backlog counts what is still queued, running, or waiting to retry.
@@ -307,6 +332,19 @@ func (l *stubLMS) delivered(jobID string) []delivery {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return slices.Clone(l.deliveries[jobID])
+}
+
+// deliveredCount counts the jobs with at least one delivered result.
+func (l *stubLMS) deliveredCount(jobIDs []string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	count := 0
+	for _, id := range jobIDs {
+		if len(l.deliveries[id]) > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 // awaitAll waits until every job has at least one delivered result.
