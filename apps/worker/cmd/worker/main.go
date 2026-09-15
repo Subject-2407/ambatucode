@@ -96,6 +96,9 @@ func run() error {
 	if err := box.EnsureImages(startupCtx, language.Images()); err != nil {
 		return err
 	}
+	if err := box.EnsureSeccomp(startupCtx, language.DeniedSyscallSets()); err != nil {
+		return err
+	}
 
 	// Sweep before consuming anything. A worker that crashed mid-job left
 	// containers behind, and `defer` cannot help once the process is gone.

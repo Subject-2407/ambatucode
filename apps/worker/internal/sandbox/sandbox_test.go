@@ -26,6 +26,23 @@ func TestParseOOMKillsReadsTheCgroupCounter(t *testing.T) {
 	}
 }
 
+func TestHasSeccompReadsTheDaemonSecurityOptions(t *testing.T) {
+	enforcing := []string{"name=apparmor", "name=seccomp,profile=builtin", "name=cgroupns"}
+	if !hasSeccomp(enforcing) {
+		t.Fatal("a daemon reporting name=seccomp was treated as unfiltered")
+	}
+	for _, options := range [][]string{
+		nil,
+		{"name=apparmor", "name=cgroupns"},
+		// A profile name that merely mentions seccomp is not the option.
+		{"name=selinux,profile=seccomp"},
+	} {
+		if hasSeccomp(options) {
+			t.Errorf("security options %v were treated as seccomp support", options)
+		}
+	}
+}
+
 func TestWorkspaceDirMatchesTheLanguageRegistry(t *testing.T) {
 	if workspaceDir != language.WorkspaceDir {
 		t.Fatalf(

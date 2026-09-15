@@ -26,6 +26,7 @@ import (
 	units "github.com/docker/go-units"
 
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/observability"
+	"github.com/Subject-2407/ambatucode/apps/worker/internal/seccomp"
 )
 
 const (
@@ -78,6 +79,10 @@ type SessionSpec struct {
 	MemoryLimitMb  int64
 	MaxProcesses   int64
 	MaxOutputBytes int64
+
+	// DeniedSyscalls narrows the seccomp profile further. Leaving it empty
+	// still applies the full base profile; nothing here can loosen it.
+	DeniedSyscalls []string
 }
 
 // ExecSpec is one command inside an open session.
@@ -150,6 +155,43 @@ func (s *Sandbox) EnsureImages(ctx context.Context, images []string) error {
 		}
 	}
 	return nil
+}
+
+// EnsureSeccomp verifies the daemon can enforce a seccomp profile and that
+// every profile the worker will use builds.
+//
+// A daemon without seccomp support accepts the option and silently ignores
+// it, so the only honest check is to ask it — and a worker that cannot filter
+// syscalls must not run participant code at all.
+func (s *Sandbox) EnsureSeccomp(ctx context.Context, deniedSets map[string][]string) error {
+	info, err := s.client.Info(ctx)
+	if err != nil {
+		return fmt.Errorf("read docker daemon security options: %w", err)
+	}
+	if !hasSeccomp(info.SecurityOptions) {
+		return fmt.Errorf(
+			"docker daemon does not support seccomp (security options %v); refusing to run participant code without a syscall filter",
+			info.SecurityOptions,
+		)
+	}
+	for language, denied := range deniedSets {
+		if _, err := seccomp.Build(denied); err != nil {
+			return fmt.Errorf("seccomp profile for %s: %w", language, err)
+		}
+	}
+	return nil
+}
+
+// hasSeccomp reads the daemon's `name=seccomp,profile=...` security option.
+func hasSeccomp(options []string) bool {
+	for _, option := range options {
+		for _, field := range strings.Split(option, ",") {
+			if field == "name=seccomp" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Session is one container, held open for the duration of one job.
@@ -302,6 +344,12 @@ func (s *Sandbox) remove(id, jobID string) {
 }
 
 func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) {
+	profile, err := seccomp.Build(spec.DeniedSyscalls)
+	if err != nil {
+		// Never fall back to Docker's default, and never to no profile.
+		return "", fmt.Errorf("build seccomp profile for job %s: %w", spec.JobID, err)
+	}
+
 	pids := spec.MaxProcesses
 	memoryBytes := spec.MemoryLimitMb * 1024 * 1024
 
@@ -358,11 +406,10 @@ func (s *Sandbox) create(ctx context.Context, spec SessionSpec) (string, error) 
 			),
 		},
 		CapDrop: strslice.StrSlice{"ALL"},
-		// Docker's default seccomp profile stays in force — it is already
-		// restrictive. A per-language profile is a later hardening step; what
-		// must never happen is passing seccomp=unconfined to make something
-		// work.
-		SecurityOpt: []string{"no-new-privileges"},
+		// The profile travels as JSON content, which is what the Engine API
+		// expects; the CLI's `seccomp=<file>` is only the CLI reading the file.
+		// What must never happen is seccomp=unconfined to make something work.
+		SecurityOpt: []string{"no-new-privileges", "seccomp=" + profile},
 		// AutoRemove is deliberately off. It would delete the container before
 		// the OOMKilled state could be read, and that state is the only
 		// reliable way to tell a memory kill from an ordinary crash.

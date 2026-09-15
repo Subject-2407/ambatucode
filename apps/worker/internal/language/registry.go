@@ -29,6 +29,9 @@ type Spec struct {
 	CompileCmd []string
 	// RunCmd is an argument vector, never a shell string.
 	RunCmd []string
+	// DeniedSyscalls narrows the sandbox's seccomp profile for this language,
+	// on top of what every language is denied. It can only take syscalls away.
+	DeniedSyscalls []string
 
 	// scripts maps each test framework this language can run to how it runs.
 	scripts map[contract.TestScriptFramework]scriptPlanner
@@ -51,13 +54,23 @@ func (s Spec) For(source string) Spec {
 	return s.adapt(s, source)
 }
 
+// noJITDenied is for runtimes that never generate machine code at run time.
+//
+// memfd_create gives a program an executable file that lives only in memory,
+// which is a way around the noexec on /tmp. Protection keys exist so a JIT can
+// guard its own code pages. The JIT runtimes — V8 and the JVM — keep both:
+// denying a runtime its own hardening would weaken it, and each falls back
+// cleanly without them regardless.
+var noJITDenied = []string{"memfd_create", "pkey_alloc", "pkey_free", "pkey_mprotect"}
+
 var registry = map[contract.Language]Spec{
 	contract.LanguagePython: {
-		ID:         contract.LanguagePython,
-		Image:      "ambatucode/sandbox-python:3.12",
-		SourceFile: "main.py",
-		CompileCmd: nil,
-		RunCmd:     []string{"python3", WorkspaceDir + "/main.py"},
+		ID:             contract.LanguagePython,
+		Image:          "ambatucode/sandbox-python:3.12",
+		SourceFile:     "main.py",
+		CompileCmd:     nil,
+		RunCmd:         []string{"python3", WorkspaceDir + "/main.py"},
+		DeniedSyscalls: noJITDenied,
 		scripts: map[contract.TestScriptFramework]scriptPlanner{
 			contract.FrameworkPytest: planPytest,
 			contract.FrameworkCustom: planPythonCustom,
@@ -97,8 +110,9 @@ var registry = map[contract.Language]Spec{
 			"g++", "-std=c++20", "-O2", "-w",
 			"-o", WorkspaceDir + "/program", WorkspaceDir + "/main.cpp",
 		},
-		RunCmd:    []string{WorkspaceDir + "/program"},
-		artifacts: []string{"program"},
+		RunCmd:         []string{WorkspaceDir + "/program"},
+		DeniedSyscalls: noJITDenied,
+		artifacts:      []string{"program"},
 		scripts: map[contract.TestScriptFramework]scriptPlanner{
 			contract.FrameworkGoogleTest: planGoogleTest,
 			contract.FrameworkCustom:     planCppCustom,
@@ -165,6 +179,16 @@ func Supported() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// DeniedSyscallSets lists every language's seccomp narrowing, so the worker
+// can build each profile once at startup and refuse to run if one is broken.
+func DeniedSyscallSets() map[string][]string {
+	sets := make(map[string][]string, len(registry))
+	for id, spec := range registry {
+		sets[string(id)] = spec.DeniedSyscalls
+	}
+	return sets
 }
 
 // Images lists every image the worker needs present locally. The startup check
