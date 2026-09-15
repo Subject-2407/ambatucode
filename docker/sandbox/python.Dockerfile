@@ -6,7 +6,15 @@
 #
 # Build context is the repository root:
 #   docker compose -f docker/compose/sandbox.yml build
-FROM python:3.12-slim
+#
+# Every base image is pinned by digest. The tag beside it is for humans; the
+# digest is what gets built, so a lab image is exactly the one that was tested.
+#
+# The official slim image is kept rather than rebuilt from parts. It is already
+# small, and it carries the shared libraries CPython's standard modules link
+# against — ssl, sqlite3, ctypes — which a hand-assembled image would have to
+# rediscover one import failure at a time.
+FROM python:3.12.14-slim-trixie@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 # The job process runs as 65534:65534 with a read-only root filesystem, so
 # every writable path it can reach is the /tmp tmpfs the worker mounts.
