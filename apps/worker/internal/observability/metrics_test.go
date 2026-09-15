@@ -33,6 +33,7 @@ func TestMetricsExposeTheDocumentedSeries(t *testing.T) {
 	m.ContainerCreateFailed()
 	m.QueueWait("execution-submit", 2*time.Second)
 	m.ResultDeliveryFailed("SUBMIT")
+	m.ClaimingPaused(true)
 
 	body := scrape(t, m.Handler())
 
@@ -44,6 +45,7 @@ func TestMetricsExposeTheDocumentedSeries(t *testing.T) {
 		`container_create_failures_total 1`,
 		`queue_wait_seconds_count{queue="execution-submit"} 1`,
 		`result_delivery_failures_total{kind="SUBMIT"} 1`,
+		`claiming_paused 1`,
 		`go_goroutines`,
 	} {
 		if !strings.Contains(body, want) {
@@ -63,6 +65,7 @@ func TestNilMetricsRecordNothingAndDoNotPanic(t *testing.T) {
 	m.ContainerCreateFailed()
 	m.QueueWait("execution-run", time.Second)
 	m.ResultDeliveryFailed("RUN")
+	m.ClaimingPaused(true)
 
 	recorder := httptest.NewRecorder()
 	m.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))

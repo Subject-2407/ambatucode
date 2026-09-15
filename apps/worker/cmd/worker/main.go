@@ -148,7 +148,13 @@ func run() error {
 		// leaves the lock standing until the next.
 		LockRenewInterval: cfg.LockDuration / 2,
 		StalledInterval:   cfg.StalledInterval,
-		Metrics:           metrics,
+		// A daemon that stops answering pauses claiming until it answers again.
+		Ready: func(ctx context.Context) error {
+			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return box.Ping(probeCtx)
+		},
+		Metrics: metrics,
 	}, logger)
 
 	health := observability.NewHealthServer(

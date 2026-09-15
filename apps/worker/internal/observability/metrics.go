@@ -27,6 +27,7 @@ type Metrics struct {
 	queueWait               *prometheus.HistogramVec
 	containerCreateFailures prometheus.Counter
 	resultDeliveryFailures  *prometheus.CounterVec
+	claimingPaused          prometheus.Gauge
 }
 
 func NewMetrics() *Metrics {
@@ -60,8 +61,12 @@ func NewMetrics() *Metrics {
 		}),
 		resultDeliveryFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "result_delivery_failures_total",
-			Help: "Results that could not be delivered to the LMS after every retry.",
+			Help: "Delivery rounds to the LMS that failed after their quick retries. A submission's result is held and retried; a run's is dropped.",
 		}, []string{"kind"}),
+		claimingPaused: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "claiming_paused",
+			Help: "1 while the worker claims no jobs because they cannot run, such as with the Docker daemon unreachable.",
+		}),
 	}
 
 	m.registry.MustRegister(
@@ -71,6 +76,7 @@ func NewMetrics() *Metrics {
 		m.queueWait,
 		m.containerCreateFailures,
 		m.resultDeliveryFailures,
+		m.claimingPaused,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -132,10 +138,22 @@ func (m *Metrics) QueueWait(queue string, wait time.Duration) {
 	m.queueWait.WithLabelValues(queue).Observe(wait.Seconds())
 }
 
-// ResultDeliveryFailed records a result the LMS never received.
+// ResultDeliveryFailed records a delivery round the LMS did not accept.
 func (m *Metrics) ResultDeliveryFailed(kind string) {
 	if m == nil {
 		return
 	}
 	m.resultDeliveryFailures.WithLabelValues(kind).Inc()
+}
+
+// ClaimingPaused flags whether the pool has stopped claiming jobs.
+func (m *Metrics) ClaimingPaused(paused bool) {
+	if m == nil {
+		return
+	}
+	if paused {
+		m.claimingPaused.Set(1)
+		return
+	}
+	m.claimingPaused.Set(0)
 }

@@ -61,3 +61,18 @@ func TestUnrecoverableIsDetectableAndKeepsItsCause(t *testing.T) {
 		t.Fatal("an ordinary error must not read as unrecoverable")
 	}
 }
+
+func TestRequeueIsDetectableAndDistinctFromUnrecoverable(t *testing.T) {
+	cause := errors.New("docker daemon unreachable")
+	wrapped := fmt.Errorf("run job: %w", Requeue(cause))
+
+	if !errors.Is(wrapped, ErrRequeue) {
+		t.Fatal("a wrapped requeue was not detected")
+	}
+	if !errors.Is(wrapped, cause) {
+		t.Fatal("the original cause was lost")
+	}
+	if errors.Is(wrapped, ErrUnrecoverable) {
+		t.Fatal("a requeue must never read as unrecoverable")
+	}
+}

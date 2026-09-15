@@ -13,23 +13,55 @@ import (
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/report"
 )
 
+// callbackTokenTTL is how long the LMS accepts a job's callback token, counted
+// from when the job was enqueued (EXECUTION.md section 7). A result held past
+// it would be refused anyway.
+const callbackTokenTTL = 30 * time.Minute
+
+const (
+	holdBackoffBase = time.Second
+	holdBackoffMax  = 30 * time.Second
+)
+
+// resultSender delivers one result to the LMS. *report.Client is the
+// production implementation.
+type resultSender interface {
+	Send(ctx context.Context, result contract.Result, callbackToken string) error
+}
+
 // Service is the full per-job flow: parse, execute, report.
 //
-// Its error return answers one question only — should the BullMQ job be failed
-// so another worker retries it? A participant's program crashing is not an
-// error here; losing a graded result is.
+// Its error return answers one question only — what should happen to the
+// BullMQ job? Nil completes it. An error fails it so its retry policy applies;
+// queue.ErrUnrecoverable fails it for good; queue.ErrRequeue hands it back
+// untouched. A participant's program crashing is not an error here; losing a
+// graded result is.
 type Service struct {
 	runner   *Runner
-	reporter *report.Client
+	reporter resultSender
 	logger   *slog.Logger
 	metrics  *observability.Metrics
+
+	// sandboxReachable tells a SYSTEM_ERROR the job caused from one the
+	// Docker daemon's absence caused.
+	sandboxReachable func(ctx context.Context) error
+	holdBackoff      time.Duration
+	now              func() time.Time
 }
 
 // NewService builds the per-job flow. metrics may be nil.
 func NewService(
 	r *Runner, reporter *report.Client, logger *slog.Logger, metrics *observability.Metrics,
 ) *Service {
-	return &Service{runner: r, reporter: reporter, logger: logger, metrics: metrics}
+	return &Service{
+		runner:           r,
+		reporter:         reporter,
+		logger:           logger,
+		metrics:          metrics,
+		sandboxReachable: r.SandboxReachable,
+		holdBackoff:      holdBackoffBase,
+		now:              time.Now,
+	}
 }
 
 func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
@@ -63,6 +95,17 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 		return fmt.Errorf("job interrupted by shutdown: %w", ctx.Err())
 	}
 
+	// A platform failure with the daemon gone is the daemon's doing, not the
+	// program's. Reporting it would grade a Coder on an outage; the job goes
+	// back to wait for Docker instead.
+	if result.Status == contract.StatusSystemError {
+		if probeErr := s.sandboxReachable(ctx); probeErr != nil {
+			logger.Warn("job could not run because the docker daemon is unreachable; requeueing",
+				slog.String("error", probeErr.Error()))
+			return queue.Requeue(fmt.Errorf("docker daemon unreachable: %w", probeErr))
+		}
+	}
+
 	// The pass count is the one thing a GRADED status does not tell you, and
 	// without it a submission that ran perfectly and failed every case looks
 	// identical in the logs to one that passed.
@@ -81,29 +124,87 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 		slog.Int64("durationMs", duration.Milliseconds()))
 	s.metrics.JobProcessed(string(job.Kind), string(job.Language), string(result.Status), duration)
 
-	if err := s.reporter.Send(ctx, result, job.CallbackToken); err != nil {
-		if ctx.Err() == nil {
-			s.metrics.ResultDeliveryFailed(string(job.Kind))
+	return s.deliver(ctx, logger, queueJob, job.Kind, result, job.CallbackToken)
+}
+
+// deliver sends a result, holding a submission's result through an LMS outage.
+//
+// A run is discardable — the Coder can press Run again — so one failed round
+// drops it. A formal submission is not. Failing its queue job would spend one
+// of its few attempts on regrading a program that was already graded, and an
+// outage longer than those attempts would fail it for good, leaving the
+// Submission QUEUED with nothing on the way. So the graded result is kept and
+// retried, with the job's lock renewed the whole time, until the LMS takes it
+// or its callback token expires. While results are held, their container slots
+// stay taken and the worker claims nothing new: unclaimed work waits safely in
+// Redis rather than being graded into a result nobody can receive.
+func (s *Service) deliver(
+	ctx context.Context,
+	logger *slog.Logger,
+	queueJob *queue.Job,
+	kind contract.Kind,
+	result contract.Result,
+	callbackToken string,
+) error {
+	enqueued := queueJob.EnqueuedAt
+	if enqueued.IsZero() {
+		enqueued = s.now()
+	}
+	holdUntil := enqueued.Add(callbackTokenTTL)
+
+	for round := 1; ; round++ {
+		err := s.reporter.Send(ctx, result, callbackToken)
+		if err == nil {
+			if round > 1 {
+				logger.Info("held result delivered", slog.Int("rounds", round))
+			}
+			return nil
 		}
 		if errors.Is(err, report.ErrRejected) {
-			// The LMS refused the shape. A retry would send the same payload
-			// and be refused the same way.
+			// The LMS refused the shape, or the token has expired. A retry
+			// would send the same payload and be refused the same way.
 			return queue.Unrecoverable(fmt.Errorf("deliver result: %w", err))
 		}
 		if ctx.Err() != nil {
 			return fmt.Errorf("job interrupted by shutdown while reporting: %w", err)
 		}
-		// A run is discardable — the Coder can press Run again. A formal
-		// submission is not: fail the queue job so it is retried rather than
-		// leaving a graded submission that never reached the database.
-		if job.Kind == contract.KindRun {
+		s.metrics.ResultDeliveryFailed(metricKind(kind))
+
+		if kind == contract.KindRun {
 			logger.Warn("run result not delivered; dropping", slog.String("error", err.Error()))
 			return nil
 		}
-		return fmt.Errorf("deliver result: %w", err)
-	}
+		if !s.now().Before(holdUntil) {
+			// The LMS would now refuse the token. Failing the job leaves it in
+			// BullMQ's hands, and the backend closes out an expired job itself.
+			logger.Error("result not delivered before its callback token expired",
+				slog.Int("rounds", round),
+				slog.String("error", err.Error()))
+			return fmt.Errorf("deliver result: %w", err)
+		}
 
-	return nil
+		wait := holdWait(s.holdBackoff, round)
+		logger.Warn("LMS unreachable; holding the result and retrying",
+			slog.Int("round", round),
+			slog.Duration("retryIn", wait),
+			slog.Time("holdUntil", holdUntil),
+			slog.String("error", err.Error()))
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("job interrupted by shutdown while holding its result: %w", ctx.Err())
+		case <-time.After(wait):
+		}
+	}
+}
+
+// holdWait doubles from base per round, capped so a recovered LMS is noticed
+// within half a minute.
+func holdWait(base time.Duration, round int) time.Duration {
+	wait := base
+	for i := 1; i < round && wait < holdBackoffMax; i++ {
+		wait *= 2
+	}
+	return min(wait, holdBackoffMax)
 }
 
 // reportAbandoned closes out a job the stalled check gave up on.
@@ -167,13 +268,10 @@ func (s *Service) reportSystemError(
 		SystemError:     &message,
 		TestResults:     []contract.TestResult{},
 	}
-	if err := s.reporter.Send(ctx, result, identity.CallbackToken); err != nil {
-		if ctx.Err() == nil {
-			s.metrics.ResultDeliveryFailed(metricKind(identity.Kind))
-		}
-		if errors.Is(err, report.ErrRejected) {
-			return queue.Unrecoverable(fmt.Errorf("report system error: %w", err))
-		}
+	logger := s.logger.With(slog.String("jobId", identity.JobID), slog.String("queue", queueJob.Queue))
+	// An unvalidated kind is only trusted to relax holding for a run; anything
+	// else is held like a submission.
+	if err := s.deliver(ctx, logger, queueJob, identity.Kind, result, identity.CallbackToken); err != nil {
 		return fmt.Errorf("report system error: %w", err)
 	}
 	return nil

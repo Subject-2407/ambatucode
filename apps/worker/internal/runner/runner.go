@@ -45,6 +45,17 @@ func New(box *sandbox.Sandbox, logger *slog.Logger) *Runner {
 	return &Runner{sandbox: box, logger: logger}
 }
 
+// SandboxReachable reports whether the Docker daemon answers. A runner built
+// without a sandbox, as in unit tests, is always reachable.
+func (r *Runner) SandboxReachable(ctx context.Context) error {
+	if r.sandbox == nil {
+		return nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return r.sandbox.Ping(probeCtx)
+}
+
 // Run executes a job and always returns a reportable result.
 //
 // An infrastructure failure becomes a SYSTEM_ERROR result rather than an error

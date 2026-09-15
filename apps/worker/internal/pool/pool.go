@@ -20,8 +20,13 @@ import (
 // away, even on a queue that has been idle for hours.
 const awaitTimeout = 5 * time.Second
 
-// Processor executes one claimed job. A non-nil error fails the BullMQ job so
-// its retry policy applies; nil completes it.
+// readyProbeInterval is how often a paused pool asks whether it can run jobs
+// again.
+const readyProbeInterval = 2 * time.Second
+
+// Processor executes one claimed job. Nil completes the BullMQ job; an error
+// fails it so its retry policy applies, except queue.ErrRequeue, which hands it
+// back untouched and pauses claiming until the pool is ready again.
 type Processor interface {
 	Process(ctx context.Context, job *queue.Job) error
 }
@@ -57,6 +62,10 @@ type Options struct {
 	// StalledInterval is how often jobs abandoned by a dead worker are moved
 	// back to their wait list.
 	StalledInterval time.Duration
+	// Ready reports whether jobs can run at all — in production, whether the
+	// Docker daemon answers. After a job is requeued because it could not, the
+	// pool claims nothing more until Ready succeeds. Nil means always ready.
+	Ready func(ctx context.Context) error
 	// Metrics may be nil.
 	Metrics *observability.Metrics
 }
@@ -80,6 +89,10 @@ type Pool struct {
 	lockRenewInterval time.Duration
 	stalledInterval   time.Duration
 	active            atomic.Int64
+
+	ready              func(ctx context.Context) error
+	readyProbeInterval time.Duration
+	paused             atomic.Bool
 
 	// inFlight tracks claimed-but-unfinished jobs so shutdown can hand back any
 	// whose goroutine never returned.
@@ -108,13 +121,47 @@ func New(
 		await: func(ctx context.Context, markers []string) error {
 			return queue.AwaitAny(ctx, client, awaitTimeout, markers...)
 		},
-		containers:        make(chan struct{}, opts.MaxContainers),
-		runSlots:          make(chan struct{}, runCapacity),
-		concurrency:       opts.Concurrency,
-		lockRenewInterval: opts.LockRenewInterval,
-		stalledInterval:   opts.StalledInterval,
-		inFlight:          make(map[*queue.Job]Queue),
+		containers:         make(chan struct{}, opts.MaxContainers),
+		runSlots:           make(chan struct{}, runCapacity),
+		concurrency:        opts.Concurrency,
+		lockRenewInterval:  opts.LockRenewInterval,
+		stalledInterval:    opts.StalledInterval,
+		ready:              opts.Ready,
+		readyProbeInterval: readyProbeInterval,
+		inFlight:           make(map[*queue.Job]Queue),
 	}
+}
+
+// Paused reports whether claiming is on hold until the pool is ready again.
+func (p *Pool) Paused() bool { return p.paused.Load() }
+
+// pause stops claiming after a job could not run for want of a dependency.
+func (p *Pool) pause(cause error) {
+	if p.paused.CompareAndSwap(false, true) {
+		p.metrics.ClaimingPaused(true)
+		p.logger.Error("pausing job claims: jobs cannot run until the dependency returns",
+			slog.String("error", cause.Error()))
+	}
+}
+
+// awaitReady blocks while the pool is paused, probing until Ready succeeds.
+// It returns false when ctx is cancelled first.
+func (p *Pool) awaitReady(ctx context.Context) bool {
+	for p.paused.Load() {
+		if p.ready == nil || p.ready(ctx) == nil {
+			if p.paused.CompareAndSwap(true, false) {
+				p.metrics.ClaimingPaused(false)
+				p.logger.Info("resuming job claims")
+			}
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(p.readyProbeInterval):
+		}
+	}
+	return true
 }
 
 // ActiveJobs reports how many jobs are executing right now.
@@ -158,6 +205,10 @@ func (p *Pool) loop(accept, work context.Context, index int) {
 
 	for {
 		if accept.Err() != nil {
+			return
+		}
+		// Claiming a job that cannot run would only hand it straight back.
+		if !p.awaitReady(accept) {
 			return
 		}
 
@@ -266,6 +317,23 @@ func (p *Pool) execute(ctx context.Context, lane Queue, job *queue.Job) {
 	// failing to record that would hand the job to another worker to redo.
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
+
+	if err != nil && errors.Is(err, queue.ErrRequeue) && ctx.Err() == nil {
+		// The job never had a fair run: something it depends on is gone. It
+		// goes back untouched, and nothing more is claimed until that returns.
+		p.pause(err)
+		if releaseErr := lane.Release(finishCtx, job); releaseErr != nil {
+			p.logger.Error("returning a job that could not run to the wait list failed",
+				slog.String("jobId", job.ID),
+				slog.String("queue", job.Queue),
+				slog.String("error", releaseErr.Error()))
+			return
+		}
+		p.logger.Warn("returned a job that could not run to the wait list",
+			slog.String("jobId", job.ID),
+			slog.String("queue", job.Queue))
+		return
+	}
 
 	if err != nil && ctx.Err() != nil {
 		// Interrupted by shutdown. This is not an attempt the job made, so it
