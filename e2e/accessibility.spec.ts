@@ -223,6 +223,11 @@ test.describe("accessibility", () => {
       // Submit has a shortcut, and a shortcut must never submit on its own:
       // it opens the same confirmation, with focus inside it, and Escape
       // backs out with nothing sent.
+      //
+      // Signed in again first: every scan above opened its own session for
+      // the same seeded Coder, and one active session per account means the
+      // last of them ended this page's.
+      await signIn(coder, "coder");
       await coder.goto(`/attempt/${fixture.attemptId}`);
       await expect(coder.locator(".monaco-editor").first()).toBeVisible({ timeout: 30_000 });
       await coder.locator(".monaco-editor").first().click();
