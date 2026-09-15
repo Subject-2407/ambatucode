@@ -43,34 +43,6 @@ func submitBatch(t *testing.T, q *queues, label string, n int, languages ...cont
 	return ids
 }
 
-// assertNothingLost is the exit criterion: every submission reached the LMS,
-// graded on its own merits, and the queue holds nothing — least of all a
-// failed job, which is a submission no worker will ever try again.
-func assertNothingLost(t *testing.T, q *queues, lms *stubLMS, ids []string, within time.Duration) {
-	t.Helper()
-	if missing := lms.awaitAll(ids, within); len(missing) > 0 {
-		t.Fatalf("%d of %d submissions never reached the LMS (first: %s)", len(missing), len(ids), missing[0])
-	}
-	for _, id := range ids {
-		for _, d := range lms.delivered(id) {
-			assertFullyGraded(t, d.Result)
-		}
-	}
-
-	var queue backlog
-	deadline := time.Now().Add(within)
-	for {
-		queue = q.backlog(t, submitQueue)
-		if queue == (backlog{}) || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	if queue != (backlog{}) {
-		t.Fatalf("the submit queue did not drain after recovery: %+v", queue)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // LMS unreachable
 

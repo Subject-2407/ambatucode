@@ -1,4 +1,4 @@
-//go:build load || chaos
+//go:build load || chaos || daemonrestart
 
 // Package e2e drives the real worker binary against real Redis and Docker.
 //
@@ -15,6 +15,7 @@
 //	docker compose -f docker/compose/sandbox.yml build
 //	go test -tags load  -timeout 30m -v ./e2e/
 //	go test -tags chaos -timeout 30m -v ./e2e/
+//	go test -tags daemonrestart -timeout 30m -v ./e2e/   (restarts the daemon)
 //
 // Stop any other worker first: each worker's startup sweep removes every
 // sandbox container on the daemon, including another worker's live ones.
@@ -633,6 +634,34 @@ func jobID(label string, n int) string {
 	suffix := make([]byte, 4)
 	_, _ = rand.Read(suffix)
 	return fmt.Sprintf("%s-%03d-%s", label, n, hex.EncodeToString(suffix))
+}
+
+// assertNothingLost is the outage exit criterion: every submission reached the
+// LMS, graded on its own merits, and the queue holds nothing — least of all a
+// failed job, which is a submission no worker will ever try again.
+func assertNothingLost(t *testing.T, q *queues, lms *stubLMS, ids []string, within time.Duration) {
+	t.Helper()
+	if missing := lms.awaitAll(ids, within); len(missing) > 0 {
+		t.Fatalf("%d of %d submissions never reached the LMS (first: %s)", len(missing), len(ids), missing[0])
+	}
+	for _, id := range ids {
+		for _, d := range lms.delivered(id) {
+			assertFullyGraded(t, d.Result)
+		}
+	}
+
+	var queue backlog
+	deadline := time.Now().Add(within)
+	for {
+		queue = q.backlog(t, submitQueue)
+		if queue == (backlog{}) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if queue != (backlog{}) {
+		t.Fatalf("the submit queue did not drain after recovery: %+v", queue)
+	}
 }
 
 // assertFullyGraded fails unless the result graded and passed every case.
