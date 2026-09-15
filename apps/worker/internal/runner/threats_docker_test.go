@@ -57,7 +57,7 @@ func threatJob(t *testing.T, runner *Runner, source string, tune func(*contract.
 
 func assertNoContainersLeft(t *testing.T) {
 	t.Helper()
-	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	box, err := sandbox.New(slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("connect to docker: %v", err)
 	}

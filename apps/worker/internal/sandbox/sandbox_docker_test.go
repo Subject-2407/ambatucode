@@ -38,7 +38,7 @@ const testImage = "ambatucode/sandbox-python:3.12"
 
 func newTestSandbox(t *testing.T) *Sandbox {
 	t.Helper()
-	box, err := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	box, err := New(slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("connect to docker: %v", err)
 	}

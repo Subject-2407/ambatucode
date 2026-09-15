@@ -35,7 +35,7 @@ func newCallback(t *testing.T, status int) (*httptest.Server, *atomic.Int64) {
 // runner turns into SYSTEM_ERROR before it would open a container.
 func newServiceWithoutDocker(callbackURL string) *Service {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewService(New(nil, logger), report.New(callbackURL, logger), logger)
+	return NewService(New(nil, logger), report.New(callbackURL, logger), logger, nil)
 }
 
 func queueJob(t *testing.T, kind contract.Kind) *queue.Job {

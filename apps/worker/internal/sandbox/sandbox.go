@@ -24,6 +24,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	units "github.com/docker/go-units"
+
+	"github.com/Subject-2407/ambatucode/apps/worker/internal/observability"
 )
 
 const (
@@ -108,17 +110,19 @@ type RunOutcome struct {
 }
 
 type Sandbox struct {
-	client *client.Client
-	logger *slog.Logger
+	client  *client.Client
+	logger  *slog.Logger
+	metrics *observability.Metrics
 }
 
-// New connects to the Docker daemon and negotiates an API version.
-func New(logger *slog.Logger) (*Sandbox, error) {
+// New connects to the Docker daemon and negotiates an API version. metrics may
+// be nil.
+func New(logger *slog.Logger, metrics *observability.Metrics) (*Sandbox, error) {
 	docker, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
-	return &Sandbox{client: docker, logger: logger}, nil
+	return &Sandbox{client: docker, logger: logger, metrics: metrics}, nil
 }
 
 func (s *Sandbox) Close() error { return s.client.Close() }
@@ -175,13 +179,16 @@ type Session struct {
 func (s *Sandbox) Open(ctx context.Context, spec SessionSpec) (*Session, error) {
 	id, err := s.create(ctx, spec)
 	if err != nil {
+		s.countCreateFailure(ctx)
 		return nil, err
 	}
 
 	if err := s.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
 		s.remove(id, spec.JobID)
+		s.countCreateFailure(ctx)
 		return nil, fmt.Errorf("start container: %w", err)
 	}
+	s.metrics.ContainerOpened()
 
 	return &Session{
 		box:            s,
@@ -262,7 +269,16 @@ func (sn *Session) Close() {
 		return
 	}
 	sn.box.remove(sn.id, sn.jobID)
+	sn.box.metrics.ContainerClosed()
 	sn.id = ""
+}
+
+// countCreateFailure counts a container the daemon would not create or start.
+// A job cancelled by shutdown mid-create is not the daemon failing.
+func (s *Sandbox) countCreateFailure(ctx context.Context) {
+	if ctx.Err() == nil {
+		s.metrics.ContainerCreateFailed()
+	}
 }
 
 func (s *Sandbox) remove(id, jobID string) {

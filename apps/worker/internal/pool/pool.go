@@ -12,6 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Subject-2407/ambatucode/apps/worker/internal/observability"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/queue"
 )
 
@@ -56,6 +57,8 @@ type Options struct {
 	// StalledInterval is how often jobs abandoned by a dead worker are moved
 	// back to their wait list.
 	StalledInterval time.Duration
+	// Metrics may be nil.
+	Metrics *observability.Metrics
 }
 
 type Pool struct {
@@ -63,6 +66,7 @@ type Pool struct {
 	run       Queue
 	processor Processor
 	logger    *slog.Logger
+	metrics   *observability.Metrics
 
 	// await sleeps until a queue marker fires or the timeout passes.
 	await func(ctx context.Context, markers []string) error
@@ -100,6 +104,7 @@ func New(
 		run:       run,
 		processor: processor,
 		logger:    logger,
+		metrics:   opts.Metrics,
 		await: func(ctx context.Context, markers []string) error {
 			return queue.AwaitAny(ctx, client, awaitTimeout, markers...)
 		},
@@ -223,6 +228,9 @@ func (p *Pool) claimFrom(ctx context.Context, lane Queue) *queue.Job {
 				slog.String("error", err.Error()))
 		}
 		return nil
+	}
+	if !job.ClaimableSince.IsZero() {
+		p.metrics.QueueWait(lane.QueueName(), time.Since(job.ClaimableSince))
 	}
 	return job
 }

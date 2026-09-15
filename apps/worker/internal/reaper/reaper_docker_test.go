@@ -22,7 +22,7 @@ const testImage = "ambatucode/sandbox-python:3.12"
 // removed once past its deadline — and left alone while its job may still run.
 func TestReaperRemovesAnAbandonedContainerOnlyAfterItsDeadline(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	box, err := sandbox.New(logger)
+	box, err := sandbox.New(logger, nil)
 	if err != nil {
 		t.Fatalf("connect to docker: %v", err)
 	}

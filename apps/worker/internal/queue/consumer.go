@@ -48,6 +48,10 @@ type Job struct {
 	// again without being run: a second run could reach a different verdict
 	// and would push a duplicate result to the Coder.
 	ProcessedAt string
+	// ClaimableSince is when the job was added plus its delay: the moment it
+	// could first have been claimed. Zero when the hash does not say. For a
+	// retried job it still dates from the original enqueue.
+	ClaimableSince time.Time
 
 	opts jobOpts
 }
@@ -347,7 +351,23 @@ func (c *Consumer) decodeClaim(result any, token string) (*Job, error) {
 	}
 	job.DeferredFailure = hash["defa"]
 	job.ProcessedAt = hash[processedField]
+	job.ClaimableSince = claimableSince(hash["timestamp"], hash["delay"])
 	return job, nil
+}
+
+// claimableSince reads BullMQ's `timestamp` (added, in milliseconds) and
+// `delay` fields. Diagnostic only, so an unreadable timestamp yields zero
+// rather than an error.
+func claimableSince(timestamp, delay string) time.Time {
+	addedMs, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || addedMs <= 0 {
+		return time.Time{}
+	}
+	delayMs, err := strconv.ParseInt(delay, 10, 64)
+	if err != nil || delayMs < 0 {
+		delayMs = 0
+	}
+	return time.UnixMilli(addedMs + delayMs)
 }
 
 // Complete marks a job successfully processed.

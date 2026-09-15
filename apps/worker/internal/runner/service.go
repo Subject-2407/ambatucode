@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/contract"
+	"github.com/Subject-2407/ambatucode/apps/worker/internal/observability"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/queue"
 	"github.com/Subject-2407/ambatucode/apps/worker/internal/report"
 )
@@ -21,10 +22,14 @@ type Service struct {
 	runner   *Runner
 	reporter *report.Client
 	logger   *slog.Logger
+	metrics  *observability.Metrics
 }
 
-func NewService(r *Runner, reporter *report.Client, logger *slog.Logger) *Service {
-	return &Service{runner: r, reporter: reporter, logger: logger}
+// NewService builds the per-job flow. metrics may be nil.
+func NewService(
+	r *Runner, reporter *report.Client, logger *slog.Logger, metrics *observability.Metrics,
+) *Service {
+	return &Service{runner: r, reporter: reporter, logger: logger, metrics: metrics}
 }
 
 func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
@@ -68,13 +73,18 @@ func (s *Service) Process(ctx context.Context, queueJob *queue.Job) error {
 		}
 	}
 
+	duration := time.Since(startedAt)
 	logger.Info("job executed",
 		slog.String("status", string(result.Status)),
 		slog.Int("passed", passed),
 		slog.Int("cases", len(result.TestResults)),
-		slog.Int64("durationMs", time.Since(startedAt).Milliseconds()))
+		slog.Int64("durationMs", duration.Milliseconds()))
+	s.metrics.JobProcessed(string(job.Kind), string(job.Language), string(result.Status), duration)
 
 	if err := s.reporter.Send(ctx, result, job.CallbackToken); err != nil {
+		if ctx.Err() == nil {
+			s.metrics.ResultDeliveryFailed(string(job.Kind))
+		}
 		if errors.Is(err, report.ErrRejected) {
 			// The LMS refused the shape. A retry would send the same payload
 			// and be refused the same way.
@@ -142,6 +152,7 @@ func (s *Service) reportSystemError(
 	ctx context.Context, queueJob *queue.Job, cause error, message string,
 ) error {
 	identity, ok := contract.ProbeIdentity(queueJob.Data)
+	s.metrics.JobRejected(metricKind(identity.Kind), string(contract.StatusSystemError))
 	if !ok {
 		// Nothing to report to. Fail the job so it lands in BullMQ's failed
 		// set where an operator can see it.
@@ -157,10 +168,24 @@ func (s *Service) reportSystemError(
 		TestResults:     []contract.TestResult{},
 	}
 	if err := s.reporter.Send(ctx, result, identity.CallbackToken); err != nil {
+		if ctx.Err() == nil {
+			s.metrics.ResultDeliveryFailed(metricKind(identity.Kind))
+		}
 		if errors.Is(err, report.ErrRejected) {
 			return queue.Unrecoverable(fmt.Errorf("report system error: %w", err))
 		}
 		return fmt.Errorf("report system error: %w", err)
 	}
 	return nil
+}
+
+// metricKind confines an unvalidated kind to the values metrics may carry, so a
+// malformed payload cannot mint a new label value.
+func metricKind(kind contract.Kind) string {
+	switch kind {
+	case contract.KindRun, contract.KindSubmit:
+		return string(kind)
+	default:
+		return "UNKNOWN"
+	}
 }
