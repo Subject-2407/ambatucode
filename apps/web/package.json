@@ -12,7 +12,8 @@
     "stub:worker": "dotenv -e ../../.env -- tsx scripts/stub-execution-worker.ts",
     "enqueue:sample": "dotenv -e ../../.env -- node --conditions=react-server --import tsx scripts/enqueue-sample-job.ts",
     "vendor:monaco": "node scripts/vendor-monaco.mjs",
-    "load:submissions": "dotenv -e ../../.env -- tsx scripts/load-test-submissions.ts"
+    "load:submissions": "dotenv -e ../../.env -- tsx scripts/load-test-submissions.ts",
+    "bundle:audit": "node scripts/bundle-audit.mjs"
   },
   "dependencies": {
     "@ambatucode/db": "workspace:*",
