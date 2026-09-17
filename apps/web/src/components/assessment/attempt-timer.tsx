@@ -125,12 +125,23 @@ export function AttemptTimer({
   return (
     <HStack gap="2" aria-label="Time remaining">
       {paused ? <PauseCircle size={16} aria-hidden /> : <Timer size={16} aria-hidden />}
+      {/*
+        The display face and a hard border, because this is the one number an
+        Architect reads from the back of a lab and a Coder checks without
+        breaking off from the editor. The tier drives the border as well as the
+        text, so running out is legible without depending on colour alone.
+      */}
       <Text
-        fontFamily="mono"
-        fontSize="lg"
-        fontWeight="semibold"
+        textStyle="display"
+        fontSize="xl"
         fontVariantNumeric="tabular-nums"
         color={TIER_COLOR[tier]}
+        borderWidth="3px"
+        borderColor="currentColor"
+        borderRadius="0"
+        paddingInline="2.5"
+        paddingBlock="0.5"
+        lineHeight="1.3"
       >
         {formatRemaining(remainingMs)}
       </Text>
