@@ -1,0 +1,21 @@
+/*
+ * The display face, served from this origin.
+ *
+ * Ambatucode runs on a lab network with no route to the internet, so there is
+ * no Google Fonts link and no CDN here — the file sits in `public/fonts` and is
+ * fetched from the same origin as the page.
+ *
+ * `font-display: block` rather than `swap`: the file is 26KB over the local
+ * network, so the block window is imperceptible, while swapping a pixel face in
+ * after a proportional fallback would make every heading on the page jump.
+ *
+ * The path is mirrored by `DISPLAY_FONT_SRC` in src/theme/index.ts, and
+ * theme.test.ts fails if the two drift apart.
+ */
+@font-face {
+  font-family: "RasterForge";
+  src: url("/fonts/rasterforge.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}

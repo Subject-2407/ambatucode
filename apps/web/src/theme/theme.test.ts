@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { system } from "./index";
+import { DISPLAY_FONT_SRC, system } from "./index";
 
 /**
  * The design system's contract with every component: the semantic names exist,
@@ -107,9 +108,116 @@ describe("theme tokens", () => {
     expect(tokenValue("lagoon.500")).toBe("#539191");
   });
 
+  it("carries the two support tints verbatim", () => {
+    expect(tokenValue("bone.200")).toBe("#e8e3d3");
+    expect(tokenValue("gold.400")).toBe("#e8b33c");
+    expect(tokenValue("gold.700")).toBe("#7b5000");
+  });
+
+  it("gives gold the full slot set, like any other palette", () => {
+    for (const slot of PALETTE_SLOTS) {
+      expect(tokenValue(`gold.${slot}`), `gold.${slot}`).toBeTruthy();
+    }
+  });
+
   it("uses no webfont, so the UI renders identically offline", () => {
     const body = String(system.token("fonts.body"));
     expect(body).toContain("system-ui");
     expect(body).not.toMatch(/Inter|url\(/i);
+  });
+
+  it("serves the display face from this origin, never from a network", () => {
+    expect(DISPLAY_FONT_SRC.startsWith("/")).toBe(true);
+    expect(DISPLAY_FONT_SRC).not.toMatch(/^https?:|^\/\//);
+
+    // The @font-face rule lives in a stylesheet, so the path is written twice.
+    // If the two drift the headings silently fall back to the mono stack, which
+    // looks deliberate enough that nobody reports it.
+    const stylesheet = readFileSync(new URL("../app/fonts.css", import.meta.url), "utf8");
+    expect(stylesheet).toContain(DISPLAY_FONT_SRC);
+    expect(stylesheet).not.toMatch(/url\(\s*["']?https?:/i);
+
+    // The face must also be named, or every heading silently renders in the
+    // fallback and nobody notices until someone looks at a screenshot.
+    expect(String(system.token("fonts.display"))).toContain("RasterForge");
+    expect(String(system.token("fonts.heading"))).toContain("RasterForge");
+  });
+
+  it("rounds no corners, because a radius and a pixel grid are different systems", () => {
+    for (const alias of ["l1", "l2", "l3"]) {
+      // `system.token` hands back the CSS variable for a semantic token, so the
+      // declared value has to be read off the token itself.
+      const token = system.tokens.getByName(`radii.${alias}`);
+      expect(token, alias).toBeDefined();
+      expect(String(token?.value), alias).toBe("0");
+    }
+  });
+
+  it("squares the raw radius scale too, not only the aliases", () => {
+    // Components reach past `l1/l2/l3` and write `borderRadius="md"` directly;
+    // there are dozens of those. Leaving this scale rounded left most of the
+    // product with soft corners while the theme claimed otherwise.
+    for (const size of ["none", "2xs", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"]) {
+      expect(String(system.token(`radii.${size}`)), size).toBe("0");
+    }
+  });
+
+  it("keeps `full` round, so a spinner is not a spinning square", () => {
+    expect(String(system.token("radii.full"))).not.toBe("0");
+  });
+});
+
+/**
+ * Gold is the one palette with a rule that a reviewer cannot see by eye, so it
+ * is pinned here instead.
+ *
+ * The bright value is a *fill*: legible with `contrast` text on it, in both
+ * themes. It is not an *ink*: as text on a light ground it measures 1.49:1,
+ * nowhere near the 4.5:1 floor, which is why `gold.fg` darkens in light mode
+ * and `gold.solid` does not. Collapsing the two back into one value would look
+ * tidier and would make every Title unreadable on paper.
+ */
+describe("gold", () => {
+  it("is legible as a fill in both themes", () => {
+    for (const theme of ["_light", "_dark"] as const) {
+      const ratio = contrast(resolve("gold.solid", theme), resolve("gold.contrast", theme));
+      expect(ratio, `gold.contrast on gold.solid (${theme})`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("is legible as an ink in both themes, on every surface it can land on", () => {
+    for (const theme of ["_light", "_dark"] as const) {
+      for (const background of ["bg.surface", "bg.subtle", "bg.canvas"]) {
+        const ratio = contrast(resolve("gold.fg", theme), resolve(background, theme));
+        expect(ratio, `gold.fg on ${background} (${theme})`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it("keeps the fill and the ink as separate values where they have to differ", () => {
+    // Dark mode may legitimately use one value for both — it has a dark ground
+    // to sit on. Light mode may not, and that is the case worth pinning.
+    expect(resolve("gold.fg", "_light")).not.toBe(resolve("gold.solid", "_light"));
+  });
+});
+
+/**
+ * The accent swaps ramp between themes rather than stop, which is unusual
+ * enough to be mistaken for a bug and "fixed" back to one ramp.
+ */
+describe("accent", () => {
+  it("is legible as a fill in both themes", () => {
+    for (const theme of ["_light", "_dark"] as const) {
+      const ratio = contrast(resolve("accent.solid", theme), resolve("accent.contrast", theme));
+      expect(ratio, `accent.contrast on accent.solid (${theme})`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("does not use a brand surface stop as the dark accent", () => {
+    // bg.surface is brand.900 in dark mode. An accent equal to it would be a
+    // navy button on a navy panel — invisible, and the reason dark mode hands
+    // the accent to lagoon.
+    expect(resolve("accent.solid", "_dark")).not.toBe(resolve("bg.surface", "_dark"));
+    expect(resolve("accent.solid", "_light")).not.toBe(resolve("bg.surface", "_light"));
   });
 });

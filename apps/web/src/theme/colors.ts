@@ -107,6 +107,52 @@ export const colors = defineTokens.colors({
     950: { value: "#0b2313" },
   },
 
+  // Not a brand seed, and not a neutral either. `bone` is the light-mode ground
+  // and the dark-mode ink — one ramp doing both jobs, which is what keeps the
+  // pixel treatment from needing a second palette per theme.
+  //
+  // It is deliberately warm. A 4px hard border and a pixel face read as a
+  // phosphor screen; a near-white page reads as a word processor, and gives the
+  // gold ramp below nothing to sit against.
+  bone: {
+    50: { value: "#faf9f5" },
+    100: { value: "#f2efe6" },
+    200: { value: "#e8e3d3" },
+    300: { value: "#ded8c6" },
+    400: { value: "#cfc8b2" },
+    500: { value: "#b8b099" },
+    600: { value: "#9a9280" },
+    700: { value: "#7b7466" },
+    800: { value: "#5c574d" },
+    900: { value: "#3d3a34" },
+    950: { value: "#1f1d1a" },
+  },
+
+  // Earned Titles, and the framing around Architect-authored content. Nothing
+  // else may use it, so gold always means either "you earned this" or "this is
+  // not the platform talking".
+  //
+  // It is separate from `amber` on purpose: amber is the warning status, and a
+  // Title that looked like a caution would be a worse mistake than an extra ramp.
+  //
+  // 400 is the fill and 700 is the ink, and the split is not cosmetic: #e8b33c
+  // as text measures 1.49:1 on bone.200 and 1.92:1 on white, nowhere near the
+  // 4.5:1 floor. On a light ground gold is something text sits *on*, never
+  // something text is written *with* — see `gold` in ./semantic-tokens.ts.
+  gold: {
+    50: { value: "#fdf6e5" },
+    100: { value: "#faebc4" },
+    200: { value: "#f5db94" },
+    300: { value: "#efc85f" },
+    400: { value: "#e8b33c" },
+    500: { value: "#d29a22" },
+    600: { value: "#b07d10" },
+    700: { value: "#7b5000" },
+    800: { value: "#6b4500" },
+    900: { value: "#4c3100" },
+    950: { value: "#2d1d00" },
+  },
+
   // Derived: warning.
   amber: {
     50: { value: "#fef4e8" },
