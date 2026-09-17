@@ -1,6 +1,8 @@
 import "server-only";
 import { Redis } from "ioredis";
 import { getServerEnv } from "./env";
+import { registerCloser } from "./shutdown-registry";
+import { log } from "./logger";
 
 /**
  * Three long-lived Redis connections per process:
@@ -18,13 +20,14 @@ const globalForRedis = globalThis as unknown as {
 };
 
 function createClient(): Redis {
+  registerCloser("redis", closeRedis);
   const client = new Redis(getServerEnv().REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
     lazyConnect: false,
   });
   client.on("error", (error: Error) => {
-    console.error("[redis] connection error:", error.message);
+    log.error("redis.connection_error", { errorMessage: error.message });
   });
   return client;
 }

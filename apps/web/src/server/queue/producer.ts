@@ -2,14 +2,19 @@ import "server-only";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import {
+  AppError,
+  EXECUTION_CONTRACT_VERSION,
   QUEUE_NAMES,
   RUN_JOB_OPTIONS,
   SUBMIT_JOB_OPTIONS,
   type ExecutionJob,
   executionJobSchema,
+  isExecutableLanguage,
 } from "@ambatucode/shared";
 import { getServerEnv } from "../env";
+import { getRedis } from "../redis";
 import { issueCallbackToken } from "../auth/callback-token";
+import { registerCloser } from "../shutdown-registry";
 
 /**
  * Queue producer. This is the only path from apps/web to code execution —
@@ -23,11 +28,13 @@ const globalForQueues = globalThis as unknown as {
   ambatucodeSubmitQueue?: Queue<ExecutionJob>;
 };
 
-function getConnection(): Redis {
+/** Shared by every BullMQ queue apps/web produces to, execution or not. */
+export function getConnection(): Redis {
   // BullMQ requires maxRetriesPerRequest to be null on its connection.
   globalForQueues.ambatucodeQueueConnection ??= new Redis(getServerEnv().REDIS_URL, {
     maxRetriesPerRequest: null,
   });
+  registerCloser("executionQueues", closeQueueConnection);
   return globalForQueues.ambatucodeQueueConnection;
 }
 
@@ -45,7 +52,50 @@ export function getSubmitQueue(): Queue<ExecutionJob> {
   return globalForQueues.ambatucodeSubmitQueue;
 }
 
-export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken">;
+/**
+ * `contractVersion` and `callbackToken` are stamped here rather than supplied
+ * by callers: one is a property of the wire format and the other is a
+ * credential, and neither is a decision a calling service should be making.
+ */
+export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken" | "contractVersion">;
+
+/** Who is waiting on this job's result. Never travels in the job payload. */
+export type ExecutionJobOwner = { userId: string };
+
+/**
+ * A RUN leaves no row behind — that is the whole point of a Run — so this key
+ * is the only record of who to hand the result to when the worker calls back.
+ * A SUBMIT needs no equivalent: its `Submission` row already names the user and
+ * outlives any expiry.
+ *
+ * The TTL comfortably outlives the 5-minute life of a run job. If it lapses
+ * anyway the result is simply not delivered, which is the correct failure for
+ * a Run: nothing was graded and nothing was lost.
+ */
+export const RUN_OWNER_TTL_SECONDS = 900;
+
+export function runOwnerKey(jobId: string): string {
+  return `execution:run-owner:${jobId}`;
+}
+
+/**
+ * Which Practice Activity a Run belongs to, when it belongs to one.
+ *
+ * Kept beside the owner key rather than inside it so an assessment Run — which
+ * has no activity — carries nothing extra, and so the owner record keeps the
+ * single meaning it already had. Practice progress is a counter, and a lapsed
+ * key simply means one run went uncounted.
+ */
+export function practiceRunKey(jobId: string): string {
+  return `execution:run-practice:${jobId}`;
+}
+
+export async function rememberPracticeRun(
+  jobId: string,
+  practiceActivityId: string,
+): Promise<void> {
+  await getRedis().set(practiceRunKey(jobId), practiceActivityId, "EX", RUN_OWNER_TTL_SECONDS);
+}
 
 /**
  * Enqueues one execution job.
@@ -58,13 +108,34 @@ export type ExecutionJobInput = Omit<ExecutionJob, "callbackToken">;
  * process: the Go worker parses it strictly, and a malformed job would fail
  * there with far less context than it does here.
  */
-export async function enqueueExecutionJob(input: ExecutionJobInput): Promise<string> {
+export async function enqueueExecutionJob(
+  input: ExecutionJobInput,
+  owner: ExecutionJobOwner,
+): Promise<string> {
   const job: ExecutionJob = {
     ...input,
+    contractVersion: EXECUTION_CONTRACT_VERSION,
     callbackToken: issueCallbackToken(input.jobId),
   };
 
   const parsed = executionJobSchema.parse(job);
+
+  // The schema accepts every language the product knows about; only those with
+  // a built sandbox image can run. Refusing here turns a mis-configured
+  // Assessment into an immediate, explainable rejection instead of a
+  // SYSTEM_ERROR the Coder discovers after their attempt is already spent.
+  //
+  // Widened to a string on purpose. The two lists agree today, so the compiler
+  // can prove this branch unreachable and types the value as `never` — but the
+  // guard is a runtime fact about which images were built, not a proof, and it
+  // is the only thing that would catch one being dropped.
+  const requested: string = parsed.language;
+  if (!isExecutableLanguage(requested)) {
+    throw new AppError(
+      "LANGUAGE_NOT_ALLOWED",
+      `No execution environment is available for ${requested}`,
+    );
+  }
 
   if (parsed.kind === "RUN") {
     // A hidden case in a run payload would be a direct leak of grading data.
@@ -72,9 +143,10 @@ export async function enqueueExecutionJob(input: ExecutionJobInput): Promise<str
     if (leaked.length > 0) {
       throw new Error("RUN jobs may only carry public test cases");
     }
-    if (parsed.testScript !== null) {
-      throw new Error("RUN jobs may not carry a test script");
-    }
+    // Written before the job is queued. The worker can finish a trivial run in
+    // well under a second, and a result that arrives before its owner is
+    // recorded has nowhere to go.
+    await getRedis().set(runOwnerKey(parsed.jobId), owner.userId, "EX", RUN_OWNER_TTL_SECONDS);
     await getRunQueue().add(QUEUE_NAMES.RUN, parsed, {
       ...RUN_JOB_OPTIONS,
       jobId: parsed.jobId,

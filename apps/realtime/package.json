@@ -13,6 +13,7 @@
     "@ambatucode/db": "workspace:*",
     "@ambatucode/shared": "workspace:*",
     "@socket.io/redis-adapter": "^8.3.0",
+    "bullmq": "^5.81.4",
     "ioredis": "^5.11.1",
     "socket.io": "^4.8.3",
     "zod": "^4.5.4"
@@ -20,9 +21,9 @@
   "devDependencies": {
     "@types/node": "^22.20.1",
     "dotenv-cli": "^11.0.0",
+    "socket.io-client": "^4.8.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.7",
-    "socket.io-client": "^4.8.3"
+    "vitest": "^3.2.7"
   }
 }

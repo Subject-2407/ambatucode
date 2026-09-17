@@ -1,0 +1,141 @@
+package config
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLoadAppliesDefaults(t *testing.T) {
+	t.Setenv("REDIS_URL", "")
+	t.Setenv("EXECUTION_CALLBACK_URL", "")
+	t.Setenv("WORKER_CONCURRENCY", "")
+	t.Setenv("WORKER_MAX_CONTAINERS", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.QueuePrefix != defaultQueuePrefix {
+		t.Fatalf("queue prefix = %q, want %q", cfg.QueuePrefix, defaultQueuePrefix)
+	}
+	if cfg.Concurrency < 1 || cfg.Concurrency > 16 {
+		t.Fatalf("default concurrency %d outside the documented bound", cfg.Concurrency)
+	}
+	if cfg.MaxContainers != cfg.Concurrency {
+		t.Fatalf("containers default %d should match concurrency %d", cfg.MaxContainers, cfg.Concurrency)
+	}
+}
+
+// Container slots nothing can claim are dead capacity that hides a
+// misconfiguration behind apparently healthy behaviour.
+func TestLoadRejectsMoreContainersThanGoroutines(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "2")
+	t.Setenv("WORKER_MAX_CONTAINERS", "8")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "WORKER_MAX_CONTAINERS") {
+		t.Fatalf("expected a container/concurrency mismatch error, got %v", err)
+	}
+}
+
+func TestDefaultSubmitReserveKeepsASlotForRuns(t *testing.T) {
+	cases := map[int]int{1: 0, 2: 1, 4: 1, 8: 2, 16: 4}
+	for maxContainers, want := range cases {
+		if got := defaultReservedSubmit(maxContainers); got != want {
+			t.Errorf("reserve for %d containers = %d, want %d", maxContainers, got, want)
+		}
+	}
+}
+
+// Reserving every slot would leave practice runs no capacity at all.
+func TestLoadRejectsAReserveThatStarvesRuns(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "4")
+	t.Setenv("WORKER_MAX_CONTAINERS", "4")
+	t.Setenv("WORKER_SUBMIT_RESERVED_CONTAINERS", "4")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "WORKER_SUBMIT_RESERVED_CONTAINERS") {
+		t.Fatalf("expected a reserve error, got %v", err)
+	}
+}
+
+func TestLoadAcceptsAnExplicitReserve(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "4")
+	t.Setenv("WORKER_MAX_CONTAINERS", "4")
+	t.Setenv("WORKER_SUBMIT_RESERVED_CONTAINERS", "3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ReservedSubmitContainers != 3 {
+		t.Fatalf("reserve = %d, want 3", cfg.ReservedSubmitContainers)
+	}
+}
+
+func TestLoadRejectsRelativeCallbackURL(t *testing.T) {
+	t.Setenv("EXECUTION_CALLBACK_URL", "/api/internal/execution/result")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "EXECUTION_CALLBACK_URL") {
+		t.Fatalf("expected an absolute-URL error, got %v", err)
+	}
+}
+
+func TestLoadRejectsNonNumericConcurrency(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "plenty")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a non-numeric concurrency")
+	}
+}
+
+func TestLoadRejectsZeroConcurrency(t *testing.T) {
+	t.Setenv("WORKER_CONCURRENCY", "0")
+	t.Setenv("WORKER_MAX_CONTAINERS", "0")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for zero concurrency")
+	}
+}
+
+func TestLoadRejectsUnknownLogLevel(t *testing.T) {
+	t.Setenv("WORKER_LOG_LEVEL", "chatty")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for an unknown log level")
+	}
+}
+
+// The stalled defaults match BullMQ's own worker, so a Go worker and a Node
+// worker sharing a queue treat an abandoned job the same way.
+func TestLoadAppliesBullMQStalledDefaults(t *testing.T) {
+	t.Setenv("WORKER_STALLED_INTERVAL_MS", "")
+	t.Setenv("WORKER_MAX_STALLED_COUNT", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.StalledInterval != 30*time.Second || cfg.MaxStalledCount != 1 {
+		t.Fatalf("stalled interval %s and max count %d, want 30s and 1",
+			cfg.StalledInterval, cfg.MaxStalledCount)
+	}
+}
+
+func TestLoadRejectsANegativeMaxStalledCount(t *testing.T) {
+	t.Setenv("WORKER_MAX_STALLED_COUNT", "-1")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a negative max stalled count")
+	}
+}
+
+func TestLoadRejectsAnUnusablyShortLockDuration(t *testing.T) {
+	t.Setenv("WORKER_LOCK_DURATION_MS", "100")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a sub-second lock duration")
+	}
+}

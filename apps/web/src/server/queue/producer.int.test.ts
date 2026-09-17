@@ -1,15 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   DEFAULT_EXECUTION_LIMITS,
-  QUEUE_NAMES,
   type ExecutionJob,
   executionJobSchema,
 } from "@ambatucode/shared";
 import { verifyCallbackToken } from "../auth/callback-token";
-import { closeQueueConnection, enqueueExecutionJob, type ExecutionJobInput } from "./producer";
+import { closeRedis } from "../redis";
+import {
+  RUN_OWNER_TTL_SECONDS,
+  closeQueueConnection,
+  enqueueExecutionJob,
+  getRunQueue,
+  runOwnerKey,
+  type ExecutionJobInput,
+} from "./producer";
+
+/** Stands in for the Coder who pressed Run. Any stable id will do. */
+const OWNER = { userId: "usr_producer_int_test" };
 
 /**
  * Proves the producer half of the execution pipeline: a job serialises through
@@ -23,6 +32,7 @@ const connection = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", 
 
 afterAll(async () => {
   await closeQueueConnection();
+  await closeRedis();
   await connection.quit();
 });
 
@@ -43,57 +53,39 @@ function buildRunJob(overrides: Partial<ExecutionJobInput> = {}): ExecutionJobIn
         weight: 1,
         isPublic: true,
         comparison: "TRIMMED",
+        timeLimitMs: null,
+        memoryLimitMb: null,
       },
     ],
-    testScript: null,
+    testScripts: [],
     ...overrides,
   };
 }
 
 /**
- * BullMQ blocks on its worker connection, so the worker gets a duplicate
- * rather than sharing the one used for assertions. The processor resolves and
- * returns immediately — closing the worker from inside its own processor would
- * deadlock, since close() waits for the active job to finish.
+ * Reads the queued job straight back out of Redis by its id.
+ *
+ * Deliberately not done by attaching a consumer: any worker connected to the
+ * same Redis — a developer's `go run ./cmd/worker`, another test run — is a
+ * competing consumer, and the job would be delivered to whichever asked first.
+ * That made this spec pass or fail depending on what else happened to be
+ * running. What it needs to prove is that the payload survives serialisation
+ * intact, and reading it back proves exactly that. Whether a worker can
+ * receive it is settled far more convincingly by the Go worker's own suite.
  */
-async function consumeOne(queueName: string, jobId: string): Promise<ExecutionJob> {
-  let worker: Worker<ExecutionJob> | undefined;
-
-  const received = new Promise<ExecutionJob>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for the job")), 15_000);
-
-    worker = new Worker<ExecutionJob>(
-      queueName,
-      (job) => {
-        if (job.data.jobId === jobId) {
-          clearTimeout(timeout);
-          resolve(job.data);
-        }
-        return Promise.resolve();
-      },
-      { connection: connection.duplicate() },
-    );
-
-    worker.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-  });
-
-  try {
-    return await received;
-  } finally {
-    await worker?.close();
-  }
+async function readBack(jobId: string): Promise<ExecutionJob> {
+  const job = await getRunQueue().getJob(jobId);
+  if (!job) throw new Error(`Job ${jobId} was not found on the queue`);
+  return job.data;
 }
 
 describe("enqueueExecutionJob", () => {
   it("round-trips a RUN job through Redis with a verifiable callback token", async () => {
     const input = buildRunJob();
-    const jobId = await enqueueExecutionJob(input);
+    const jobId = await enqueueExecutionJob(input, OWNER);
     expect(jobId).toBe(input.jobId);
 
-    const received = await consumeOne(QUEUE_NAMES.RUN, input.jobId);
+    const received = await readBack(input.jobId);
 
     // The worker parses the payload strictly; assert it satisfies the contract.
     expect(() => executionJobSchema.parse(received)).not.toThrow();
@@ -116,22 +108,72 @@ describe("enqueueExecutionJob", () => {
           weight: 1,
           isPublic: false,
           comparison: "EXACT",
+          timeLimitMs: null,
+          memoryLimitMb: null,
         },
       ],
     });
 
-    await expect(enqueueExecutionJob(input)).rejects.toThrow(
+    await expect(enqueueExecutionJob(input, OWNER)).rejects.toThrow(
       /RUN jobs may only carry public test cases/,
     );
   });
 
-  it("refuses to put a test script in a RUN payload", async () => {
+  // A Practice Activity's scripts ride on its Run. Nothing of a script comes
+  // back to the Coder but test names and verdicts, so there is nothing to strip.
+  it("carries test scripts in a RUN payload", async () => {
     const input = buildRunJob({
-      testScript: { framework: "PYTEST", entrypoint: "test_main.py", files: [] },
+      testScripts: [
+        {
+          id: "script-1",
+          framework: "PYTEST",
+          path: "test_main.py",
+          content: "def test_ok():\n    pass\n",
+          weight: 1,
+        },
+      ],
     });
+    const jobId = await enqueueExecutionJob(input, OWNER);
 
-    await expect(enqueueExecutionJob(input)).rejects.toThrow(
-      /RUN jobs may not carry a test script/,
-    );
+    const job = await getRunQueue().getJob(jobId);
+    expect(job?.data.testScripts.map((script) => script.id)).toEqual(["script-1"]);
+  });
+
+  /**
+   * A Run writes no database row, so this key is the only thing that says who
+   * the result belongs to. Losing it means a Coder watching a spinner that
+   * never resolves.
+   */
+  it("records the Run's owner so the result can be delivered", async () => {
+    const input = buildRunJob();
+    await enqueueExecutionJob(input, OWNER);
+
+    const key = runOwnerKey(input.jobId);
+    expect(await connection.get(key)).toBe(OWNER.userId);
+
+    // Bounded, and comfortably longer than the job's own 5-minute life.
+    const ttl = await connection.ttl(key);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(RUN_OWNER_TTL_SECONDS);
+
+    await connection.del(key);
+  });
+
+  it("refuses a language the worker could not run, without queueing it", async () => {
+    // Two gates guard this, in order. The contract schema refuses anything
+    // outside the product vocabulary, and behind it the executable-language
+    // check refuses a language that has no sandbox image — the one that would
+    // catch an image dropped from docker/sandbox without the registry being
+    // narrowed. Every language currently has an image, so what fires here is
+    // the schema; both exist so a mis-configuration cannot reach a Coder as a
+    // SYSTEM_ERROR after their attempt is already spent.
+    const input = buildRunJob({ language: "pascal" as unknown as ExecutionJob["language"] });
+
+    await expect(enqueueExecutionJob(input, OWNER)).rejects.toThrow();
+
+    // The rejection happens before anything is written, so no owner record is
+    // left behind to expire on its own.
+    expect(await connection.get(runOwnerKey(input.jobId))).toBeNull();
+    expect(await getRunQueue().getJob(input.jobId)).toBeUndefined();
   });
 });

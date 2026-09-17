@@ -41,6 +41,7 @@ model User {
   startedSessions   AssessmentSession[]     @relation("SessionStartedBy")
   events            AssessmentEvent[]
   achievements      UserAchievement[]
+  practiceProgress  PracticeProgress[]
 
   @@index([role])
 }
@@ -152,24 +153,57 @@ model Material {
 }
 
 model PracticeActivity {
-  id               String   @id @default(cuid())
-  materialId       String
-  title            String
-  orderIndex       Int
-  prompt           String
-  starterCodeJson  Json     @default("{}")
-  allowedLanguages String[]
-  timeLimitMs      Int      @default(5000)
-  memoryLimitMb    Int      @default(256)
+  id                     String   @id @default(cuid())
+  materialId             String
+  title                  String
+  orderIndex             Int
+  prompt                 String
+  starterCodeJson        Json     @default("{}")
+  allowedLanguages       String[]
+  timeLimitMs            Int      @default(5000)
+  memoryLimitMb          Int      @default(256)
   // Practice cases are all visible to the Coder. No hidden cases live here and
   // Practice never writes a Submission row.
-  testCasesJson    Json     @default("[]")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  testCasesJson          Json     @default("[]")
+  // Architect-only source per language, never sent to a Coder: the program
+  // test scripts are validated against.
+  referenceSolutionsJson Json     @default("{}")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  material    Material             @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  testScripts PracticeTestScript[]
+  progress    PracticeProgress[]
 
   @@index([materialId, orderIndex])
+}
+
+// A Practice Activity's structural or unit test file. Unlike its cases, which
+// a Coder reads, a script is Architect-only: it lives in its own table so the
+// Coder-facing activity read cannot select it by accident. A Run shows the
+// Coder each test's name and whether it passed, and nothing of the file.
+model PracticeTestScript {
+  id                  String                     @id @default(cuid())
+  practiceActivityId  String
+  language            String
+  framework           TestScriptFramework
+  path                String
+  content             String
+  // Validation against the reference solution. Reset to UNVALIDATED whenever
+  // the script or the reference solution for its language changes;
+  // validationJobId ties a result to the request that asked for it, so a
+  // late result cannot mark a script that has since been edited.
+  validationStatus    TestScriptValidationStatus @default(UNVALIDATED)
+  validationJobId     String?
+  validationSummary   String?
+  validationChangedAt DateTime?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+
+  practiceActivity PracticeActivity @relation(fields: [practiceActivityId], references: [id], onDelete: Cascade)
+
+  // Uploading a file to a path the language already has replaces it.
+  @@unique([practiceActivityId, language, path])
 }
 
 // ---------------------------------------------------------------------------
@@ -192,23 +226,26 @@ enum GradingStrategy {
 }
 
 model Assessment {
-  id                  String                   @id @default(cuid())
-  sectionId           String
-  title               String
-  orderIndex          Int
-  problemStatement    String
-  starterCodeJson     Json                     @default("{}")
-  allowedLanguages    String[]
-  timeMode            TimeMode                 @default(UNTIMED)
-  durationMinutes     Int?
-  executionMode       AssessmentExecutionMode?
-  timeLimitMs         Int                      @default(5000)
-  memoryLimitMb       Int                      @default(256)
-  gradingStrategy     GradingStrategy          @default(WEIGHTED_AVERAGE)
-  antiCheatConfigJson Json                     @default("{}")
-  isPublished         Boolean                  @default(false)
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
+  id                     String                   @id @default(cuid())
+  sectionId              String
+  title                  String
+  orderIndex             Int
+  problemStatement       String
+  starterCodeJson        Json                     @default("{}")
+  allowedLanguages       String[]
+  timeMode               TimeMode                 @default(UNTIMED)
+  durationMinutes        Int?
+  executionMode          AssessmentExecutionMode?
+  timeLimitMs            Int                      @default(5000)
+  memoryLimitMb          Int                      @default(256)
+  gradingStrategy        GradingStrategy          @default(WEIGHTED_AVERAGE)
+  antiCheatConfigJson    Json                     @default("{}")
+  // Architect-only source per language, never sent to a Coder: the program
+  // test scripts are validated against.
+  referenceSolutionsJson Json                     @default("{}")
+  isPublished            Boolean                  @default(false)
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
 
   section     Section                @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   testCases   AssessmentTestCase[]
@@ -257,24 +294,52 @@ enum TestScriptFramework {
   JUNIT
   JEST
   PYTEST
+  GOOGLETEST
   CUSTOM
+}
+
+// Whether a script has been run against the Architect's reference solution
+// since either last changed. Advisory only: nothing refuses an unvalidated
+// script, but an Architect is warned before a Coder meets a broken one.
+enum TestScriptValidationStatus {
+  UNVALIDATED
+  VALIDATING
+  PASSED
+  FAILED
 }
 
 // Architect-only data. Never serialized into a Coder-facing response.
 model AssessmentTestScript {
-  id           String              @id @default(cuid())
-  assessmentId String
-  language     String
-  framework    TestScriptFramework
-  entrypoint   String
-  filesJson    Json                @default("[]")
-  weight       Int                 @default(1)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id                  String                     @id @default(cuid())
+  assessmentId        String
+  language            String
+  framework           TestScriptFramework
+  entrypoint          String
+  filesJson           Json                       @default("[]")
+  weight              Int                        @default(1)
+  // Opt-in: a Coder sees each of this script's test names and whether it
+  // passed on their graded submission. Never its source or its output. Fixed
+  // on each result row when it is graded, so changing it rewrites no history.
+  showTestNames       Boolean                    @default(false)
+  // Validation against the reference solution. Reset to UNVALIDATED whenever
+  // the script or the reference solution for its language changes;
+  // validationJobId ties a result to the request that asked for it, so a
+  // late result cannot mark a script that has since been edited.
+  validationStatus    TestScriptValidationStatus @default(UNVALIDATED)
+  validationJobId     String?
+  validationSummary   String?
+  validationChangedAt DateTime?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
 
-  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  assessment Assessment             @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  results    SubmissionTestResult[]
 
-  @@index([assessmentId])
+  // Each script is a single file: filesJson holds exactly that one, at
+  // `entrypoint`. A language may have several; a submission job carries every
+  // script for the language the Coder submitted in, and uploading to a path
+  // the language already has replaces that script.
+  @@unique([assessmentId, language, entrypoint])
 }
 
 enum AssessmentSessionStatus {
@@ -324,6 +389,11 @@ model AssessmentParticipant {
   id                 String          @id @default(cuid())
   sessionId          String
   userId             String
+  // True for a Coder the Architect put on the participant list. A Coder who
+  // joins an open Individual or Untimed session gets a row too, so their
+  // connection can be tracked, but that row must not turn the session into a
+  // restricted one — a session is restricted only while a listed row exists.
+  isListed           Boolean         @default(true)
   readyState         ReadyState      @default(NOT_READY)
   connectionState    ConnectionState @default(OFFLINE)
   activeConnectionId String?
@@ -336,6 +406,7 @@ model AssessmentParticipant {
 
   @@unique([sessionId, userId])
   @@index([sessionId, connectionState])
+  @@index([sessionId, isListed])
 }
 
 enum AttemptStatus {
@@ -356,6 +427,10 @@ model AssessmentAttempt {
   individualDeadlineAt DateTime?
   consumedMs           Int           @default(0)
   pausedAt             DateTime?
+  // Runs the Coder spent on this attempt. A Run is not history and writes no
+  // Submission; this is a counter so gamification can tell a first-try solve
+  // from a twentieth, and nothing else reads it.
+  runCount             Int           @default(0)
   // At most one attempt per (sessionId, userId) may be official. The siblings
   // hold false rather than null, so a partial unique index cannot express it —
   // the official-score transaction enforces it instead.
@@ -436,22 +511,28 @@ model Submission {
 }
 
 model SubmissionTestResult {
-  id              String   @id @default(cuid())
+  id              String            @id @default(cuid())
   submissionId    String
   testCaseId      String?
+  // The script a script test came from. Null for a case, and once that script
+  // is deleted; the row itself, with its name and verdict, stays.
+  testScriptId    String?
   name            String
+  // How this case alone ended. Null on rows graded before it was recorded.
+  status          SubmissionStatus?
   passed          Boolean
-  weight          Int      @default(1)
+  weight          Int               @default(1)
   executionTimeMs Int?
   memoryUsedKb    Int?
-  stdoutExcerpt   String   @default("")
-  stderrExcerpt   String   @default("")
+  stdoutExcerpt   String            @default("")
+  stderrExcerpt   String            @default("")
   // Rows with isPublic = false are stripped before any Coder-facing response.
-  isPublic        Boolean  @default(false)
-  createdAt       DateTime @default(now())
+  isPublic        Boolean           @default(false)
+  createdAt       DateTime          @default(now())
 
-  submission Submission          @relation(fields: [submissionId], references: [id], onDelete: Cascade)
-  testCase   AssessmentTestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  submission Submission            @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  testCase   AssessmentTestCase?   @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  testScript AssessmentTestScript? @relation(fields: [testScriptId], references: [id], onDelete: SetNull)
 
   @@index([submissionId])
 }
@@ -462,6 +543,9 @@ enum AssessmentEventType {
   ATTEMPT_STARTED
   ATTEMPT_SUBMITTED
   ATTEMPT_AUTO_SUBMITTED
+  // The deadline or the session end arrived with no draft on the server, so
+  // there was no code to submit on the Coder's behalf.
+  ATTEMPT_EXPIRED
   CONNECTED
   DISCONNECTED
   RECONNECTED
@@ -524,5 +608,31 @@ model UserAchievement {
   achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
 
   @@unique([userId, achievementId])
+  @@index([userId])
+}
+
+// How much practice one Coder has done on one Practice Activity.
+//
+// Practice deliberately writes no Submission and produces no grade, and that
+// stays true: this is a counter, not a record. It holds how many times the
+// activity was run and whether every one of its checks has ever passed, so
+// gamification can recognise practice without turning practice into an
+// assessment. Nothing in grading reads it.
+model PracticeProgress {
+  id                 String    @id @default(cuid())
+  userId             String
+  practiceActivityId String
+  runCount           Int       @default(0)
+  // Set the first time every case and script test passed together. Never
+  // cleared: a later failing run does not un-learn the activity.
+  passedAllAt        DateTime?
+  lastRunAt          DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  practiceActivity PracticeActivity @relation(fields: [practiceActivityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, practiceActivityId])
   @@index([userId])
 }

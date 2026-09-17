@@ -15,6 +15,7 @@
 import { Worker } from "bullmq";
 import { Redis } from "ioredis";
 import {
+  EXECUTION_CONTRACT_VERSION,
   QUEUE_NAMES,
   type ExecutionJob,
   type ExecutionResult,
@@ -29,6 +30,7 @@ const connection = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
 
 function fabricateResult(job: ExecutionJob): ExecutionResult {
   return {
+    contractVersion: EXECUTION_CONTRACT_VERSION,
     jobId: job.jobId,
     submissionId: job.submissionId,
     status: "GRADED",
@@ -38,7 +40,9 @@ function fabricateResult(job: ExecutionJob): ExecutionResult {
     memoryUsedKb: 4_096,
     testResults: job.testCases.map((testCase) => ({
       testCaseId: testCase.id,
+      testScriptId: null,
       name: testCase.name,
+      status: "GRADED",
       passed: true,
       weight: testCase.weight,
       executionTimeMs: 4,

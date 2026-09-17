@@ -30,8 +30,16 @@ export type FocusLossAction = (typeof FOCUS_LOSS_ACTIONS)[number];
 export const TEST_CASE_KINDS = ["PUBLIC", "HIDDEN"] as const;
 export type TestCaseKind = (typeof TEST_CASE_KINDS)[number];
 
-export const TEST_SCRIPT_FRAMEWORKS = ["JUNIT", "JEST", "PYTEST", "CUSTOM"] as const;
+export const TEST_SCRIPT_FRAMEWORKS = ["JUNIT", "JEST", "PYTEST", "GOOGLETEST", "CUSTOM"] as const;
 export type TestScriptFramework = (typeof TEST_SCRIPT_FRAMEWORKS)[number];
+
+export const TEST_SCRIPT_VALIDATION_STATUSES = [
+  "UNVALIDATED",
+  "VALIDATING",
+  "PASSED",
+  "FAILED",
+] as const;
+export type TestScriptValidationStatus = (typeof TEST_SCRIPT_VALIDATION_STATUSES)[number];
 
 export const COMPARISON_MODES = ["EXACT", "TRIMMED", "TOKEN", "NUMERIC_TOLERANT"] as const;
 export type ComparisonMode = (typeof COMPARISON_MODES)[number];
@@ -72,6 +80,19 @@ export const SUBMISSION_STATUSES = [
 ] as const;
 export type SubmissionStatus = (typeof SUBMISSION_STATUSES)[number];
 
+/**
+ * How one test case or one script test ended. A subset of the submission
+ * statuses: compiling happens once per submission and a platform failure ends
+ * the whole job, so neither can describe a single case.
+ */
+export const TEST_RESULT_STATUSES = [
+  "GRADED",
+  "RUNTIME_ERROR",
+  "TIME_LIMIT_EXCEEDED",
+  "MEMORY_LIMIT_EXCEEDED",
+] as const satisfies readonly SubmissionStatus[];
+export type TestResultStatus = (typeof TEST_RESULT_STATUSES)[number];
+
 /** Statuses the pipeline may still move away from. Everything else is final. */
 export const NON_TERMINAL_SUBMISSION_STATUSES: readonly SubmissionStatus[] = ["QUEUED", "RUNNING"];
 
@@ -85,6 +106,7 @@ export const ASSESSMENT_EVENT_TYPES = [
   "ATTEMPT_STARTED",
   "ATTEMPT_SUBMITTED",
   "ATTEMPT_AUTO_SUBMITTED",
+  "ATTEMPT_EXPIRED",
   "CONNECTED",
   "DISCONNECTED",
   "RECONNECTED",
@@ -103,4 +125,39 @@ export type Language = (typeof LANGUAGES)[number];
 
 export function isLanguage(value: string): value is Language {
   return (LANGUAGES as readonly string[]).includes(value);
+}
+
+/**
+ * The subset of `LANGUAGES` the execution worker can actually run today —
+ * those with a built sandbox image and an entry in the worker's language
+ * registry (`apps/worker/internal/language/registry.go`). The two lists must
+ * be widened in the same change.
+ *
+ * They are separate because `LANGUAGES` is the product's vocabulary while this
+ * is a deployment fact. Without the distinction an Architect can offer a
+ * language nothing can execute, and the Coder discovers it as a SYSTEM_ERROR
+ * after spending an attempt — a failure that surfaces at the worst possible
+ * moment and looks like their fault.
+ *
+ * The two lists happen to agree today. Keeping them apart still earns its
+ * keep: it is what lets a language be added to the vocabulary before its image
+ * exists, and it is the only thing that would catch an image being dropped.
+ */
+export const EXECUTABLE_LANGUAGES = [
+  "python",
+  "javascript",
+  "java",
+  "cpp",
+] as const satisfies readonly Language[];
+
+/**
+ * Narrower than `Language` on purpose. `satisfies` still rejects an entry that
+ * is not a real language, but keeping the literals means a caller that rules
+ * this out is left with the languages that actually lack an image rather than
+ * with `never`.
+ */
+export type ExecutableLanguage = (typeof EXECUTABLE_LANGUAGES)[number];
+
+export function isExecutableLanguage(value: string): value is ExecutableLanguage {
+  return (EXECUTABLE_LANGUAGES as readonly string[]).includes(value);
 }

@@ -1,13 +1,22 @@
 import { z } from "zod";
-import type {
-  AssessmentEventType,
-  AssessmentSessionStatus,
-  AttemptStatus,
-  ConnectionState,
-  Language,
-  ReadyState,
-  SubmissionStatus,
+import {
+  LEADERBOARD_SCOPES,
+  achievementAwardedPayloadSchema,
+  leaderboardUpdatePayloadSchema,
+  type AchievementAwardedPayload,
+  type LeaderboardScope,
+  type LeaderboardUpdatePayload,
+} from "./schemas/gamification";
+import {
+  ASSESSMENT_EVENT_TYPES,
+  ASSESSMENT_SESSION_STATUSES,
+  CONNECTION_STATES,
+  LANGUAGES,
+  READY_STATES,
+  SUBMISSION_STATUSES,
+  TEST_RESULT_STATUSES,
 } from "./enums";
+import type { AttemptStatus, Language } from "./enums";
 
 /**
  * The single source of truth for Socket.IO event names and payloads. Never
@@ -23,6 +32,8 @@ export const CLIENT_EVENTS = {
   ANTICHEAT_FOCUS: "anticheat:focus",
   ANTICHEAT_CLIPBOARD: "anticheat:clipboard",
   MONITOR_JOIN: "monitor:join",
+  LEADERBOARD_JOIN: "leaderboard:join",
+  LEADERBOARD_LEAVE: "leaderboard:leave",
 } as const;
 
 export const SERVER_EVENTS = {
@@ -39,6 +50,7 @@ export const SERVER_EVENTS = {
   MONITOR_PARTICIPANT: "monitor:participant",
   MONITOR_EVENT: "monitor:event",
   LEADERBOARD_UPDATE: "leaderboard:update",
+  ACHIEVEMENT_AWARDED: "achievement:awarded",
 } as const;
 
 // --- Room names -------------------------------------------------------------
@@ -47,6 +59,13 @@ export const rooms = {
   user: (userId: string) => `user:${userId}` as const,
   session: (sessionId: string) => `session:${sessionId}` as const,
   monitor: (sessionId: string) => `monitor:${sessionId}` as const,
+  /**
+   * Watchers of one leaderboard. Joining is authorized against the Module the
+   * board belongs to, so membership of this room is itself the permission
+   * check — nothing is filtered on the way out.
+   */
+  leaderboard: (scope: LeaderboardScope, scopeId: string) =>
+    `leaderboard:${scope}:${scopeId}` as const,
 };
 
 // --- Client -> server payloads (validated on arrival) -----------------------
@@ -59,8 +78,8 @@ export const attemptReadyPayloadSchema = z.object({
 });
 export const attemptDraftPayloadSchema = z.object({
   attemptId: z.string().min(1),
-  language: z.string().min(1),
-  sourceCode: z.string(),
+  language: z.enum(LANGUAGES),
+  sourceCode: z.string().max(200_000),
 });
 export const anticheatFocusPayloadSchema = z.object({
   attemptId: z.string().min(1),
@@ -71,6 +90,10 @@ export const anticheatClipboardPayloadSchema = z.object({
   action: z.enum(["COPY", "PASTE", "CUT", "CONTEXT_MENU"]),
 });
 export const monitorJoinPayloadSchema = z.object({ sessionId: z.string().min(1) });
+export const leaderboardJoinPayloadSchema = z.object({
+  scope: z.enum(LEADERBOARD_SCOPES),
+  scopeId: z.string().min(1),
+});
 
 export type AttemptJoinPayload = z.infer<typeof attemptJoinPayloadSchema>;
 export type AttemptHeartbeatPayload = z.infer<typeof attemptHeartbeatPayloadSchema>;
@@ -79,6 +102,7 @@ export type AttemptDraftPayload = z.infer<typeof attemptDraftPayloadSchema>;
 export type AnticheatFocusPayload = z.infer<typeof anticheatFocusPayloadSchema>;
 export type AnticheatClipboardPayload = z.infer<typeof anticheatClipboardPayloadSchema>;
 export type MonitorJoinPayload = z.infer<typeof monitorJoinPayloadSchema>;
+export type LeaderboardJoinPayload = z.infer<typeof leaderboardJoinPayloadSchema>;
 
 /** Every client event is acked so the browser can surface a rejection. */
 export type Ack = { ok: true } | { ok: false; code: string; message: string };
@@ -102,52 +126,138 @@ export type AttemptStatePayload = {
 export type AttemptTickPayload = { remainingMs: number; serverTimeMs: number };
 export type AttemptPausedPayload = { consumedMs: number };
 export type AttemptResumedPayload = { consumedMs: number };
-export type AttemptAutoSubmittedPayload = { submissionId: string };
+export const attemptAutoSubmittedPayloadSchema = z.object({ submissionId: z.string().min(1) });
+export type AttemptAutoSubmittedPayload = z.infer<typeof attemptAutoSubmittedPayloadSchema>;
 export type AttemptWarningPayload = { code: string; message: string };
 export type AttemptSupersededPayload = Record<string, never>;
 
-export type SessionCounts = { ready: number; notReady: number; offline: number; total: number };
-export type SessionStatePayload = {
-  sessionId: string;
-  status: AssessmentSessionStatus;
-  endsAt: number | null;
-  counts: SessionCounts;
-};
-export type SessionStartedPayload = { sessionId: string; endsAt: number; serverTimeMs: number };
+/**
+ * The payloads below are schemas rather than bare types because they cross a
+ * process boundary: apps/web publishes them on Redis and apps/realtime forwards
+ * them to browsers, so a shape apps/web did not promise must die on arrival.
+ */
 
-export type SubmissionStatusPayload = {
-  submissionId: string;
-  status: SubmissionStatus;
-  score?: number | null;
-};
+/**
+ * Mutually exclusive, so they add up to the listed total: a participant who is
+ * offline counts as offline whatever their last readiness was, because a
+ * "ready" Coder who is not connected is not ready.
+ */
+export const sessionCountsSchema = z.object({
+  ready: z.number().int().nonnegative(),
+  notReady: z.number().int().nonnegative(),
+  offline: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+export type SessionCounts = z.infer<typeof sessionCountsSchema>;
 
-export type MonitorParticipantPayload = {
-  sessionId: string;
-  userId: string;
-  displayName: string;
-  readyState: ReadyState;
-  connectionState: ConnectionState;
-  lastSeenAt: number | null;
-};
+export const sessionStatePayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  status: z.enum(ASSESSMENT_SESSION_STATUSES),
+  endsAt: z.number().nullable(),
+  counts: sessionCountsSchema,
+});
+export type SessionStatePayload = z.infer<typeof sessionStatePayloadSchema>;
 
-export type MonitorEventPayload = {
-  id: string;
-  sessionId: string;
-  userId: string | null;
-  attemptId: string | null;
-  type: AssessmentEventType;
-  durationMs: number | null;
-  occurredAt: number;
-};
+/** `endsAt` is null for Individual and Untimed sessions, which have no global clock. */
+export const sessionStartedPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  endsAt: z.number().nullable(),
+  serverTimeMs: z.number(),
+});
+export type SessionStartedPayload = z.infer<typeof sessionStartedPayloadSchema>;
 
-export type LeaderboardRow = {
-  rank: number;
-  userId: string;
-  displayName: string;
-  score: number;
-  submittedAt: number | null;
-};
-export type LeaderboardUpdatePayload = { scopeId: string; rows: LeaderboardRow[] };
+/**
+ * One public test case as a Coder is allowed to see it.
+ *
+ * There is deliberately no `expectedOutput` and no test case id: a Run shows a
+ * Coder how their own program behaved, not what the grader was holding. Weight
+ * is absent for the same reason — a Run produces no grade.
+ */
+export const runTestResultViewSchema = z.object({
+  name: z.string(),
+  /** How this case ended — a time limit on one case does not stop the others. */
+  status: z.enum(TEST_RESULT_STATUSES),
+  passed: z.boolean(),
+  executionTimeMs: z.number().nonnegative(),
+  stdoutExcerpt: z.string(),
+  stderrExcerpt: z.string(),
+});
+export type RunTestResultView = z.infer<typeof runTestResultViewSchema>;
+
+/**
+ * Pipeline progress for the job a Coder is waiting on, discriminated by kind
+ * because the two halves may carry very different amounts of detail.
+ *
+ * A RUN writes no database row, so this event is the only delivery path for
+ * its output and has to carry the per-case results itself. Every case in a RUN
+ * is public by construction — the producer rejects a RUN payload containing a
+ * hidden case — so there is nothing here to strip.
+ *
+ * A SUBMIT deliberately carries status and score only. Its per-case detail
+ * lives behind `GET /api/submissions/[submissionId]`, where the Coder-facing
+ * serializer removes hidden rows. Sending that detail over the socket would
+ * mean re-implementing the same filter in a second place, and getting it wrong
+ * there would leak grading data.
+ *
+ * This is validated at runtime rather than merely typed: it crosses a Redis
+ * pub/sub boundary between two processes, and apps/realtime must not forward a
+ * shape apps/web did not promise.
+ */
+export const submissionStatusPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("SUBMIT"),
+    jobId: z.string().min(1),
+    submissionId: z.string().min(1),
+    status: z.enum(SUBMISSION_STATUSES),
+    score: z.number().int().min(0).max(100).nullable(),
+  }),
+  z.object({
+    kind: z.literal("RUN"),
+    jobId: z.string().min(1),
+    submissionId: z.null(),
+    status: z.enum(SUBMISSION_STATUSES),
+    testResults: z.array(runTestResultViewSchema),
+    compilerOutput: z.string().nullable(),
+  }),
+]);
+export type SubmissionStatusPayload = z.infer<typeof submissionStatusPayloadSchema>;
+
+export const monitorParticipantPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  userId: z.string().min(1),
+  displayName: z.string(),
+  readyState: z.enum(READY_STATES),
+  connectionState: z.enum(CONNECTION_STATES),
+  lastSeenAt: z.number().nullable(),
+});
+export type MonitorParticipantPayload = z.infer<typeof monitorParticipantPayloadSchema>;
+
+/**
+ * One meaningful event for the Architect's feed. `payload` carries the small
+ * facts that make an entry readable — the focus-loss action taken, the
+ * clipboard action blocked — and never participant source code.
+ */
+export const monitorEventPayloadSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  userId: z.string().nullable(),
+  attemptId: z.string().nullable(),
+  type: z.enum(ASSESSMENT_EVENT_TYPES),
+  durationMs: z.number().nullable(),
+  occurredAt: z.number(),
+  payload: z.record(z.string(), z.unknown()),
+});
+export type MonitorEventPayload = z.infer<typeof monitorEventPayloadSchema>;
+
+/**
+ * Leaderboard and achievement payloads are defined with the rest of the
+ * gamification contract in `schemas/gamification.ts` and re-exported here, so
+ * a socket listener and an HTTP response are provably the same shape. Both
+ * cross the Redis boundary between apps/web and apps/realtime, so both are
+ * schemas rather than bare types.
+ */
+export { achievementAwardedPayloadSchema, leaderboardUpdatePayloadSchema };
+export type { AchievementAwardedPayload, LeaderboardUpdatePayload };
 
 // --- Typed socket maps -------------------------------------------------------
 
@@ -159,6 +269,8 @@ export type ClientToServerEvents = {
   [CLIENT_EVENTS.ANTICHEAT_FOCUS]: (payload: AnticheatFocusPayload, ack?: AckFn) => void;
   [CLIENT_EVENTS.ANTICHEAT_CLIPBOARD]: (payload: AnticheatClipboardPayload, ack?: AckFn) => void;
   [CLIENT_EVENTS.MONITOR_JOIN]: (payload: MonitorJoinPayload, ack?: AckFn) => void;
+  [CLIENT_EVENTS.LEADERBOARD_JOIN]: (payload: LeaderboardJoinPayload, ack?: AckFn) => void;
+  [CLIENT_EVENTS.LEADERBOARD_LEAVE]: (payload: LeaderboardJoinPayload, ack?: AckFn) => void;
 };
 
 export type ServerToClientEvents = {
@@ -175,6 +287,7 @@ export type ServerToClientEvents = {
   [SERVER_EVENTS.MONITOR_PARTICIPANT]: (payload: MonitorParticipantPayload) => void;
   [SERVER_EVENTS.MONITOR_EVENT]: (payload: MonitorEventPayload) => void;
   [SERVER_EVENTS.LEADERBOARD_UPDATE]: (payload: LeaderboardUpdatePayload) => void;
+  [SERVER_EVENTS.ACHIEVEMENT_AWARDED]: (payload: AchievementAwardedPayload) => void;
 };
 
 export type InterServerEvents = Record<string, never>;

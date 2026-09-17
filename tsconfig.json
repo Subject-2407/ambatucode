@@ -1,7 +1,12 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // Playwright's `evaluate` callbacks are compiled here but run in the
+    // browser, so the DOM has to be in scope for them to be type-checked at
+    // all. Without it `document` and `fetch` inside a callback are untyped and
+    // every assertion built on one is checked no further than `any`.
+    "lib": ["ES2023", "DOM"]
   },
   "include": ["vitest.config.ts", "playwright.config.ts", "e2e/**/*.ts"]
 }

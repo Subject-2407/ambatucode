@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { COMPARISON_MODES, LANGUAGES, SUBMISSION_STATUSES, TEST_SCRIPT_FRAMEWORKS } from "../enums";
+import {
+  COMPARISON_MODES,
+  LANGUAGES,
+  SUBMISSION_STATUSES,
+  TEST_RESULT_STATUSES,
+  TEST_SCRIPT_FRAMEWORKS,
+} from "../enums";
 
 /**
  * The wire contract between the queue producer (apps/web) and the Go worker.
@@ -10,6 +16,20 @@ import { COMPARISON_MODES, LANGUAGES, SUBMISSION_STATUSES, TEST_SCRIPT_FRAMEWORK
  * The only credential it holds is `callbackToken`, a short-lived HMAC over the
  * job id that the worker echoes back on result ingest.
  */
+
+/**
+ * Wire format version, carried on every job and every result.
+ *
+ * The producer and the worker are separate processes on separate release
+ * cycles, so a deploy can leave an old worker draining a queue that now holds
+ * a new payload shape. Without this field a renamed or dropped field surfaces
+ * as a silently mis-graded submission; with it, both sides reject the message
+ * outright and say why.
+ *
+ * Bump it whenever a field is added, removed, renamed, or changes meaning, and
+ * update `apps/worker/internal/contract` in the same commit.
+ */
+export const EXECUTION_CONTRACT_VERSION = 4;
 
 export const executionKindSchema = z.enum(["RUN", "SUBMIT"]);
 export type ExecutionKind = z.infer<typeof executionKindSchema>;
@@ -32,17 +52,31 @@ export const executionTestCaseSchema = z.object({
   weight: z.number().nonnegative(),
   isPublic: z.boolean(),
   comparison: z.enum(COMPARISON_MODES),
+  /** Overrides `limits.runTimeoutMs` for this case alone. */
+  timeLimitMs: z.number().int().positive().nullable(),
+  /** Overrides `limits.memoryLimitMb` for this case alone. */
+  memoryLimitMb: z.number().int().positive().nullable(),
 });
 export type ExecutionTestCase = z.infer<typeof executionTestCaseSchema>;
 
+/**
+ * One Architect-authored test file. A job may carry several; the worker runs
+ * each in a container of its own and attributes every test it reports back to
+ * the script's id.
+ */
 export const executionTestScriptSchema = z.object({
+  id: z.string().min(1),
   framework: z.enum(TEST_SCRIPT_FRAMEWORKS),
-  entrypoint: z.string().min(1),
-  files: z.array(z.object({ path: z.string().min(1), content: z.string() })),
+  /** Where the file is written in the workspace, and what the framework runs. */
+  path: z.string().min(1),
+  content: z.string(),
+  /** The weight every test the script reports is given, like a test case's. */
+  weight: z.number().nonnegative(),
 });
 export type ExecutionTestScript = z.infer<typeof executionTestScriptSchema>;
 
 export const executionJobSchema = z.object({
+  contractVersion: z.literal(EXECUTION_CONTRACT_VERSION),
   jobId: z.string().min(1),
   kind: executionKindSchema,
   submissionId: z.string().min(1).nullable(),
@@ -50,14 +84,28 @@ export const executionJobSchema = z.object({
   sourceCode: z.string(),
   limits: executionLimitsSchema,
   testCases: z.array(executionTestCaseSchema),
-  testScript: executionTestScriptSchema.nullable(),
+  testScripts: z
+    .array(executionTestScriptSchema)
+    .refine((scripts) => new Set(scripts.map((script) => script.id)).size === scripts.length, {
+      message: "Test script ids must be unique",
+    }),
   callbackToken: z.string().min(1),
 });
 export type ExecutionJob = z.infer<typeof executionJobSchema>;
 
+/**
+ * One test case or one script test.
+ *
+ * `status` is how that case alone ended. A case that ran past its limit is a
+ * failed case, not the end of the job: the remaining cases still run, and the
+ * submission's own status is the most severe of its cases.
+ */
 export const executionTestResultSchema = z.object({
   testCaseId: z.string().min(1).nullable(),
+  /** The script a script test came from; null for a stdin/stdout case. */
+  testScriptId: z.string().min(1).nullable(),
   name: z.string(),
+  status: z.enum(TEST_RESULT_STATUSES),
   passed: z.boolean(),
   weight: z.number().nonnegative(),
   executionTimeMs: z.number().nonnegative(),
@@ -68,6 +116,7 @@ export const executionTestResultSchema = z.object({
 export type ExecutionTestResult = z.infer<typeof executionTestResultSchema>;
 
 export const executionResultSchema = z.object({
+  contractVersion: z.literal(EXECUTION_CONTRACT_VERSION),
   jobId: z.string().min(1),
   submissionId: z.string().min(1).nullable(),
   status: z.enum(SUBMISSION_STATUSES),

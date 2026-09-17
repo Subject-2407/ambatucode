@@ -2,12 +2,14 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  errorFields,
   AppError,
   ERROR_STATUS,
   type ApiResponse,
   type ErrorCode,
   isAppError,
 } from "@ambatucode/shared";
+import { log } from "../logger";
 
 /**
  * Every route handler answers through this module so the envelope, the status
@@ -42,7 +44,7 @@ export function toErrorResponse(error: unknown): NextResponse<ApiResponse<never>
 
   if (isAppError(error)) {
     if (error.code === "INTERNAL") {
-      console.error("[api] internal AppError:", error.message);
+      log.error("api.internal_error", { errorMessage: error.message });
       return fail("INTERNAL", "Something went wrong");
     }
     return error.code === "VALIDATION_FAILED"
@@ -50,18 +52,21 @@ export function toErrorResponse(error: unknown): NextResponse<ApiResponse<never>
       : fail(error.code, error.message);
   }
 
-  console.error("[api] unhandled error:", error);
+  log.error("api.unhandled_error", errorFields(error));
   return fail("INTERNAL", "Something went wrong");
 }
 
-type RouteHandler<Context> = (
-  request: Request,
-  context: Context,
-) => Promise<NextResponse> | NextResponse;
+/**
+ * `Response` rather than `NextResponse` because one handler legitimately
+ * answers with a file: the grade export streams CSV. Every other handler
+ * returns the envelope through `ok`, and a failure at any of them still
+ * becomes the envelope below.
+ */
+type RouteHandler<Context> = (request: Request, context: Context) => Promise<Response> | Response;
 
 /** Wraps a handler so thrown AppErrors and ZodErrors become the envelope. */
 export function route<Context>(handler: RouteHandler<Context>) {
-  return async (request: Request, context: Context): Promise<NextResponse> => {
+  return async (request: Request, context: Context): Promise<Response> => {
     try {
       return await handler(request, context);
     } catch (error) {
