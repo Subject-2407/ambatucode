@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Badge, Box, Flex, Text } from "@chakra-ui/react";
+import { Flex, Text } from "@chakra-ui/react";
 import { TriangleAlert } from "lucide-react";
 import {
   BLOCK_CONTEXT_MESSAGE,
@@ -13,6 +13,7 @@ import {
   type RichTextNode,
 } from "@ambatucode/shared";
 import { useColorMode } from "@/providers/color-mode";
+import { PixelFrame } from "@/components/ui/pixel-frame";
 import { INTERACTIVE_BLOCK_SANDBOX, assembleInteractiveBlock } from "@/lib/interactive-block";
 import { readableInteractiveBlock } from "./rich-text";
 
@@ -118,33 +119,28 @@ export function InteractiveBlockNode({ node }: { node: RichTextNode }) {
  */
 function BlockFrame({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Box
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="md"
-      overflow="hidden"
-      bg="bg.surface"
-    >
+    <PixelFrame tone="gold" surface="bg.surface" overflow="hidden">
       <Flex
         align="center"
         gap="2"
         px="3"
-        py="2"
-        borderBottomWidth="1px"
-        borderColor="border.default"
-        bg="bg.subtle"
+        py="1.5"
+        // Gold as a fill with contrast text on it, never gold as text: the
+        // bright value is not a legible ink on a light ground.
+        bg="gold.solid"
+        color="gold.contrast"
       >
-        <Badge size="sm" variant="subtle">
+        <Text textStyle="display" fontSize="xs" flexShrink="0">
           Interactive block
-        </Badge>
+        </Text>
         {title ? (
-          <Text fontSize="sm" color="fg.muted" lineClamp={1}>
+          <Text fontSize="sm" lineClamp={1} opacity="0.85">
             {title}
           </Text>
         ) : null}
       </Flex>
       {children}
-    </Box>
+    </PixelFrame>
   );
 }
 
