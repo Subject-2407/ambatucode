@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import NextLink from "next/link";
 import { Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { ChevronRight, History } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type { SubmissionHistoryItem } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { describeSubmission } from "@/components/assessment/submission-status";
@@ -88,7 +88,7 @@ export function SubmissionsScreen() {
           <ErrorState error={error} onRetry={() => void refetch()} />
         ) : !isPending && items.length === 0 ? (
           <EmptyState
-            icon={<History aria-hidden />}
+            sprite="doc"
             title="Nothing submitted yet"
             description="Your submissions appear here once you finish an assessment."
           />

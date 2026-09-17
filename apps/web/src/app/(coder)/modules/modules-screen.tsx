@@ -3,7 +3,7 @@
 import { useId, useMemo, useState } from "react";
 import NextLink from "next/link";
 import { Flex, Grid, HStack, InputGroup, Stack, Text } from "@chakra-ui/react";
-import { BookOpen, Lock, Search } from "lucide-react";
+import { Lock, Search } from "lucide-react";
 import type { ModuleSummary } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -85,7 +85,7 @@ export function ModulesScreen() {
             </Grid>
           ) : items.length === 0 ? (
             <EmptyState
-              icon={<BookOpen aria-hidden />}
+              sprite="books"
               title={scope === "enrolled" ? "You have not joined a module yet" : "No modules found"}
               description={
                 scope === "enrolled"
@@ -134,7 +134,7 @@ function ModuleCard({ module }: { module: ModuleSummary }) {
     >
       <Stack gap="2">
         <HStack justify="space-between" align="start" gap="3">
-          <Text fontWeight="semibold" fontSize="md" lineClamp={2}>
+          <Text textStyle="display" fontSize="md" lineClamp={2}>
             {module.title}
           </Text>
           <Badge tone={isClosed ? "warning" : "neutral"} flexShrink="0">

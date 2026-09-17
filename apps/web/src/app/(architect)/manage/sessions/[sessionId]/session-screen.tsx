@@ -229,7 +229,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
       bg="bg.surface"
       padding="5"
     >
-      <Text fontWeight="semibold">{title}</Text>
+      <Text textStyle="display">{title}</Text>
       <Box>{children}</Box>
     </Stack>
   );

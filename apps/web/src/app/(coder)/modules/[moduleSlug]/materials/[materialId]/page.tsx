@@ -57,7 +57,7 @@ export default async function MaterialPage({ params }: PageProps) {
         {material.practiceActivities.length > 0 ? (
           <Stack gap="4">
             <HStack gap="2">
-              <Text fontWeight="semibold">Practice</Text>
+              <Text textStyle="display">Practice</Text>
               <Text fontSize="sm" color="fg.muted">
                 Try it out — nothing here is graded.
               </Text>

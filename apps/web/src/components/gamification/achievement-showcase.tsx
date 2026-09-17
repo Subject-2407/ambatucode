@@ -50,9 +50,11 @@ function AchievementCard({
     <Flex
       gap="3"
       padding="4"
-      borderWidth="1px"
-      borderRadius="lg"
-      borderColor={earned ? "accent.solid" : "border.default"}
+      borderWidth={earned ? "3px" : "1px"}
+      // An earned Title is one of only two things in the product allowed to be
+      // gold; the other is the frame around Architect-authored content. Keeping
+      // it that scarce is what makes gold mean "you earned this" on sight.
+      borderColor={earned ? "gold.solid" : "border.default"}
       // Locked is a dashed outline and a muted icon, not a faded card: the
       // description is the goal, and fading it would fail contrast for the
       // very text a Coder is meant to read.
@@ -60,7 +62,7 @@ function AchievementCard({
       bg={earned ? "bg.surface" : "bg.subtle"}
       align="start"
     >
-      <Box color={earned ? "accent.solid" : "fg.muted"} paddingTop="0.5" flexShrink={0}>
+      <Box color={earned ? "gold.fg" : "fg.muted"} paddingTop="0.5" flexShrink={0}>
         {earned ? (
           <AchievementIcon iconKey={achievement.iconKey} size={22} />
         ) : (
@@ -69,9 +71,11 @@ function AchievementCard({
       </Box>
       <Stack gap="1" minWidth="0">
         <HStack gap="2" wrap="wrap">
-          <Text fontWeight="medium">{achievement.name}</Text>
+          <Text textStyle="display" fontSize="sm">
+            {achievement.name}
+          </Text>
           {/* Never colour alone: the state is spelled out. */}
-          <Badge tone={earned ? "success" : "neutral"} size="sm">
+          <Badge tone={earned ? "gold" : "neutral"} size="sm">
             {earned ? "Earned" : "Locked"}
           </Badge>
         </HStack>
@@ -152,7 +156,7 @@ export function AchievementShowcase({ userId }: { userId: string }) {
       <TabPanel id={panelId} value={category}>
         {entries.length === 0 ? (
           <EmptyState
-            icon={<Trophy aria-hidden />}
+            sprite="trophy"
             title="Nothing here yet"
             description="Titles in this category appear once there is work to earn them on."
           />

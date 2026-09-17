@@ -129,7 +129,7 @@ export function SectionList({
   return (
     <Stack gap="3" height="full">
       <Flex justify="space-between" align="center">
-        <Text fontWeight="semibold" fontSize="sm">
+        <Text textStyle="display" fontSize="sm">
           Sections
         </Text>
         <Button size="xs" variant="ghost" onClick={onAdd}>

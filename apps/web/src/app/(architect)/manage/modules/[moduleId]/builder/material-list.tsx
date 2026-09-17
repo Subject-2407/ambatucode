@@ -82,7 +82,7 @@ export function MaterialList({
   return (
     <Stack gap="3" height="full">
       <Flex justify="space-between" align="center">
-        <Text fontWeight="semibold" fontSize="sm">
+        <Text textStyle="display" fontSize="sm">
           Materials
         </Text>
         <Button

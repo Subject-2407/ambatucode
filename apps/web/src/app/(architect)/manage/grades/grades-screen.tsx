@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Flex, HStack, InputGroup, Stack, Text } from "@chakra-ui/react";
-import { ClipboardList, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import {
   SUBMISSION_STATUSES,
   type GradeAttemptView,
@@ -130,7 +130,7 @@ export function GradesScreen() {
       <PageContainer>
         <PageHeader title="Grades" description="Grading records for the modules you own." />
         <EmptyState
-          icon={<ClipboardList aria-hidden />}
+          sprite="clipboard"
           title="No modules yet"
           description="Grades appear here once you own a module with an assessment in it."
         />
@@ -208,7 +208,7 @@ export function GradesScreen() {
           <ErrorState error={grades.error} onRetry={() => void grades.refetch()} />
         ) : !grades.isPending && items.length === 0 ? (
           <EmptyState
-            icon={<ClipboardList aria-hidden />}
+            sprite="clipboard"
             title="No records here"
             description="Nothing matches these filters yet. Records appear once a Coder submits."
           />

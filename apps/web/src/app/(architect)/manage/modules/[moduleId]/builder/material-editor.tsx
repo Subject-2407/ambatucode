@@ -145,7 +145,7 @@ function MaterialForm({ moduleId, material }: { moduleId: string; material: Mate
         <Flex justify="space-between" align="center">
           <HStack gap="2">
             <Terminal size={16} aria-hidden />
-            <Text fontWeight="semibold" fontSize="sm">
+            <Text textStyle="display" fontSize="sm">
               Practice activities
             </Text>
           </HStack>

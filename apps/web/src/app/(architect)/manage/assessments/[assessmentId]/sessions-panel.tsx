@@ -3,7 +3,7 @@
 import { useState } from "react";
 import NextLink from "next/link";
 import { Alert, HStack, Stack, Text } from "@chakra-ui/react";
-import { CalendarClock, ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, Plus } from "lucide-react";
 import {
   createSessionRequestSchema,
   type AssessmentArchitectView,
@@ -40,7 +40,7 @@ export function SessionsPanel({ assessment }: { assessment: AssessmentArchitectV
     <Stack gap="3">
       <HStack justify="space-between" gap="3" wrap="wrap">
         <Stack gap="0">
-          <Text fontWeight="semibold">Sessions</Text>
+          <Text textStyle="display">Sessions</Text>
           <Text fontSize="xs" color="fg.muted">
             Each session runs this assessment for one group. Creating a new one never touches the
             results of an old one.
@@ -60,7 +60,7 @@ export function SessionsPanel({ assessment }: { assessment: AssessmentArchitectV
         </Text>
       ) : data.length === 0 ? (
         <EmptyState
-          icon={<CalendarClock aria-hidden />}
+          sprite="calendar"
           title="No sessions yet"
           description="Create a session to choose participants and start this assessment."
         />

@@ -132,7 +132,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
       padding="4"
       minWidth="0"
     >
-      <Text fontWeight="semibold" fontSize="sm">
+      <Text textStyle="display" fontSize="sm">
         {title}
       </Text>
       <Box minWidth="0">{children}</Box>

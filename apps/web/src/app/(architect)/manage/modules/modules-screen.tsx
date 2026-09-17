@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import NextLink from "next/link";
 import { Flex, HStack, InputGroup, Stack, Text } from "@chakra-ui/react";
-import { BookOpen, LayoutList, Plus, Search, Trash, UserCheck } from "lucide-react";
+import { LayoutList, Plus, Search, Trash, UserCheck } from "lucide-react";
 import type { ModuleSummary } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -81,7 +81,7 @@ export function ArchitectModulesScreen() {
           <ErrorState error={error} onRetry={() => void refetch()} />
         ) : !isPending && items.length === 0 ? (
           <EmptyState
-            icon={<BookOpen aria-hidden />}
+            sprite="books"
             title={search ? "No modules match that search" : "No modules yet"}
             description={
               search
@@ -116,7 +116,7 @@ export function ArchitectModulesScreen() {
                     <Table.Cell>
                       <Stack gap="0.5">
                         <HStack gap="2">
-                          <Text fontWeight="medium">{module.title}</Text>
+                          <Text textStyle="display">{module.title}</Text>
                           <Badge tone={module.isPublished ? "success" : "neutral"}>
                             {module.isPublished ? "Published" : "Draft"}
                           </Badge>
