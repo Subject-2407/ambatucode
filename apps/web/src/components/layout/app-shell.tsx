@@ -7,12 +7,9 @@ import { AchievementAnnouncer } from "@/components/gamification/achievement-anno
 import { AssessmentModeProvider, useAssessmentMode } from "@/providers/assessment-mode";
 import { SessionProvider } from "@/providers/session-provider";
 import { ColorModeToggle } from "@/providers/color-mode";
-import { BrandMark } from "./brand-mark";
 import { navItemsForRole } from "./navigation";
-import { SidebarNav } from "./sidebar-nav";
+import { InventoryRail } from "./inventory-rail";
 import { UserMenu } from "./user-menu";
-
-const SIDEBAR_WIDTH = "16rem";
 
 /**
  * The one shell all three roles share. What differs between Root, Architect,
@@ -58,43 +55,21 @@ function ShellFrame({ user, children }: { user: AuthenticatedUser; children: Rea
   }
 
   return (
-    <Flex direction={{ base: "column", md: "row" }} minHeight="100dvh" bg="bg.canvas">
-      <Stack
-        as="aside"
-        width={{ base: "full", md: SIDEBAR_WIDTH }}
-        flexShrink="0"
-        gap="6"
-        px="4"
-        py={{ base: "3", md: "5" }}
-        borderBottomWidth={{ base: "1px", md: "0" }}
-        borderEndWidth={{ md: "1px" }}
-        borderColor="border.default"
-        bg="bg.surface"
-        position={{ md: "sticky" }}
-        top={{ md: "0" }}
-        height={{ md: "100dvh" }}
-      >
-        <Flex align="center" justify="space-between" gap="2">
-          <BrandMark />
-          <Box display={{ md: "none" }}>
-            <ColorModeToggle />
-          </Box>
-        </Flex>
-
-        <SidebarNav items={navItemsForRole(user.role)} />
-
-        <Flex gap="1" align="center" display={{ base: "none", md: "flex" }}>
-          <Box flex="1" minWidth="0">
+    // `column-reverse` on a phone puts the rail along the bottom while leaving
+    // it first in the document, so it stays the first stop for a keyboard or a
+    // screen reader without occupying the top of a small screen.
+    <Flex direction={{ base: "column-reverse", md: "row" }} minHeight="100dvh" bg="bg.canvas">
+      <InventoryRail
+        items={navItemsForRole(user.role)}
+        footer={
+          <>
             <UserMenu />
-          </Box>
-          <ColorModeToggle />
-        </Flex>
-      </Stack>
+            <ColorModeToggle />
+          </>
+        }
+      />
 
       <Box as="main" flex="1" minWidth="0">
-        <Box display={{ base: "block", md: "none" }} px="4" pt="3">
-          <UserMenu />
-        </Box>
         {announcer}
         {children}
       </Box>
@@ -124,7 +99,7 @@ export function PageHeader({
       mb="6"
     >
       <Stack gap="1">
-        <Heading as="h1" size="lg" color="fg.default">
+        <Heading as="h1" textStyle="display" fontSize={{ base: "xl", md: "2xl" }} color="fg.default">
           {title}
         </Heading>
         {description ? (
