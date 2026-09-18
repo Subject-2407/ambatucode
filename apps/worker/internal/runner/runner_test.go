@@ -266,3 +266,70 @@ func TestCompilerOutputIsSanitizedBeforeItReachesACoder(t *testing.T) {
 		t.Fatalf("expected the file and line to be kept: %q", cleaned)
 	}
 }
+
+// Reading the cgroup's kill counter means starting a process inside the
+// container, which costs more than a short test case takes to run. The screen
+// that keeps it rare has one job: never clear a run that might have been
+// killed. These are the cases where clearing one would be wrong.
+func TestOOMScreenNeverClearsARunThatMightHaveBeenKilled(t *testing.T) {
+	known := func(failures uint64, oomKilled bool) sandbox.RunOutcome {
+		return sandbox.RunOutcome{
+			OOMKilled:           oomKilled,
+			MemoryFailures:      failures,
+			MemoryFailuresKnown: true,
+		}
+	}
+
+	t.Run("a count that has not moved clears the run", func(t *testing.T) {
+		meter := &oomMeter{failures: 3, failuresKnown: true}
+		if meter.suspect(known(3, false)) {
+			t.Fatal("an unchanged memory-failure count was treated as a possible kill")
+		}
+	})
+
+	t.Run("a count that has moved does not", func(t *testing.T) {
+		meter := &oomMeter{failures: 3, failuresKnown: true}
+		if !meter.suspect(known(4, false)) {
+			t.Fatal("a raised memory-failure count was cleared")
+		}
+		// The new figure becomes the baseline, so the next quiet run clears.
+		if meter.suspect(known(4, false)) {
+			t.Fatal("the raised count was not carried forward as the baseline")
+		}
+	})
+
+	t.Run("the daemon's flag is honoured once", func(t *testing.T) {
+		meter := &oomMeter{failures: 3, failuresKnown: true}
+		if !meter.suspect(known(3, true)) {
+			t.Fatal("the daemon's memory flag was ignored")
+		}
+		// Sticky: it says nothing about the run after the one it fired on, and
+		// treating it as fresh evidence would blame every later case.
+		if meter.suspect(known(3, true)) {
+			t.Fatal("the sticky memory flag was read as a second kill")
+		}
+	})
+
+	t.Run("no count at all clears nothing", func(t *testing.T) {
+		meter := &oomMeter{}
+		for round := 0; round < 3; round++ {
+			if !meter.suspect(sandbox.RunOutcome{}) {
+				t.Fatal("a run was cleared with no memory-failure count to clear it on")
+			}
+		}
+	})
+}
+
+// Until the counter has been read there is nothing to say it cannot be, and
+// treating an unasked question as a failed one would stop a job early.
+func TestOOMMeterIsAttributableUntilItsCounterProvesOtherwise(t *testing.T) {
+	if !(&oomMeter{}).attributable() {
+		t.Fatal("a meter that has not had to read its counter reported it unusable")
+	}
+	if !(&oomMeter{resolved: true, available: true}).attributable() {
+		t.Fatal("a readable counter reported unusable")
+	}
+	if (&oomMeter{resolved: true, available: false}).attributable() {
+		t.Fatal("an unreadable counter reported usable")
+	}
+}

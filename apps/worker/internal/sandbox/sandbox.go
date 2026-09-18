@@ -9,6 +9,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -129,6 +131,13 @@ type RunOutcome struct {
 	// OOMKilled comes from the daemon's own accounting. An exit code alone
 	// cannot distinguish a memory kill from an ordinary crash.
 	OOMKilled bool
+	// MemoryFailures is how many times the container has hit its memory limit
+	// over its whole life, as the daemon reports it. Unlike OOMKilled, which is
+	// a sticky flag, it is a counter — so a caller comparing it across runs can
+	// tell which run a kill belongs to. MemoryFailuresKnown is false when the
+	// daemon reports no such figure, and the count must then be ignored.
+	MemoryFailures      uint64
+	MemoryFailuresKnown bool
 	// TimedOut means the exec's own deadline fired before the program exited.
 	// Cancellation of the caller's context is an error from Run, never this.
 	TimedOut bool
@@ -308,6 +317,14 @@ func (sn *Session) OOMKills(ctx context.Context) (int64, bool) {
 		return 0, false
 	}
 	return parseOOMKills(result.stdout)
+}
+
+// MemoryFailures is memoryFailures with a deadline of its own, for a caller
+// that wants the cheap memory screen outside a run.
+func (sn *Session) MemoryFailures(ctx context.Context) (uint64, bool) {
+	readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return sn.memoryFailures(readCtx)
 }
 
 // parseOOMKills reads the oom_kill counter from a cgroup v2 memory.events file.
@@ -609,9 +626,33 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 
 	outcome.Stdout, outcome.StdoutTruncated = result.stdout, result.stdoutTruncated
 	outcome.Stderr, outcome.StderrTruncated = result.stderr, result.stderrTruncated
-	outcome.OOMKilled = sn.oomKilled()
+	outcome.OOMKilled, outcome.MemoryFailures, outcome.MemoryFailuresKnown = sn.memoryVerdict()
 
 	return outcome, nil
+}
+
+// memoryVerdict reads both of the memory signals the daemon can give from
+// outside the container, and does so concurrently: they are independent
+// requests, and a run should not pay for them one after the other.
+//
+// A fresh context, because the run's own may already be past its deadline —
+// the memory question matters most precisely when the run ended badly.
+func (sn *Session) memoryVerdict() (killed bool, failures uint64, known bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		killed = sn.oomKilled(ctx)
+	}()
+	go func() {
+		defer wait.Done()
+		failures, known = sn.memoryFailures(ctx)
+	}()
+	wait.Wait()
+	return killed, failures, known
 }
 
 // oomKilled reads the memory verdict from the daemon rather than inferring it.
@@ -624,16 +665,54 @@ func (sn *Session) Run(ctx context.Context, spec ExecSpec) (RunOutcome, error) {
 // of the container, so it describes a single step honestly only until the
 // first memory kill. The runner attributes kills to cases with OOMKills and
 // falls back to this flag only where that counter cannot be read.
-func (sn *Session) oomKilled() bool {
-	// A fresh context: the run context may already be past its deadline.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
+func (sn *Session) oomKilled(ctx context.Context) bool {
 	inspected, err := sn.box.client.ContainerInspect(ctx, sn.id)
 	if err != nil || inspected.State == nil {
 		return false
 	}
 	return inspected.State.OOMKilled
+}
+
+// memoryFailures returns how many times the container has hit its memory
+// limit, from the daemon's own statistics. The second return is false when the
+// daemon reports no such figure.
+//
+// This is the cheap counterpart to OOMKills: one request to the daemon rather
+// than a process started inside the container, which on a busy host is the
+// difference between a few milliseconds and more time than a test case takes
+// to run. It is a screen, not a verdict — the count moving means a run may
+// have been killed for memory, and the cgroup's own counter is what confirms
+// it. What matters for that job is the direction it can be wrong in: the
+// figure counts every time the limit was reached, and a kill always reaches
+// it, so a count that did not move is proof that nothing was killed.
+func (sn *Session) memoryFailures(ctx context.Context) (uint64, bool) {
+	response, err := sn.box.client.ContainerStatsOneShot(ctx, sn.id)
+	if err != nil {
+		return 0, false
+	}
+	defer response.Body.Close()
+
+	// Only the memory block is decoded. The rest of the document is a full
+	// CPU, network and block-IO sample that nothing here reads.
+	var sample struct {
+		MemoryStats struct {
+			Failcnt uint64 `json:"failcnt"`
+			Usage   uint64 `json:"usage"`
+			Limit   uint64 `json:"limit"`
+		} `json:"memory_stats"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&sample); err != nil {
+		return 0, false
+	}
+	// The daemon omits a zero count from the document, which is the ordinary
+	// case and indistinguishable from a daemon reporting no memory figures at
+	// all. The limit tells them apart: this worker sets one on every container
+	// it creates, so a sample carrying it is a sample where a zero count means
+	// zero rather than nothing.
+	if sample.MemoryStats.Limit == 0 {
+		return 0, false
+	}
+	return sample.MemoryStats.Failcnt, true
 }
 
 type execRequest struct {
@@ -727,6 +806,19 @@ func (s *Sandbox) exec(ctx context.Context, containerID string, request execRequ
 // stream; a process still running well past that was cut off from us.
 const execExitWait = 2 * time.Second
 
+// execExitPoll is how long to wait before asking the daemon again whether an
+// exec has exited, and execExitPollMax is where that wait stops growing.
+//
+// It starts short because the usual answer arrives on the first or second ask:
+// the daemon records the exit within a moment of closing the stream, and a
+// fixed wait long enough for the rare slow case would be paid by every run of
+// every test case. It grows so that the rare slow case is not asked about
+// hundreds of times while it resolves.
+const (
+	execExitPoll    = 500 * time.Microsecond
+	execExitPollMax = 20 * time.Millisecond
+)
+
 // awaitExecExit returns the exec's final state once the daemon records that it
 // has exited.
 //
@@ -736,7 +828,7 @@ const execExitWait = 2 * time.Second
 // and succeeded.
 func (s *Sandbox) awaitExecExit(ctx context.Context, execID string) (container.ExecInspect, error) {
 	deadline := time.Now().Add(execExitWait)
-	for {
+	for wait := execExitPoll; ; wait = min(wait*2, execExitPollMax) {
 		inspected, err := s.client.ContainerExecInspect(ctx, execID)
 		if err != nil {
 			return inspected, fmt.Errorf("inspect exec: %w", daemonFailure(err))
@@ -751,7 +843,7 @@ func (s *Sandbox) awaitExecExit(ctx context.Context, execID string) (container.E
 		select {
 		case <-ctx.Done():
 			return inspected, ctx.Err()
-		case <-time.After(25 * time.Millisecond):
+		case <-time.After(wait):
 		}
 	}
 }
