@@ -23,6 +23,14 @@ const serverEnvSchema = z.object({
     .default(12),
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
   LOGIN_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().min(1).default(300),
+  // Left unset it follows NODE_ENV. It is overridable because a Secure cookie
+  // sent over plain HTTP is discarded by the browser, and an offline-first lab
+  // LAN without TLS is a deployment this product supports — there the flag has
+  // to come off deliberately, not be discovered at a login screen that loops.
+  SESSION_COOKIE_SECURE: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -46,4 +54,15 @@ export function getServerEnv(): ServerEnv {
 
 export function isProduction(): boolean {
   return getServerEnv().NODE_ENV === "production";
+}
+
+/**
+ * Whether the session cookie carries the `Secure` attribute.
+ *
+ * Production by default, because that is where TLS belongs. The override is
+ * for the deployment this product actually targets: a lab LAN served over
+ * plain HTTP, where every browser drops a Secure cookie and no one can sign in.
+ */
+export function isSessionCookieSecure(): boolean {
+  return getServerEnv().SESSION_COOKIE_SECURE ?? isProduction();
 }
