@@ -52,6 +52,20 @@ describe("summarizeValidation", () => {
       ]).status,
     ).toBe("FAILED");
   });
+
+  // Building the reference solution can spend the budget before a script runs.
+  it("blames the reference solution when a limit left nothing to report", () => {
+    expect(summarizeValidation({ status: "TIME_LIMIT_EXCEEDED", systemError: null }, [])).toEqual({
+      status: "FAILED",
+      summary: "The reference solution ran out of time before its scripts could run",
+    });
+    expect(summarizeValidation({ status: "MEMORY_LIMIT_EXCEEDED", systemError: null }, [])).toEqual(
+      {
+        status: "FAILED",
+        summary: "The reference solution ran out of memory before its scripts could run",
+      },
+    );
+  });
 });
 
 describe("validationLimits", () => {

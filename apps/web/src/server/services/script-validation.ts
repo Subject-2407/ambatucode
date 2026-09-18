@@ -80,6 +80,22 @@ export function summarizeValidation(
     return { status: "FAILED", summary: "The reference solution did not compile" };
   }
   if (rows.length === 0) {
+    // Building the reference solution can spend the job's time or memory
+    // before any script opens a container of its own. Nothing reported a test
+    // then, but the scripts are not what went wrong, and telling an Architect
+    // they wrote an empty script would send them to rewrite a working one.
+    if (result.status === "TIME_LIMIT_EXCEEDED") {
+      return {
+        status: "FAILED",
+        summary: "The reference solution ran out of time before its scripts could run",
+      };
+    }
+    if (result.status === "MEMORY_LIMIT_EXCEEDED") {
+      return {
+        status: "FAILED",
+        summary: "The reference solution ran out of memory before its scripts could run",
+      };
+    }
     return { status: "FAILED", summary: "The script reported no tests" };
   }
 
