@@ -55,7 +55,7 @@ export function ArchitectModulesScreen() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer backdrop="grid">
       <PageHeader
         title="Modules"
         description="Modules you own. Open the builder to arrange sections, materials, and practice."

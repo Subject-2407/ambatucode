@@ -46,7 +46,7 @@ export function ModulesScreen() {
   const items = data?.items ?? [];
 
   return (
-    <PageContainer>
+    <PageContainer backdrop="grid">
       <PageHeader
         title="Modules"
         description="Enroll to read the materials and try the practice activities inside."

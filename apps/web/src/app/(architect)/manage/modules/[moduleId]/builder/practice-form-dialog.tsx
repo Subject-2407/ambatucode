@@ -291,7 +291,7 @@ export function PracticeFormDialog({
                   <Textarea
                     aria-label={`Input for ${testCase.name}`}
                     rows={3}
-                    fontFamily="mono"
+                    textStyle="data"
                     fontSize="sm"
                     value={testCase.input}
                     onChange={(event) =>
@@ -306,7 +306,7 @@ export function PracticeFormDialog({
                   <Textarea
                     aria-label={`Expected output for ${testCase.name}`}
                     rows={3}
-                    fontFamily="mono"
+                    textStyle="data"
                     fontSize="sm"
                     value={testCase.expectedOutput}
                     onChange={(event) =>

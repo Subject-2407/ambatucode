@@ -10,7 +10,7 @@ export default async function AchievementsPage() {
   const session = await requirePageSession("CODER");
 
   return (
-    <PageContainer>
+    <PageContainer backdrop="constellation">
       <PageHeader
         title="Achievements"
         description="Titles you have earned, and the ones still out there. Awards are permanent."

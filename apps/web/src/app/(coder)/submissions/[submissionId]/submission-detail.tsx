@@ -108,7 +108,7 @@ export function SubmissionDetail({
             <Card.Body>
               <Box
                 as="pre"
-                fontFamily="mono"
+                textStyle="data"
                 fontSize="xs"
                 whiteSpace="pre-wrap"
                 color="fg.muted"
@@ -189,7 +189,7 @@ export function SubmissionDetail({
           <Card.Body>
             <Box
               as="pre"
-              fontFamily="mono"
+              textStyle="data"
               fontSize="xs"
               whiteSpace="pre"
               overflowX="auto"

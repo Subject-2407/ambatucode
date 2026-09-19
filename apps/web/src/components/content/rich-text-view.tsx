@@ -83,7 +83,7 @@ function renderNode(node: RichTextNode, index: number): ReactNode {
           borderRadius="md"
           padding="4"
           overflowX="auto"
-          fontFamily="mono"
+          textStyle="data"
           fontSize="sm"
         >
           {renderChildren(node)}

@@ -112,7 +112,7 @@ const ParticipantCard = memo(function ParticipantCard({ row }: { row: MonitorPar
             </Text>
           ) : (
             <>
-              <Text fontSize="xs" color="fg.muted" fontFamily="mono">
+              <Text fontSize="xs" color="fg.muted" textStyle="data">
                 {row.attempt.remainingMs === null
                   ? "No timer"
                   : formatRemaining(row.attempt.remainingMs)}

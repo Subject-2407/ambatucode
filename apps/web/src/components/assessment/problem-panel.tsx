@@ -75,7 +75,7 @@ function SampleBlock({ label, value }: { label: string; value: string }) {
       </Text>
       <Box
         as="pre"
-        fontFamily="mono"
+        textStyle="data"
         fontSize="xs"
         whiteSpace="pre-wrap"
         overflowX="auto"

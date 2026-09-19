@@ -24,7 +24,7 @@ export default async function CoderProfilePage() {
   const { user, expiresAt } = await requirePageSession("CODER");
 
   return (
-    <PageContainer>
+    <PageContainer backdrop="circuit">
       <PageHeader title="Profile" description="Your account details." />
       <Card.Root maxWidth="lg" bg="bg.surface" borderColor="border.default">
         <Card.Body>

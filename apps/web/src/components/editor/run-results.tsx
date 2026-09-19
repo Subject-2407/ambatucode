@@ -67,7 +67,7 @@ export function TestResultRow({ result }: { result: RunTestResultView }) {
       {output.trim() === "" ? null : (
         <Box
           as="pre"
-          fontFamily="mono"
+          textStyle="data"
           fontSize="xs"
           whiteSpace="pre-wrap"
           color="fg.muted"
@@ -128,7 +128,7 @@ export function RunOutcome({ state, idle }: { state: RunJobState; idle?: ReactNo
         {shouldShowCompilerOutput(state.status, state.compilerOutput) ? (
           <Box
             as="pre"
-            fontFamily="mono"
+            textStyle="data"
             fontSize="xs"
             whiteSpace="pre-wrap"
             color="fg.muted"

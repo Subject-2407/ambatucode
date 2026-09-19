@@ -24,7 +24,7 @@ export default async function CoderDashboardPage() {
   });
 
   return (
-    <PageContainer>
+    <PageContainer backdrop="circuit">
       <PageHeader
         title={`Welcome back, ${session.user.displayName}`}
         description="Your modules, and the practice waiting inside them."
