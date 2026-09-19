@@ -2,6 +2,7 @@
 
 import { forwardRef } from "react";
 import { Badge as ChakraBadge, Box, type BadgeProps as ChakraBadgeProps } from "@chakra-ui/react";
+import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
 
 /**
  * `tone` is the vocabulary the rest of the app uses for status. Mapping it here
@@ -50,8 +51,11 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
       colorPalette={TONE_PALETTE[tone]}
       textStyle="display"
       borderRadius="0"
-      borderWidth="2px"
-      borderColor="currentColor"
+      borderWidth="0"
+      // The edge is drawn inside the box: a notch clips anything painted
+      // outside it, so a real border would lose its own corners.
+      boxShadow={pixelFocusRing("currentColor", 2)}
+      clipPath={pixelNotch(2)}
       gap="1.5"
       {...props}
     >

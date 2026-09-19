@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Dialog, Portal } from "@chakra-ui/react";
+import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
 import { CloseButton } from "./close-button";
 
 export type ModalProps = {
@@ -53,9 +54,10 @@ export function Modal({
         <Dialog.Positioner>
           <Dialog.Content
             bg="bg.surface"
-            borderWidth="3px"
-            borderColor="border.emphasized"
-            boxShadow="popover"
+            borderWidth="0"
+            borderRadius="0"
+            clipPath={pixelNotch()}
+            boxShadow={pixelFocusRing("var(--amb-colors-border-emphasized)", 4)}
           >
             <Dialog.Header>
               <Dialog.Title textStyle="display" fontSize="md">

@@ -7,7 +7,7 @@ import {
   type ButtonProps as ChakraButtonProps,
   type IconButtonProps as ChakraIconButtonProps,
 } from "@chakra-ui/react";
-import { PIXEL, PIXEL_PRESS, pixelNotch } from "@/theme/pixel";
+import { PIXEL, PIXEL_PRESS, pixelFocusRing, pixelNotch } from "@/theme/pixel";
 
 /**
  * Buttons default to the accent palette so the primary action on a screen is
@@ -44,8 +44,26 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       borderRadius="0"
       clipPath={flat ? undefined : pixelNotch()}
       filter={flat ? undefined : DROP_SHADOW}
-      transition="filter 80ms steps(2), transform 80ms steps(2)"
+      /*
+       * Only the colour eases. The press must not.
+       *
+       * A physical key is already down by the time you feel it and comes back
+       * up slowly, so animating the travel inverts the sensation: the button
+       * appeared to lag going down and snap coming up. `transform` and the
+       * shadow are therefore excluded from the transition entirely and change
+       * on the same frame as the pointer.
+       */
+      transition="background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out"
       _active={flat ? undefined : { transform: PIXEL_PRESS, filter: "none" }}
+      /*
+       * The notch clips the global outline away, so a keyboard user would get
+       * no indicator at all. The ring is drawn inside the clip instead, in the
+       * button's own contrast colour so it reads on any fill.
+       */
+      _focusVisible={{
+        outline: "none",
+        boxShadow: pixelFocusRing("var(--amb-colors-color-palette-contrast)"),
+      }}
       // A disabled control is not pressable, so it should not look raised.
       _disabled={{ filter: "none", transform: "none", opacity: 0.55, cursor: "not-allowed" }}
       {...rest}
@@ -57,6 +75,8 @@ export type IconButtonProps = ChakraIconButtonProps;
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   function IconButton(props, ref) {
-    return <ChakraIconButton ref={ref} variant="ghost" colorPalette="accent" borderRadius="0" {...props} />;
+    return (
+      <ChakraIconButton ref={ref} variant="ghost" colorPalette="accent" borderRadius="0" {...props} />
+    );
   },
 );
