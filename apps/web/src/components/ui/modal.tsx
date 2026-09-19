@@ -22,6 +22,11 @@ export type ModalProps = {
  *
  * `blocking` exists for the modals the SRS requires a user to acknowledge, such
  * as an auto-submitted attempt: those must not be dismissable by clicking away.
+ *
+ * The heavy edge is not decoration. An Interactive Block renders arbitrary
+ * authored markup, and a Coder has to be able to tell a real platform dialog
+ * from one drawn inside a frame — so the platform's own dialogs carry a border
+ * weight and a typeface that ordinary content does not.
  */
 export function Modal({
   open,
@@ -46,9 +51,16 @@ export function Modal({
       <Portal>
         <Dialog.Backdrop bg="blackAlpha.600" backdropFilter="blur(2px)" />
         <Dialog.Positioner>
-          <Dialog.Content bg="bg.surface" borderColor="border.default" boxShadow="popover">
+          <Dialog.Content
+            bg="bg.surface"
+            borderWidth="3px"
+            borderColor="border.emphasized"
+            boxShadow="popover"
+          >
             <Dialog.Header>
-              <Dialog.Title>{title}</Dialog.Title>
+              <Dialog.Title textStyle="display" fontSize="md">
+                {title}
+              </Dialog.Title>
             </Dialog.Header>
             {!blocking && (
               <Dialog.CloseTrigger asChild>

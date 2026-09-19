@@ -26,7 +26,7 @@ export function ProblemPanel({
 }) {
   return (
     <Stack gap="5" padding={{ base: "4", md: "5" }}>
-      <Heading as="h1" size="md">
+      <Heading as="h1" textStyle="display" fontSize="lg">
         {title}
       </Heading>
 
@@ -36,7 +36,7 @@ export function ProblemPanel({
 
       {sampleCases.length === 0 ? null : (
         <Stack gap="3">
-          <Heading as="h2" size="sm" color="fg.muted">
+          <Heading as="h2" textStyle="display" fontSize="xs" color="accent.fg">
             Sample cases
           </Heading>
           {sampleCases.map((sample, index) => (
@@ -58,7 +58,7 @@ function SampleCase({ sample }: { sample: SampleCaseView }) {
       bg="bg.subtle"
       padding="3"
     >
-      <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
+      <Text textStyle="display" fontSize="2xs" color="fg.muted">
         {sample.name}
       </Text>
       <SampleBlock label="Input" value={sample.input} />

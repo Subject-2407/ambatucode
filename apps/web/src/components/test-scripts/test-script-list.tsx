@@ -1,7 +1,7 @@
 "use client";
 
 import { HStack, Stack, Text } from "@chakra-ui/react";
-import { FileCode, Pencil, Trash } from "lucide-react";
+import { Pencil, Trash } from "lucide-react";
 import type { Language, TestScriptFramework, TestScriptValidation } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { IconButton } from "@/components/ui/button";
@@ -36,7 +36,7 @@ export function TestScriptList<Script extends ListedTestScript>({
   if (scripts.length === 0) {
     return (
       <EmptyState
-        icon={<FileCode aria-hidden />}
+        sprite="filecode"
         title="No test scripts"
         description={emptyDescription}
       />

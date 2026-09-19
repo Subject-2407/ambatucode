@@ -1,7 +1,7 @@
 "use client";
 
 import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { Medal, Trophy } from "lucide-react";
+import { Medal } from "lucide-react";
 import type { LeaderboardRow, LeaderboardScope } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -100,7 +100,7 @@ export function LeaderboardPanel({
   if (isError && isApiError(error) && error.code === "FORBIDDEN") {
     return (
       <EmptyState
-        icon={<Trophy aria-hidden />}
+        sprite="trophy"
         title="No leaderboard here"
         description="The Architect has turned competitive ranking off for this assessment."
       />
@@ -110,7 +110,7 @@ export function LeaderboardPanel({
   if (isError) {
     return (
       <EmptyState
-        icon={<Trophy aria-hidden />}
+        sprite="trophy"
         title="Leaderboard unavailable"
         description="The ranking could not be loaded. It will reappear once the server answers."
       />
@@ -130,7 +130,7 @@ export function LeaderboardPanel({
   if (data.assessmentCount === 0) {
     return (
       <EmptyState
-        icon={<Trophy aria-hidden />}
+        sprite="trophy"
         title="Nothing to rank yet"
         description={
           data.hiddenAssessmentCount > 0
@@ -144,7 +144,7 @@ export function LeaderboardPanel({
   if (data.rows.length === 0) {
     return (
       <EmptyState
-        icon={<Trophy aria-hidden />}
+        sprite="trophy"
         title="No scores yet"
         description="The board fills in as Coders finish their assessments."
       />

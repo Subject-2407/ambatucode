@@ -94,7 +94,9 @@ export function PracticeActivity({ activity }: { activity: PracticeActivityView 
       <Flex justify="space-between" align="start" gap="4" wrap="wrap">
         <HStack gap="2">
           <Terminal size={16} aria-hidden />
-          <Text fontWeight="semibold">{activity.title}</Text>
+          <Text textStyle="display" fontSize="sm">
+            {activity.title}
+          </Text>
           <Badge tone="accent">Practice</Badge>
         </HStack>
         {activity.allowedLanguages.length > 1 ? (

@@ -93,7 +93,7 @@ export function AssessmentList({
   return (
     <Stack gap="3">
       <Flex justify="space-between" align="center">
-        <Text fontWeight="semibold" fontSize="sm">
+        <Text textStyle="display" fontSize="sm">
           Assessments
         </Text>
         <Button

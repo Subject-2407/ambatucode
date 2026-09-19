@@ -403,7 +403,7 @@ export function AttemptWorkspace({
         bg="bg.surface"
       >
         <HStack gap="3" minWidth="0">
-          <Text fontWeight="semibold" truncate>
+          <Text textStyle="display" truncate>
             {assessment.title}
           </Text>
           <Badge tone="neutral">Attempt {attempt.attemptNumber}</Badge>

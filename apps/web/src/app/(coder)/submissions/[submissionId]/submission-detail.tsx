@@ -103,7 +103,7 @@ export function SubmissionDetail({
         {submission.compilerOutput && submission.compilerOutput.trim() !== "" ? (
           <Card.Root bg="bg.surface" borderColor="border.default">
             <Card.Header>
-              <Text fontWeight="medium">Compiler output</Text>
+              <Text textStyle="display">Compiler output</Text>
             </Card.Header>
             <Card.Body>
               <Box
@@ -124,7 +124,7 @@ export function SubmissionDetail({
         <Card.Root bg="bg.surface" borderColor="border.default">
           <Card.Header>
             <Stack gap="1">
-              <Text fontWeight="medium">Test results</Text>
+              <Text textStyle="display">Test results</Text>
               <Text fontSize="xs" color="fg.muted">
                 Sample cases and any tests your Architect chose to show. Hidden grading cases stay
                 hidden — your score already counts them.
@@ -184,7 +184,7 @@ export function SubmissionDetail({
 
         <Card.Root bg="bg.surface" borderColor="border.default">
           <Card.Header>
-            <Text fontWeight="medium">What you submitted</Text>
+            <Text textStyle="display">What you submitted</Text>
           </Card.Header>
           <Card.Body>
             <Box

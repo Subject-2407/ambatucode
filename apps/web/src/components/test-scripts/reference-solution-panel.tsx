@@ -73,7 +73,7 @@ export function ReferenceSolutionPanel({
     <Stack gap="3" borderWidth="1px" borderColor="border.default" borderRadius="md" padding="4">
       <Flex justify="space-between" align="center" gap="3" wrap="wrap">
         <Stack gap="0">
-          <Text fontWeight="semibold" fontSize="sm">
+          <Text textStyle="display" fontSize="sm">
             Reference solution
           </Text>
           <Text fontSize="xs" color="fg.muted">

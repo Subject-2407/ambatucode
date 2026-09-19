@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HStack, Stack, Text } from "@chakra-ui/react";
-import { CalendarClock, Play, Timer } from "lucide-react";
+import { Play, Timer } from "lucide-react";
 import type {
   AssessmentCoderView,
   AttemptView,
@@ -86,10 +86,10 @@ export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderVi
       </Stack>
 
       <Stack gap="3">
-        <Text fontWeight="semibold">Sessions</Text>
+        <Text textStyle="display">Sessions</Text>
         {assessment.sessions.length === 0 ? (
           <EmptyState
-            icon={<CalendarClock aria-hidden />}
+            sprite="calendar"
             title="No session yet"
             description="Your Architect has not scheduled a session of this assessment for you."
           />

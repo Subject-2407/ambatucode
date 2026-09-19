@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { ModuleLeaderboards } from "@/components/gamification/module-leaderboards";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PixelFrame } from "@/components/ui/pixel-frame";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { routes } from "@/lib/routes";
@@ -56,7 +57,7 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
           {/* Gamification belongs to learning, so it lives on the module page
               and never inside the attempt workspace. */}
           <Stack gap="3">
-            <Text fontSize="sm" fontWeight="medium">
+            <Text fontSize="sm" textStyle="display">
               Leaderboard
             </Text>
             <ModuleLeaderboards
@@ -85,7 +86,7 @@ function AccessPanel({ module }: { module: ModuleDetail }) {
 
   return (
     <EmptyState
-      icon={<Lock aria-hidden />}
+      sprite="lock"
       title={pending ? "Waiting for approval" : "Enroll to read this module"}
       description={
         pending
@@ -103,7 +104,7 @@ function SectionTree({ module }: { module: ModuleDetail }) {
   if (module.sections.length === 0) {
     return (
       <EmptyState
-        icon={<FileText aria-hidden />}
+        sprite="doc"
         title="Nothing published yet"
         description="The Architect has not added any sections to this module."
       />
@@ -131,10 +132,14 @@ function SectionBlock({
   return (
     <Stack gap="3">
       <HStack gap="3" align="baseline">
-        <Text fontSize="xs" color="fg.muted" fontWeight="medium">
+        {/* The number is real information here — a Section is an ordered step
+            through the Module, not a card in an unordered grid. */}
+        <Text textStyle="display" fontSize="xs" color="accent.fg">
           {String(index + 1).padStart(2, "0")}
         </Text>
-        <Text fontWeight="semibold">{section.title}</Text>
+        <Text textStyle="display" fontSize="md">
+          {section.title}
+        </Text>
       </HStack>
 
       {section.materials.length === 0 && section.assessments.length === 0 ? (
@@ -158,7 +163,11 @@ function SectionBlock({
           ))}
 
           {section.assessments.map((assessment) => (
-            <ItemLink key={assessment.id} href={routes.assessment(moduleSlug, assessment.id)}>
+            <ItemLink
+              key={assessment.id}
+              href={routes.assessment(moduleSlug, assessment.id)}
+              tone="assessment"
+            >
               <HStack gap="3" minWidth="0">
                 <ClipboardCheck size={16} aria-hidden />
                 <Text truncate>{assessment.title}</Text>
@@ -178,13 +187,41 @@ function SectionBlock({
  * bottom. The icon and the timing badge are what tell them apart — reading
  * an explanation and sitting an exam should never look identical.
  */
-function ItemLink({ href, children }: { href: string; children: ReactNode }) {
+function ItemLink({
+  href,
+  tone = "material",
+  children,
+}: {
+  href: string;
+  /**
+   * Materials are quiet rows; an Assessment is the gate at the end of the
+   * Section and carries the heavy crimson frame. Crimson means consequence
+   * throughout the product, and this is the one link on the page that spends a
+   * formal attempt.
+   */
+  tone?: "material" | "assessment";
+  children: ReactNode;
+}) {
+  if (tone === "assessment") {
+    return (
+      <PixelFrame tone="danger" _hover={{ bg: "danger.fg" }}>
+        <Box asChild px="4" py="3">
+          <NextLink href={href}>
+            <Flex align="center" justify="space-between" gap="3">
+              {children}
+              <ChevronRight size={16} aria-hidden />
+            </Flex>
+          </NextLink>
+        </Box>
+      </PixelFrame>
+    );
+  }
+
   return (
     <Box
       asChild
       borderWidth="1px"
       borderColor="border.default"
-      borderRadius="md"
       bg="bg.surface"
       px="4"
       py="3"

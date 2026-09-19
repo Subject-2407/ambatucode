@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import { Flex, HStack, InputGroup, Menu, Portal, Stack, Text } from "@chakra-ui/react";
-import { Ellipsis, KeyRound, Pencil, Search, Trash, UserPlus, Users } from "lucide-react";
+import { Ellipsis, KeyRound, Pencil, Search, Trash, UserPlus } from "lucide-react";
 import { USER_ROLES, type AdminUser, type UserRole } from "@ambatucode/shared";
 import { ROLE_LABEL } from "@/components/layout/navigation";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
@@ -136,7 +136,7 @@ export function UsersScreen({ currentUserId }: { currentUserId: string }) {
                     <ChakraTable.Row>
                       <ChakraTable.Cell colSpan={COLUMN_COUNT} border="none">
                         <EmptyState
-                          icon={<Users size={28} aria-hidden />}
+                          sprite="users"
                           title="No accounts match"
                           description={
                             search || role

@@ -10,6 +10,11 @@
  * is the Go worker's job and happens only inside a Docker sandbox — this
  * process must never gain that responsibility.
  *
+ * Because it executes nothing, every verdict it reports is fabricated: cases
+ * and script tests alike all pass. It cannot tell an Architect whether a test
+ * script really runs against their reference solution — validating scripts for
+ * real needs the Go worker and the sandbox images.
+ *
  * Usage: pnpm stub:worker
  */
 import { Worker } from "bullmq";
@@ -19,6 +24,7 @@ import {
   QUEUE_NAMES,
   type ExecutionJob,
   type ExecutionResult,
+  type ExecutionTestResult,
   executionJobSchema,
 } from "@ambatucode/shared";
 
@@ -29,6 +35,38 @@ const CALLBACK_URL =
 const connection = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
 
 function fabricateResult(job: ExecutionJob): ExecutionResult {
+  const caseResults: ExecutionTestResult[] = job.testCases.map((testCase) => ({
+    testCaseId: testCase.id,
+    testScriptId: null,
+    name: testCase.name,
+    status: "GRADED",
+    passed: true,
+    weight: testCase.weight,
+    executionTimeMs: 4,
+    memoryUsedKb: 2_048,
+    stdoutExcerpt: testCase.expectedOutput,
+    stderrExcerpt: "",
+  }));
+
+  // Every script gets a row of its own. A job carrying scripts and no cases is
+  // a script validation, and a result with no row for a script is read as a
+  // script that reported no tests — so leaving these out fails an Architect's
+  // scripts on the strength of a stand-in that never ran them. Excerpts stay
+  // empty, as the real worker's script rows are: a script quotes the values it
+  // expects, and none of that is a Coder's to see.
+  const scriptResults: ExecutionTestResult[] = job.testScripts.map((script) => ({
+    testCaseId: null,
+    testScriptId: script.id,
+    name: `${script.path} (stub worker)`,
+    status: "GRADED",
+    passed: true,
+    weight: script.weight,
+    executionTimeMs: 4,
+    memoryUsedKb: 2_048,
+    stdoutExcerpt: "",
+    stderrExcerpt: "",
+  }));
+
   return {
     contractVersion: EXECUTION_CONTRACT_VERSION,
     jobId: job.jobId,
@@ -38,18 +76,7 @@ function fabricateResult(job: ExecutionJob): ExecutionResult {
     systemError: null,
     executionTimeMs: 12,
     memoryUsedKb: 4_096,
-    testResults: job.testCases.map((testCase) => ({
-      testCaseId: testCase.id,
-      testScriptId: null,
-      name: testCase.name,
-      status: "GRADED",
-      passed: true,
-      weight: testCase.weight,
-      executionTimeMs: 4,
-      memoryUsedKb: 2_048,
-      stdoutExcerpt: testCase.expectedOutput,
-      stderrExcerpt: "",
-    })),
+    testResults: [...caseResults, ...scriptResults],
   };
 }
 

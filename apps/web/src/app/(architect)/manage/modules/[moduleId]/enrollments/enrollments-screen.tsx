@@ -3,7 +3,7 @@
 import { useId, useMemo, useState } from "react";
 import NextLink from "next/link";
 import { Flex, HStack, InputGroup, Stack, Text } from "@chakra-ui/react";
-import { Check, ChevronLeft, Search, UserCheck, X } from "lucide-react";
+import { Check, ChevronLeft, Search, X } from "lucide-react";
 import type { EnrollmentStatus, EnrollmentView } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -133,7 +133,7 @@ export function EnrollmentsScreen({ moduleId }: { moduleId: string }) {
             <ErrorState error={error} onRetry={() => void refetch()} />
           ) : !isPending && items.length === 0 ? (
             <EmptyState
-              icon={<UserCheck aria-hidden />}
+              sprite="check"
               title={tab === "PENDING" ? "Nothing waiting" : "No enrollments here"}
               description={
                 tab === "PENDING"

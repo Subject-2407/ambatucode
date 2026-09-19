@@ -5,9 +5,10 @@ import { Box, HStack, Stack, Text } from "@chakra-ui/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { MonitorParticipantRow } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
+import { PixelFrame, type PixelFrameTone } from "@/components/ui/pixel-frame";
 import { describeSubmission } from "@/components/assessment/submission-status";
 import { formatRemaining } from "@/lib/attempt-clock";
-import { ParticipantStateBadge, participantState } from "./readiness-board";
+import { ParticipantStateBadge, participantState, type ParticipantState } from "./readiness-board";
 
 /**
  * One card per participant, virtualized.
@@ -68,58 +69,64 @@ export function ParticipantGrid({ rows }: { rows: MonitorParticipantRow[] }) {
 }
 
 /**
+ * A participant's state drives the frame as well as the badge.
+ *
+ * An Architect supervising a lab reads this grid from several metres away, and
+ * at that distance a 4px coloured edge is legible where a badge's text is not.
+ * The badge stays because colour alone is not a channel.
+ */
+const STATE_TONE: Readonly<Record<ParticipantState, PixelFrameTone>> = {
+  READY: "accent",
+  NOT_READY: "muted",
+  OFFLINE: "danger",
+};
+
+/**
  * Memoized on the row object: the feed replaces one participant at a time, so
  * every other card keeps its previous props and skips rendering entirely.
  */
 const ParticipantCard = memo(function ParticipantCard({ row }: { row: MonitorParticipantRow }) {
   const submission = row.submission;
   const summary = submission ? describeSubmission(submission.status, submission.score) : null;
+  const state = participantState(row);
 
   return (
-    <Stack
-      gap="2"
-      height="100%"
-      justify="center"
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="md"
-      bg="bg.surface"
-      px="3"
-      py="2"
-    >
-      <HStack justify="space-between" gap="3">
-        <Stack gap="0" minWidth="0">
-          <Text fontSize="sm" truncate>
-            {row.displayName}
-          </Text>
-          <Text fontSize="xs" color="fg.muted" truncate>
-            {row.username}
-          </Text>
-        </Stack>
-        <ParticipantStateBadge state={participantState(row)} />
-      </HStack>
-
-      <HStack gap="2" wrap="wrap">
-        {row.attempt === null ? (
-          <Text fontSize="xs" color="fg.muted">
-            Not started
-          </Text>
-        ) : (
-          <>
-            <Text fontSize="xs" color="fg.muted" fontFamily="mono">
-              {row.attempt.remainingMs === null
-                ? "No timer"
-                : formatRemaining(row.attempt.remainingMs)}
+    <PixelFrame tone={STATE_TONE[state]} height="100%">
+      <Stack gap="2" height="100%" justify="center" px="3" py="2">
+        <HStack justify="space-between" gap="3">
+          <Stack gap="0" minWidth="0">
+            <Text fontSize="sm" truncate>
+              {row.displayName}
             </Text>
-            {row.attempt.paused ? <Badge tone="warning">Paused</Badge> : null}
-            {row.attempt.attemptNumber > 1 ? (
-              <Badge tone="neutral">Attempt {row.attempt.attemptNumber}</Badge>
-            ) : null}
-          </>
-        )}
-        {summary ? <Badge tone={summary.tone}>{summary.label}</Badge> : null}
-        {submission?.isAutoSubmitted ? <Badge tone="warning">Auto</Badge> : null}
-      </HStack>
-    </Stack>
+            <Text fontSize="xs" color="fg.muted" truncate>
+              {row.username}
+            </Text>
+          </Stack>
+          <ParticipantStateBadge state={state} />
+        </HStack>
+
+        <HStack gap="2" wrap="wrap">
+          {row.attempt === null ? (
+            <Text fontSize="xs" color="fg.muted">
+              Not started
+            </Text>
+          ) : (
+            <>
+              <Text fontSize="xs" color="fg.muted" fontFamily="mono">
+                {row.attempt.remainingMs === null
+                  ? "No timer"
+                  : formatRemaining(row.attempt.remainingMs)}
+              </Text>
+              {row.attempt.paused ? <Badge tone="warning">Paused</Badge> : null}
+              {row.attempt.attemptNumber > 1 ? (
+                <Badge tone="neutral">Attempt {row.attempt.attemptNumber}</Badge>
+              ) : null}
+            </>
+          )}
+          {summary ? <Badge tone={summary.tone}>{summary.label}</Badge> : null}
+          {submission?.isAutoSubmitted ? <Badge tone="warning">Auto</Badge> : null}
+        </HStack>
+      </Stack>
+    </PixelFrame>
   );
 });

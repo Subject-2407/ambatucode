@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { AppProviders } from "@/providers/app-providers";
+import "./fonts.css";
 
 export const metadata: Metadata = {
   title: {
@@ -14,8 +15,9 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   // The chrome should follow whichever theme the user resolved to.
+  // Matches bg.canvas in each theme: bone.300 on paper, brand.950 on dark.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f4f5fc" },
+    { media: "(prefers-color-scheme: light)", color: "#ded8c6" },
     { media: "(prefers-color-scheme: dark)", color: "#1a1c29" },
   ],
 };

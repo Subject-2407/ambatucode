@@ -4,9 +4,11 @@ import { useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { Box, Skeleton } from "@chakra-ui/react";
 import { loader, type OnMount } from "@monaco-editor/react";
+import type * as MonacoApi from "monaco-editor";
 import type { Language } from "@ambatucode/shared";
 import { useColorMode } from "@/providers/color-mode";
 import { MONACO_LANGUAGE_ID, TAB_SIZE } from "./language-labels";
+import { monacoThemeFor, monacoThemes } from "./monaco-theme";
 
 /**
  * The Monaco wrapper. Every editor in the product goes through it.
@@ -69,7 +71,7 @@ export function SourceEditor({
       // Ligatures off: a lab projector and an unfamiliar font turn `!==` into
       // a glyph a beginner cannot type back.
       fontLigatures: false,
-      fontFamily: "var(--chakra-fonts-mono)",
+      fontFamily: "var(--amb-fonts-mono)",
       fontSize: 14,
       lineNumbersMinChars: 3,
       scrollBeyondLastLine: false,
@@ -87,13 +89,25 @@ export function SourceEditor({
     [autoFocus],
   );
 
+  // Themes have to exist before the editor asks for one by name, and
+  // `beforeMount` is the only hook that runs early enough.
+  // Typed against monaco-editor directly rather than the wrapper's `BeforeMount`,
+  // whose monaco parameter resolves to `any` here and would make every call
+  // through it unchecked.
+  const handleBeforeMount = useCallback((monaco: typeof MonacoApi) => {
+    for (const [name, data] of Object.entries(monacoThemes)) {
+      monaco.editor.defineTheme(name, data);
+    }
+  }, []);
+
   return (
-    <Box height={height} minHeight="16rem" overflow="hidden" borderRadius="md">
+    <Box height={height} minHeight="16rem" overflow="hidden" borderRadius="0">
       <MonacoEditor
         language={monacoLanguage}
-        theme={colorMode === "dark" ? "vs-dark" : "vs"}
+        theme={monacoThemeFor(colorMode)}
         value={value}
         onChange={(next) => onChange(next ?? "")}
+        beforeMount={handleBeforeMount}
         onMount={handleMount}
         options={options}
         height="100%"

@@ -8,7 +8,7 @@ import {
   hashSessionToken,
   isSessionLive,
 } from "@ambatucode/shared/auth/session-token";
-import { getServerEnv, isProduction } from "../env";
+import { getServerEnv, isSessionCookieSecure } from "../env";
 import { registerCloser } from "../shutdown-registry";
 
 /**
@@ -51,7 +51,7 @@ export function buildSessionCookie(token: string, expiresAt: Date): SessionCooki
     options: {
       httpOnly: true,
       sameSite: "lax",
-      secure: isProduction(),
+      secure: isSessionCookieSecure(),
       path: "/",
       expires: expiresAt,
     },
@@ -65,7 +65,7 @@ export function buildClearedSessionCookie(): SessionCookie {
     options: {
       httpOnly: true,
       sameSite: "lax",
-      secure: isProduction(),
+      secure: isSessionCookieSecure(),
       path: "/",
       maxAge: 0,
     },

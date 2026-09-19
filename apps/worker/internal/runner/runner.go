@@ -268,7 +268,7 @@ func (r *Runner) runCases(
 
 		// Without a readable kill counter, the daemon's memory flag stays set
 		// once raised, so no later case's memory verdict could be trusted.
-		if run.status == contract.StatusMemoryLimitExceeded && !meter.available {
+		if run.status == contract.StatusMemoryLimitExceeded && !meter.attributable() {
 			stoppedBy = contract.StatusMemoryLimitExceeded
 		}
 	}
@@ -357,26 +357,69 @@ func classifyCase(outcome sandbox.RunOutcome, oomKilled bool, budget time.Durati
 }
 
 // oomMeter attributes memory kills to the case that caused them.
+//
+// The counter that can do that lives in the container's own cgroup, and
+// reading it means starting a process in there — which on a loaded host takes
+// longer than a short test case does to run, and would be paid by every case
+// of every submission to answer "no" almost every time. So each run is first
+// put to a screen built from what the daemon already handed back for free, and
+// the counter is read only for a run the screen cannot clear.
 type oomMeter struct {
-	session   *sandbox.Session
+	session *sandbox.Session
+
+	// failures is the daemon's memory-failure count as of the last run
+	// screened. It cannot miss a kill, so a count that has not moved is proof
+	// that the run it covers was not killed for memory.
+	failures      uint64
+	failuresKnown bool
+
+	// flagged records that the daemon's sticky OOM flag has already been seen
+	// and accounted for, after which it says nothing about any later run.
+	flagged bool
+
+	// count is the cgroup counter as of the last authoritative read, and
+	// available whether that counter can be read at all. resolved is false
+	// until the first run the screen could not clear, since until then there
+	// has been no reason to ask.
+	resolved  bool
 	available bool
 	count     int64
 }
 
 func newOOMMeter(ctx context.Context, session *sandbox.Session) *oomMeter {
-	count, ok := session.OOMKills(ctx)
-	return &oomMeter{session: session, available: ok, count: count}
+	meter := &oomMeter{session: session}
+	meter.failures, meter.failuresKnown = session.MemoryFailures(ctx)
+	if meter.failuresKnown && meter.failures == 0 {
+		// Nothing in this container has reached its memory limit yet, and a
+		// kill always reaches it — so the cgroup counter stands at zero too,
+		// and the baseline is known without paying to read it.
+		return meter
+	}
+	// Either there is no screen to start from, or something has already hit
+	// the limit in here. Both leave the baseline unknown, and a run measured
+	// against the wrong baseline would be blamed for a kill that predates it.
+	meter.count, meter.available = session.OOMKills(ctx)
+	meter.resolved = true
+	return meter
 }
 
 // killedDuring reports whether a memory kill happened during the run that just
 // produced outcome.
 func (m *oomMeter) killedDuring(ctx context.Context, outcome sandbox.RunOutcome) bool {
-	if !m.available || !m.session.Alive() {
+	if !m.session.Alive() {
 		// The daemon's flag: correct for the first kill, sticky afterwards —
 		// the caller stops trusting later cases once it has fired.
 		return outcome.OOMKilled
 	}
+	if !m.suspect(outcome) {
+		return false
+	}
+	if m.resolved && !m.available {
+		return outcome.OOMKilled
+	}
+
 	count, ok := m.session.OOMKills(ctx)
+	m.resolved, m.available = true, ok
 	if !ok {
 		return outcome.OOMKilled
 	}
@@ -384,6 +427,35 @@ func (m *oomMeter) killedDuring(ctx context.Context, outcome sandbox.RunOutcome)
 	m.count = count
 	return killed
 }
+
+// suspect reports whether the run that produced outcome could have involved a
+// memory kill, from the two signals that cost nothing to obtain.
+//
+// Both are one-directional, which is the whole basis for screening on them: a
+// kill always raises the failure count and always sets the daemon's flag, so a
+// run that moved neither killed nothing. Either one moving means only that the
+// cgroup counter is now worth reading.
+func (m *oomMeter) suspect(outcome sandbox.RunOutcome) bool {
+	// The count is carried forward first and unconditionally. Leaving it
+	// behind on a run the flag screened in would leave every later run being
+	// measured against a baseline the container has already passed, and each
+	// of them paying for a counter read to find that out.
+	moved := true
+	if outcome.MemoryFailuresKnown {
+		moved = outcome.MemoryFailures > m.failures
+		m.failures = outcome.MemoryFailures
+	}
+	if outcome.OOMKilled && !m.flagged {
+		m.flagged = true
+		return true
+	}
+	return moved
+}
+
+// attributable reports whether a memory kill can still be pinned to the case
+// that caused it. Once it cannot, no later case's memory verdict means
+// anything, and the caller stops running them.
+func (m *oomMeter) attributable() bool { return !m.resolved || m.available }
 
 // notRun reports a case that never started.
 func notRun(testCase contract.TestCase, status contract.Status) contract.TestResult {

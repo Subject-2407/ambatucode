@@ -20,7 +20,13 @@ export function DataTable({
   size?: "sm" | "md" | "lg";
 }) {
   return (
-    <ChakraTable.ScrollArea rounded="l3" bg="bg.surface" maxWidth="100%">
+    <ChakraTable.ScrollArea
+      bg="bg.surface"
+      borderWidth="1px"
+      borderColor="border.default"
+      maxWidth="100%"
+      css={{ "& th": { textStyle: "display", fontSize: "2xs" } }}
+    >
       <ChakraTable.Root variant="outline" size={size} interactive stickyHeader>
         <ChakraTable.Caption srOnly>{caption}</ChakraTable.Caption>
         {children}

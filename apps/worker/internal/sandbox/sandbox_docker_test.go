@@ -337,3 +337,79 @@ func TestRunLeavesNoContainersBehind(t *testing.T) {
 		t.Fatalf("%d containers survived their run", remaining)
 	}
 }
+
+// The memory-failure count is what lets the runner skip the expensive kill
+// counter for the overwhelming majority of runs, so what has to hold is the
+// direction it can be wrong in: it must move for a kill, and hold still for
+// everything else. A count that stayed put while a program was killed would
+// grade a memory blow-up as an ordinary crash.
+func TestMemoryFailureCountTracksKillsAndNothingElse(t *testing.T) {
+	box := newTestSandbox(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	session, err := box.Open(ctx, SessionSpec{
+		JobID:          "integration",
+		Image:          testImage,
+		WallTimeout:    2 * time.Minute,
+		MemoryLimitMb:  64,
+		MaxProcesses:   64,
+		MaxOutputBytes: 65536,
+	})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	defer session.Close()
+
+	failures, known := session.MemoryFailures(ctx)
+	if !known {
+		t.Skip("this daemon reports no memory statistics; the runner falls back to the kill counter")
+	}
+	if failures != 0 {
+		t.Fatalf("a fresh container reported %d memory failures, want 0", failures)
+	}
+
+	exec := func(name string, source string) RunOutcome {
+		t.Helper()
+		outcome, err := session.Run(ctx, ExecSpec{
+			Cmd:     []string{"python3", "-c", source},
+			Timeout: time.Minute,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !outcome.MemoryFailuresKnown {
+			t.Fatalf("%s: the count was known before the run and not after it", name)
+		}
+		return outcome
+	}
+
+	// Well under the limit, then a non-zero exit that has nothing to do with
+	// memory. Neither may move the count, or every case would be screened in
+	// and the saving would be nothing.
+	if outcome := exec("under the limit", "x = bytearray(8 * 1024 * 1024)"); outcome.MemoryFailures != 0 {
+		t.Fatalf("an allocation inside the limit moved the count to %d", outcome.MemoryFailures)
+	}
+	if outcome := exec("ordinary crash", "raise SystemExit(3)"); outcome.MemoryFailures != 0 {
+		t.Fatalf("an ordinary non-zero exit moved the count to %d", outcome.MemoryFailures)
+	}
+
+	// Each kill has to move it again: a count that saturated after the first
+	// would leave every later case looking innocent.
+	for kill := uint64(1); kill <= 2; kill++ {
+		outcome := exec("memory bomb", "x = bytearray(400 * 1024 * 1024)")
+		if outcome.MemoryFailures != kill {
+			t.Fatalf("after %d memory kill(s) the count was %d", kill, outcome.MemoryFailures)
+		}
+	}
+
+	// And the cgroup's own counter, which the runner reads to confirm a
+	// screened-in run, has to agree with it.
+	kills, ok := session.OOMKills(ctx)
+	if !ok {
+		t.Fatal("the cgroup kill counter could not be read")
+	}
+	if kills != 2 {
+		t.Fatalf("cgroup kill counter = %d, want 2", kills)
+	}
+}
