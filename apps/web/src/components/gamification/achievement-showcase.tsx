@@ -12,6 +12,7 @@ import {
   type UserAchievementView,
 } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
+import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -50,15 +51,19 @@ function AchievementCard({
     <Flex
       gap="3"
       padding="4"
-      borderWidth={earned ? "3px" : "1px"}
       // An earned Title is one of only two things in the product allowed to be
       // gold; the other is the frame around Architect-authored content. Keeping
       // it that scarce is what makes gold mean "you earned this" on sight.
-      borderColor={earned ? "gold.solid" : "border.default"}
-      // Locked is a dashed outline and a muted icon, not a faded card: the
-      // description is the goal, and fading it would fail contrast for the
-      // very text a Coder is meant to read.
-      borderStyle={earned ? "solid" : "dashed"}
+      //
+      // Locked keeps a dashed outline and a muted icon rather than a faded
+      // card: the description is the goal, and fading it would fail contrast
+      // for the very text a Coder is meant to read. A dashed edge cannot be an
+      // inset shadow, so only the earned card takes the notch.
+      borderWidth={earned ? "0" : "1px"}
+      borderColor={earned ? undefined : "border.default"}
+      borderStyle={earned ? undefined : "dashed"}
+      boxShadow={earned ? pixelFocusRing("var(--amb-colors-gold-solid)", 3) : undefined}
+      clipPath={earned ? pixelNotch(3) : undefined}
       bg={earned ? "bg.surface" : "bg.subtle"}
       align="start"
     >

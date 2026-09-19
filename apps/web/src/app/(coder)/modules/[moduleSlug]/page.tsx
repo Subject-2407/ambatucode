@@ -9,6 +9,7 @@ import { ModuleLeaderboards } from "@/components/gamification/module-leaderboard
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PixelFrame } from "@/components/ui/pixel-frame";
+import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { routes } from "@/lib/routes";
@@ -36,7 +37,7 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
   );
 
   return (
-    <PageContainer>
+    <PageContainer backdrop="constellation">
       <PageHeader
         title={module.title}
         description={module.description ?? undefined}
@@ -220,12 +221,16 @@ function ItemLink({
   return (
     <Box
       asChild
-      borderWidth="1px"
-      borderColor="border.default"
+      borderWidth="0"
+      boxShadow={pixelFocusRing("var(--amb-colors-border-default)", 2)}
+      clipPath={pixelNotch(2)}
       bg="bg.surface"
       px="4"
       py="3"
-      _hover={{ borderColor: "accent.solid", bg: "bg.subtle" }}
+      _hover={{
+        boxShadow: pixelFocusRing("var(--amb-colors-accent-solid)", 2),
+        bg: "bg.subtle",
+      }}
     >
       <NextLink href={href}>
         <Flex align="center" justify="space-between" gap="3">
