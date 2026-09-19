@@ -95,6 +95,68 @@ const config = defineConfig({
         "0%, 100%": { opacity: "1" },
         "50%": { opacity: "0" },
       },
+      /**
+       * A packet crossing a trace. The distance is read from a custom property
+       * so one keyframe serves every wire length in every ornament.
+       *
+       * Only `transform` and `opacity` change, which the compositor handles
+       * without touching layout or paint — the whole point, on a machine where
+       * a background must not cost anything an assessment might need.
+       */
+      packetTravel: {
+        "0%": { transform: "translateX(0)", opacity: "0" },
+        "8%": { opacity: "1" },
+        "88%": { opacity: "1" },
+        "100%": { transform: "translateX(var(--packet-distance, 200px))", opacity: "0" },
+      },
+      /**
+       * A cell waking up once per cycle. It is dark for most of the duration,
+       * so a grid of these reads as occasional activity rather than a
+       * flickering field — and with long durations almost nothing is animating
+       * on any given frame.
+       */
+      cellFlash: {
+        "0%, 90%, 100%": { opacity: "0" },
+        "93%, 97%": { opacity: "1" },
+      },
+      /**
+       * The inverse of `cellFlash`: lit almost all the time, dark for an
+       * instant. A screen or an eye that is off most of the cycle reads as
+       * broken, where one that blinks reads as alive.
+       */
+      eyeBlink: {
+        "0%, 93%, 100%": { opacity: "1" },
+        "95%, 97%": { opacity: "0" },
+      },
+      /**
+       * Idle motion for the scenery props. Every displacement is a whole
+       * multiple of the 4px unit and every step is a jump rather than a glide —
+       * a pixel object that slides through fractional positions is the one
+       * thing on screen not drawn on the grid, and it shows.
+       */
+      spriteBob: {
+        "0%, 100%": { transform: "translateY(0)" },
+        "50%": { transform: "translateY(-4px)" },
+      },
+      spriteDrift: {
+        "0%, 100%": { transform: "translateX(0)" },
+        "25%": { transform: "translateX(4px)" },
+        "50%": { transform: "translateX(8px)" },
+        "75%": { transform: "translateX(4px)" },
+      },
+      spriteRise: {
+        "0%, 100%": { transform: "translateY(0)" },
+        "33%": { transform: "translateY(-4px)" },
+        "66%": { transform: "translateY(-8px)" },
+      },
+      /** Quarter turns only. An interpolated rotation shears every cell. */
+      spriteSpin: {
+        "0%": { transform: "rotate(0deg)" },
+        "25%": { transform: "rotate(90deg)" },
+        "50%": { transform: "rotate(180deg)" },
+        "75%": { transform: "rotate(270deg)" },
+        "100%": { transform: "rotate(360deg)" },
+      },
     },
     tokens: {
       colors,
@@ -105,6 +167,12 @@ const config = defineConfig({
         // Named separately so a component can ask for the pixel face without
         // having to be a heading — timers, slot labels, status chips.
         display: { value: DISPLAY_STACK },
+      },
+      fontSizes: {
+        // Below Chakra's smallest step, for the rail slot labels. Only the
+        // display face is set this small: it is drawn on a grid and has no
+        // fine detail to lose, where a sans at 9px would just be a smudge.
+        "3xs": { value: "0.5625rem" },
       },
       // Every corner in the product, squared at the source.
       //
@@ -161,6 +229,22 @@ const config = defineConfig({
           textTransform: "uppercase",
           letterSpacing: "0.06em",
           WebkitFontSmoothing: "none",
+        },
+      },
+      /**
+       * The third voice: machine-written strings a person reads but never
+       * composes — timestamps, counts, identifiers, scores, file paths.
+       *
+       * Monospace because those things line up and get compared, and because
+       * the stack is already the one the editor uses, so a path in a panel and
+       * the same path in Monaco look like the same path. It is not the display
+       * face: a pixel face would make an eight-digit identifier a puzzle.
+       */
+      data: {
+        value: {
+          fontFamily: "mono",
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: "0.01em",
         },
       },
     },

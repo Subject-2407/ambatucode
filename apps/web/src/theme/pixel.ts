@@ -70,3 +70,18 @@ export function pixelDrop(color: string, unit: number = PIXEL): string {
  * shrink or dim — the feedback is positional, which survives both themes.
  */
 export const PIXEL_PRESS = `translate(${PIXEL}px, ${PIXEL}px)`;
+
+/**
+ * The keyboard focus indicator for anything wearing a notch.
+ *
+ * `clip-path` clips everything the element paints, `outline` and `box-shadow`
+ * included — so the usual focus ring drawn outside the box is cut away and a
+ * keyboard user gets no indicator at all. An *inset* shadow is painted inside
+ * the border box, which is inside the clip, so it survives.
+ *
+ * The ring is drawn in the element's own contrast colour rather than a fixed
+ * accent, so it stays legible whatever the control is filled with.
+ */
+export function pixelFocusRing(color: string, unit: number = PIXEL - 1): string {
+  return `inset 0 0 0 ${unit}px ${color}`;
+}

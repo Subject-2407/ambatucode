@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PIXEL, PIXEL_PRESS, pixelDrop, pixelEdge, pixelNotch } from "./pixel";
+import { PIXEL, PIXEL_PRESS, pixelDrop, pixelEdge, pixelFocusRing, pixelNotch } from "./pixel";
 
 describe("pixelNotch", () => {
   it("bites a square out of all four corners", () => {
@@ -58,6 +58,28 @@ describe("pixelDrop", () => {
   it("offsets by the grid unit by default", () => {
     expect(pixelDrop("black")).toContain(`${PIXEL}px ${PIXEL}px`);
     expect(pixelDrop("black", 8)).toContain("8px 8px");
+  });
+});
+
+describe("pixelFocusRing", () => {
+  it("draws inside the box, because a notch clips anything outside it", () => {
+    // This is the whole reason the helper exists. `clip-path` cuts away both
+    // `outline` and an outer `box-shadow`, so a focus indicator drawn the usual
+    // way leaves a keyboard user with nothing at all on every notched control.
+    const ring = pixelFocusRing("red");
+    expect(ring.startsWith("inset ")).toBe(true);
+    expect(ring).toContain("red");
+  });
+
+  it("carries no blur, and sits a step inside the pixel unit", () => {
+    expect(pixelFocusRing("red")).toBe(`inset 0 0 0 ${PIXEL - 1}px red`);
+    expect(pixelFocusRing("red", 2)).toBe("inset 0 0 0 2px red");
+  });
+
+  it("accepts a CSS variable, so it can follow the theme", () => {
+    expect(pixelFocusRing("var(--amb-colors-accent-solid)")).toContain(
+      "var(--amb-colors-accent-solid)",
+    );
   });
 });
 
