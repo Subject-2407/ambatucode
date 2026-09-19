@@ -1,21 +1,22 @@
 "use client";
 
 import { HStack, Menu, Portal, Stack, Text, chakra } from "@chakra-ui/react";
-import { LogOut } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/providers/session-provider";
+import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
 import { ROLE_LABEL } from "./navigation";
 
 /**
- * Identity and the one account action that belongs on every screen.
+ * Who you are signed in as.
  *
- * In the rail there is no room for a name, so the trigger is a slot like any
- * other, carrying the initial. The name, the username, and the role move into
- * the menu — which is also where signing out belongs: a stray click on an
- * always-visible sign-out button during an assessment would be expensive.
+ * In the rail there is no room for a name, so the trigger carries the initial
+ * and the name, username, and role live in the panel it opens.
+ *
+ * Signing out is not here. It has its own slot in the rail, where the one
+ * control that ends a session is visible rather than two levels deep.
  */
 export function UserMenu() {
-  const { user, logout, isLoggingOut } = useSession();
+  const { user } = useSession();
   const initial = user.displayName.trim().charAt(0).toUpperCase() || "?";
 
   return (
@@ -32,8 +33,9 @@ export function UserMenu() {
           textStyle="display"
           fontSize="lg"
           borderRadius="0"
-          borderWidth="3px"
-          borderColor="border.muted"
+          borderWidth="0"
+          clipPath={pixelNotch(3)}
+          boxShadow={pixelFocusRing("var(--amb-colors-border-muted)", 3)}
           bg="bg.canvas"
           color="fg.muted"
           cursor="pointer"
@@ -47,9 +49,9 @@ export function UserMenu() {
           <Menu.Content
             bg="bg.surface"
             borderRadius="0"
-            borderWidth="3px"
-            borderColor="border.emphasized"
-            boxShadow="overlay"
+            borderWidth="0"
+            clipPath={pixelNotch(3)}
+            boxShadow={pixelFocusRing("var(--amb-colors-border-emphasized)", 3)}
             minWidth="56"
           >
             <Stack gap="0.5" px="3" py="2" borderBottomWidth="1px" borderColor="border.muted">
@@ -66,19 +68,6 @@ export function UserMenu() {
               </HStack>
             </Stack>
 
-            <Menu.Item
-              value="logout"
-              disabled={isLoggingOut}
-              onSelect={() => void logout()}
-              color="fg.error"
-              borderRadius="0"
-              _hover={{ bg: "danger.subtle" }}
-            >
-              <HStack gap="2">
-                <LogOut size={16} aria-hidden />
-                <Text>{isLoggingOut ? "Signing out…" : "Sign out"}</Text>
-              </HStack>
-            </Menu.Item>
           </Menu.Content>
         </Menu.Positioner>
       </Portal>

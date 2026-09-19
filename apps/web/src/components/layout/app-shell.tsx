@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Box, Container, Flex, Heading, Stack, Text } from "@chakra-ui/react";
 import type { AuthenticatedUser } from "@ambatucode/shared";
 import { AchievementAnnouncer } from "@/components/gamification/achievement-announcer";
+import { PixelBackdrop, type BackdropVariant } from "@/components/ornament/pixel-backdrop";
 import { AssessmentModeProvider, useAssessmentMode } from "@/providers/assessment-mode";
 import { SessionProvider } from "@/providers/session-provider";
 import { ColorModeToggle } from "@/providers/color-mode";
@@ -113,10 +114,34 @@ export function PageHeader({
   );
 }
 
-export function PageContainer({ children }: { children: ReactNode }) {
+export function PageContainer({
+  children,
+  /**
+   * The ornament layer behind the page.
+   *
+   * Opt-in per screen rather than global, and varied on purpose: a Coder
+   * moving between the hub, their modules, and their submissions should not be
+   * looking at identical wallpaper each time. Screens that are already dense —
+   * the builder, a monitor, a grading table — take none, because a backdrop
+   * under a wall of data is noise rather than atmosphere.
+   */
+  backdrop,
+}: {
+  children: ReactNode;
+  backdrop?: BackdropVariant;
+}) {
   return (
-    <Container maxWidth="6xl" px={{ base: "4", md: "8" }} py={{ base: "6", md: "8" }}>
-      {children}
-    </Container>
+    <Box position="relative" minHeight="full">
+      {backdrop ? <PixelBackdrop variant={backdrop} opacity={0.22} /> : null}
+      <Container
+        position="relative"
+        zIndex="1"
+        maxWidth="6xl"
+        px={{ base: "4", md: "8" }}
+        py={{ base: "6", md: "8" }}
+      >
+        {children}
+      </Container>
+    </Box>
   );
 }

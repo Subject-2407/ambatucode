@@ -1,28 +1,30 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { Box, Flex, Text } from "@chakra-ui/react";
+import { Box, Flex, Text, chakra } from "@chakra-ui/react";
 import { PixelIcon } from "@/components/ui/pixel-icon";
-import { PIXEL } from "@/theme/pixel";
+import type { SpriteName } from "@/components/ui/pixel-sprites";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useSession } from "@/providers/session-provider";
+import { PIXEL, pixelFocusRing, pixelNotch } from "@/theme/pixel";
 import type { NavItem } from "./navigation";
 
 /**
  * Navigation as a row of equipment slots rather than a list of links.
  *
- * Every destination is a 48px square carrying one 8×8 sprite. That is the whole
- * idea: a Coder reading a Material for twenty minutes should be able to find
- * any part of the app without the navigation ever taking a column of the page,
- * and an icon at that size has to be a silhouette, which is what the sprite set
- * is built for.
+ * Every destination is a sprite over a one-word label. The label is there
+ * because an 8×8 silhouette is a reminder, not a definition — it names the slot
+ * you already know and leaves you guessing on the first visit. The word costs
+ * ten pixels of height and removes the guess.
  *
  * Vertical on desktop, a bottom row on a phone. Not a hamburger: hiding
  * navigation behind a button costs a tap on every single move, and the slots
  * already fit across the narrowest screen the product supports.
  */
 
-const SLOT = "48px";
+const SLOT = "56px";
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -44,10 +46,10 @@ export function InventoryRail({
       aria-label="Main"
       direction={{ base: "row", md: "column" }}
       align="center"
-      gap={{ base: "1", md: "2.5" }}
+      gap={{ base: "1", md: "2" }}
       flexShrink="0"
       bg="bg.surface"
-      width={{ base: "full", md: "72px" }}
+      width={{ base: "full", md: "84px" }}
       // The rail is the page's one persistent edge, so it carries a heavy one.
       borderTopWidth={{ base: `${PIXEL}px`, md: "0" }}
       borderEndWidth={{ md: `${PIXEL}px` }}
@@ -60,7 +62,10 @@ export function InventoryRail({
       paddingY={{ base: "2", md: "3" }}
       paddingX={{ base: "2", md: "0" }}
       // Clears the phone's home indicator without the last slot sliding under it.
-      paddingBottom={{ base: "calc(var(--chakra-spacing-2) + env(safe-area-inset-bottom, 0px))", md: "3" }}
+      paddingBottom={{
+        base: "calc(var(--chakra-spacing-2) + env(safe-area-inset-bottom, 0px))",
+        md: "3",
+      }}
       overflowX={{ base: "auto", md: "visible" }}
       justifyContent={{ base: "space-between", md: "flex-start" }}
     >
@@ -71,7 +76,7 @@ export function InventoryRail({
         fontSize="xl"
         color="fg.default"
         textAlign="center"
-        width="40px"
+        width="48px"
         paddingBottom="2"
         borderBottomWidth="3px"
         borderColor="border.default"
@@ -81,7 +86,7 @@ export function InventoryRail({
 
       <Flex
         direction={{ base: "row", md: "column" }}
-        gap={{ base: "1", md: "2.5" }}
+        gap={{ base: "1", md: "2" }}
         align="center"
         flex={{ md: "1" }}
       >
@@ -90,45 +95,67 @@ export function InventoryRail({
         ))}
       </Flex>
 
-      {footer ? (
-        <Flex direction={{ base: "row", md: "column" }} gap="1.5" align="center">
-          {footer}
-        </Flex>
-      ) : null}
+      <Flex direction={{ base: "row", md: "column" }} gap="2" align="center">
+        {footer}
+        <SignOutSlot />
+      </Flex>
     </Flex>
   );
 }
 
 /**
- * One slot.
+ * The shared shell of a slot: silhouette over a word, in a notched square.
  *
- * The active slot is marked three ways — filled, outlined, and tabbed — because
- * any one of them alone fails somewhere: fill alone disappears for a
- * colour-blind reader, the outline alone is easy to miss at a glance, and the
- * tab alone does not exist on the phone layout.
+ * The active state is marked three ways — filled, outlined, and tabbed —
+ * because any one of them alone fails somewhere: the fill disappears for a
+ * colour-blind reader, the outline is easy to miss at a glance, and the tab
+ * does not exist in the phone layout.
  */
-function RailSlot({ item, active }: { item: NavItem; active: boolean }) {
+function SlotShell({
+  icon,
+  label,
+  active = false,
+  children,
+}: {
+  icon: SpriteName;
+  label: string;
+  active?: boolean;
+  children: (content: ReactNode) => ReactNode;
+}) {
+  const content = (
+    <>
+      <PixelIcon name={icon} size={20} />
+      <Text textStyle="display" fontSize="3xs" lineHeight="1" letterSpacing="0.02em">
+        {label}
+      </Text>
+    </>
+  );
+
   return (
     <Box position="relative" flexShrink="0">
       <Flex
         asChild
+        direction="column"
         width={SLOT}
         height={SLOT}
+        gap="1"
         align="center"
         justify="center"
         borderRadius="0"
-        borderWidth="3px"
-        borderColor={active ? "border.emphasized" : "border.muted"}
+        borderWidth="0"
+        clipPath={pixelNotch(3)}
+        boxShadow={pixelFocusRing(
+          active ? "var(--amb-colors-border-emphasized)" : "var(--amb-colors-border-muted)",
+          3,
+        )}
         bg={active ? "accent.solid" : "bg.canvas"}
         color={active ? "accent.contrast" : "fg.muted"}
-        _hover={active ? undefined : { bg: "bg.subtle", color: "fg.default", borderColor: "border.default" }}
+        cursor="pointer"
+        _hover={active ? undefined : { bg: "bg.subtle", color: "fg.default" }}
+        // The notch clips the global outline away, so focus is drawn inside it.
+        _focusWithin={{ boxShadow: pixelFocusRing("var(--amb-colors-accent-solid)", 3) }}
       >
-        <NextLink href={item.href} aria-current={active ? "page" : undefined} title={item.label}>
-          <PixelIcon name={item.icon} size={22} />
-          {/* The sprite is the whole visual, so the name lives here for
-              assistive technology and for end-to-end selectors. */}
-          <Text srOnly>{item.label}</Text>
-        </NextLink>
+        {children(content)}
       </Flex>
 
       {active ? (
@@ -137,12 +164,60 @@ function RailSlot({ item, active }: { item: NavItem; active: boolean }) {
           display={{ base: "none", md: "block" }}
           position="absolute"
           insetEnd="-16px"
-          top="18px"
+          top="22px"
           width="8px"
           height="12px"
           bg="accent.solid"
         />
       ) : null}
     </Box>
+  );
+}
+
+function RailSlot({ item, active }: { item: NavItem; active: boolean }) {
+  return (
+    <SlotShell icon={item.icon} label={item.label} active={active}>
+      {(content) => (
+        <NextLink href={item.href} aria-current={active ? "page" : undefined}>
+          {content}
+        </NextLink>
+      )}
+    </SlotShell>
+  );
+}
+
+/**
+ * Signing out, in the open.
+ *
+ * It used to hide inside the account menu, which made the most consequential
+ * control on the page the hardest one to find. It is a slot like any other
+ * now, and the confirmation is what keeps a stray click cheap — signing out
+ * ends the session for this account everywhere.
+ */
+function SignOutSlot() {
+  const { logout, isLoggingOut } = useSession();
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <>
+      <SlotShell icon="power" label="Log out">
+        {(content) => (
+          <chakra.button type="button" onClick={() => setConfirming(true)}>
+            {content}
+          </chakra.button>
+        )}
+      </SlotShell>
+
+      <ConfirmDialog
+        open={confirming}
+        title="Log out"
+        description="This ends the session for your account. Any unsaved work on this screen is lost."
+        confirmLabel="Log out"
+        destructive
+        loading={isLoggingOut}
+        onConfirm={() => void logout()}
+        onClose={() => setConfirming(false)}
+      />
+    </>
   );
 }
