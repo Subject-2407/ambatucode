@@ -65,6 +65,17 @@ export function pixelDrop(color: string, unit: number = PIXEL): string {
 }
 
 /**
+ * Button variants that paint no fill of their own.
+ *
+ * `pixelDrop()` shadows whatever the element paints, and a button with no fill
+ * paints only its border and its glyphs — so the letters each get a shadow and
+ * read as doubled, until hover adds a background and the silhouette closes. A
+ * shadowed button has to be filled at rest, which is what these variants are
+ * given in `components/ui/button.tsx`.
+ */
+export const UNFILLED_VARIANTS: ReadonlySet<string> = new Set(["outline"]);
+
+/**
  * How far a pressed control travels. It moves by exactly the shadow offset and
  * drops the shadow, so the button appears to sit down onto the page rather than
  * shrink or dim — the feedback is positional, which survives both themes.

@@ -7,7 +7,7 @@ import {
   type ButtonProps as ChakraButtonProps,
   type IconButtonProps as ChakraIconButtonProps,
 } from "@chakra-ui/react";
-import { PIXEL, PIXEL_PRESS, pixelFocusRing, pixelNotch } from "@/theme/pixel";
+import { PIXEL, PIXEL_PRESS, UNFILLED_VARIANTS, pixelFocusRing, pixelNotch } from "@/theme/pixel";
 
 /**
  * Buttons default to the accent palette so the primary action on a screen is
@@ -34,6 +34,7 @@ export type ButtonProps = ChakraButtonProps;
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(props, ref) {
   const { variant, ...rest } = props;
   const flat = typeof variant === "string" && FLAT_VARIANTS.has(variant);
+  const unfilled = typeof variant === "string" && UNFILLED_VARIANTS.has(variant);
 
   return (
     <ChakraButton
@@ -44,6 +45,14 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       borderRadius="0"
       clipPath={flat ? undefined : pixelNotch()}
       filter={flat ? undefined : DROP_SHADOW}
+      /*
+       * The recipe leaves `outline` empty until hover, and the shadow above
+       * would then be cast by the letters themselves. Resting on the fill the
+       * recipe used to show only on hover closes the silhouette; hover steps
+       * one shade deeper so it still answers the pointer.
+       */
+      bg={unfilled ? "colorPalette.subtle" : undefined}
+      _hover={unfilled ? { bg: "colorPalette.muted" } : undefined}
       /*
        * Only the colour eases. The press must not.
        *

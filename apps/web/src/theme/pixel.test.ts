@@ -1,5 +1,14 @@
+import { defaultConfig } from "@chakra-ui/react";
 import { describe, expect, it } from "vitest";
-import { PIXEL, PIXEL_PRESS, pixelDrop, pixelEdge, pixelFocusRing, pixelNotch } from "./pixel";
+import {
+  PIXEL,
+  PIXEL_PRESS,
+  UNFILLED_VARIANTS,
+  pixelDrop,
+  pixelEdge,
+  pixelFocusRing,
+  pixelNotch,
+} from "./pixel";
 
 describe("pixelNotch", () => {
   it("bites a square out of all four corners", () => {
@@ -88,5 +97,41 @@ describe("PIXEL_PRESS", () => {
     // The pressed control must land where its shadow was, or the button
     // appears to slide rather than sit down.
     expect(PIXEL_PRESS).toBe(`translate(${PIXEL}px, ${PIXEL}px)`);
+  });
+});
+
+describe("UNFILLED_VARIANTS", () => {
+  // The variants `Button` leaves flat, and so never shadows.
+  const FLAT = new Set(["ghost", "plain"]);
+
+  function recipeVariants(): Record<string, Record<string, unknown>> {
+    const recipes: unknown = defaultConfig.theme?.recipes;
+    const button = (recipes as Record<string, unknown> | undefined)?.button;
+    const variants = (button as { variants?: { variant?: unknown } } | undefined)?.variants;
+    return (variants?.variant ?? {}) as Record<string, Record<string, unknown>>;
+  }
+
+  it("names every shadowed variant the recipe leaves without a fill", () => {
+    // A shadow is cast by whatever the element paints. With no fill that is
+    // the letters, which then read as doubled. If Chakra adds a transparent
+    // variant, or one of ours loses its background, this is where it shows up
+    // rather than on a screen.
+    const unfilled = Object.entries(recipeVariants())
+      .filter(([name]) => !FLAT.has(name))
+      .filter(([, style]) => style.bg === undefined || style.bg === "transparent")
+      .map(([name]) => name);
+
+    expect(unfilled.length).toBeGreaterThan(0);
+    for (const name of unfilled) {
+      expect(UNFILLED_VARIANTS.has(name), `${name} would shadow its own letters`).toBe(true);
+    }
+  });
+
+  it("does not list a variant that is flat or already filled", () => {
+    const variants = recipeVariants();
+    for (const name of UNFILLED_VARIANTS) {
+      expect(FLAT.has(name)).toBe(false);
+      expect(variants[name]?.bg === undefined || variants[name]?.bg === "transparent").toBe(true);
+    }
   });
 });
