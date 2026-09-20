@@ -98,6 +98,19 @@ export function useUpdateSession(sessionId: string) {
   });
 }
 
+export function useDeleteSession(sessionId: string, assessmentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.delete<{ deleted: boolean }>(`/api/sessions/${sessionId}`),
+    onSuccess: async () => {
+      // The detail query is dropped rather than refetched: it would 404.
+      queryClient.removeQueries({ queryKey: sessionKeys.detail(sessionId) });
+      await queryClient.invalidateQueries({ queryKey: sessionKeys.list(assessmentId) });
+      await queryClient.invalidateQueries({ queryKey: assessmentKeys.detail(assessmentId) });
+    },
+  });
+}
+
 export function useReplaceParticipants(sessionId: string) {
   const invalidate = useInvalidateSession(sessionId);
   return useMutation({

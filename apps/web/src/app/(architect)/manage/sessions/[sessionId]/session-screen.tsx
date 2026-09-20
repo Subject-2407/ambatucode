@@ -2,8 +2,9 @@
 
 import { useCallback, useMemo, useState } from "react";
 import NextLink from "next/link";
+import { useRouter } from "next/navigation";
 import { Box, HStack, Stack, Text } from "@chakra-ui/react";
-import { ChevronLeft, MonitorPlay, Play, Square } from "lucide-react";
+import { ChevronLeft, MonitorPlay, Play, Square, Trash2 } from "lucide-react";
 import {
   everyoneReady,
   type ParticipantView,
@@ -19,13 +20,21 @@ import {
 } from "@/components/monitor/readiness-board";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/error-state";
+import { TextField } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toaster } from "@/components/ui/toaster";
 import { useEnrollments } from "@/hooks/use-enrollments";
 import { useMonitorSocket } from "@/hooks/use-monitor-socket";
-import { useEndSession, useReadiness, useSession, useStartSession } from "@/hooks/use-sessions";
+import {
+  useDeleteSession,
+  useEndSession,
+  useReadiness,
+  useSession,
+  useStartSession,
+} from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
 
@@ -60,6 +69,9 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [warning, setWarning] = useState<SessionCounts | null>(null);
   const start = useStartSession(sessionId);
   const end = useEndSession(sessionId);
+  const router = useRouter();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const remove = useDeleteSession(sessionId, session.data?.assessmentId ?? "");
 
   /** The socket is the fresher of the two; the poll is what covers a dropped one. */
   const counts = live.sessionState?.counts ?? readiness.data?.counts ?? null;
@@ -104,6 +116,20 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     } catch (error) {
       toaster.error({
         title: "Could not end the session",
+        description: isApiError(error) ? error.userMessage : undefined,
+      });
+    }
+  }
+
+  async function removeSession(assessmentId: string) {
+    try {
+      await remove.mutateAsync();
+      toaster.success({ title: "Session deleted" });
+      router.push(routes.manageAssessment(assessmentId));
+    } catch (error) {
+      setConfirmingDelete(false);
+      toaster.error({
+        title: "Could not delete the session",
         description: isApiError(error) ? error.userMessage : undefined,
       });
     }
@@ -160,12 +186,29 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   End session
                 </Button>
               </>
-            ) : editable ? (
-              <Button size="sm" onClick={() => void beginSession(false)} loading={start.isPending}>
-                <Play aria-hidden />
-                Start session
-              </Button>
-            ) : null}
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorPalette="danger"
+                  onClick={() => setConfirmingDelete(true)}
+                >
+                  <Trash2 aria-hidden />
+                  Delete
+                </Button>
+                {editable ? (
+                  <Button
+                    size="sm"
+                    onClick={() => void beginSession(false)}
+                    loading={start.isPending}
+                  >
+                    <Play aria-hidden />
+                    Start session
+                  </Button>
+                ) : null}
+              </>
+            )}
           </HStack>
         }
       />
@@ -196,6 +239,26 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           />
         </Panel>
       </Stack>
+
+      {editable ? (
+        <ConfirmDialog
+          open={confirmingDelete}
+          title="Delete this session?"
+          description="The session and its participant list are removed. This cannot be undone."
+          confirmLabel="Delete session"
+          destructive
+          loading={remove.isPending}
+          onConfirm={() => void removeSession(view.assessmentId)}
+          onClose={() => setConfirmingDelete(false)}
+        />
+      ) : confirmingDelete ? (
+        <DeleteSessionDialog
+          name={view.name}
+          loading={remove.isPending}
+          onConfirm={() => void removeSession(view.assessmentId)}
+          onClose={() => setConfirmingDelete(false)}
+        />
+      ) : null}
 
       <StartAnywayDialog
         counts={warning}
@@ -232,6 +295,63 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
       <Text textStyle="display">{title}</Text>
       <Box>{children}</Box>
     </Stack>
+  );
+}
+
+/**
+ * Deleting a finished session takes its Submissions and grades with it, so the
+ * Architect types the session's name: a stray double click cannot confirm it.
+ *
+ * Mounted only while open, so a cancelled dialog leaves no typed text behind.
+ */
+function DeleteSessionDialog({
+  name,
+  loading,
+  onConfirm,
+  onClose,
+}: {
+  name: string;
+  loading: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const matches = typed.trim() === name.trim();
+
+  return (
+    <Modal
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      size="sm"
+      title="Delete this session?"
+      description="Every attempt, submission and grade recorded in this session is deleted with it, and it drops out of grades and leaderboards. This cannot be undone."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>
+            Cancel
+          </Button>
+          <Button colorPalette="danger" onClick={onConfirm} disabled={!matches} loading={loading}>
+            Delete session
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (matches && !loading) onConfirm();
+        }}
+      >
+        <TextField
+          label={`Type "${name}" to confirm`}
+          value={typed}
+          onChange={(event) => setTyped(event.currentTarget.value)}
+          autoFocus
+        />
+      </form>
+    </Modal>
   );
 }
 

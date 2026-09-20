@@ -236,6 +236,48 @@ export async function updateSession(
   return sessionView(fresh, scope.moduleId);
 }
 
+/**
+ * Deletes a session that is not running, along with everything it recorded.
+ *
+ * This is the one deliberate exception to submission history being permanent:
+ * an Architect who has ended a session may throw it away, and its attempts,
+ * Submissions and events go with it through the cascade. A running session must
+ * be ended first, which is what closes its open attempts and queues their
+ * grading.
+ */
+export async function deleteSession(actor: AuthenticatedUser, sessionId: string): Promise<void> {
+  const { row } = await ownedSession(actor, sessionId);
+  if (row.status === "RUNNING") {
+    throw new AppError("CONFLICT", "End the session before deleting it");
+  }
+
+  const { counts } = await readinessFor(sessionId);
+
+  // The guards live in the WHERE so they are evaluated with the delete itself:
+  // ending a session queues grading, and a row removed while the worker still
+  // holds its job would leave that result with nowhere to land.
+  const deleted = await prisma.assessmentSession.deleteMany({
+    where: {
+      id: sessionId,
+      status: { not: "RUNNING" },
+      attempts: { none: { status: "IN_PROGRESS" } },
+      submissions: { none: { status: { in: ["QUEUED", "RUNNING"] } } },
+    },
+  });
+  if (deleted.count === 0) {
+    throw new AppError(
+      "CONFLICT",
+      "Submissions from this session are still being graded; try again in a moment",
+    );
+  }
+
+  // A lobby that is still open would otherwise wait on a session that is gone.
+  await publishAssessmentBroadcast({
+    type: "SESSION_STATE",
+    payload: { sessionId, status: "CANCELLED", endsAt: null, counts },
+  });
+}
+
 // --- Participants -------------------------------------------------------------
 
 /**

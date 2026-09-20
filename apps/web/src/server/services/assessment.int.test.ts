@@ -39,6 +39,7 @@ import { autoSubmitAttempt, runAttempt, saveDraft, startAttempt, submitAttempt }
 import { EXPIRED_RESULT_MESSAGE, ingestExecutionResult } from "./execution-result";
 import {
   createSession,
+  deleteSession,
   endSession,
   getMonitorSnapshot,
   replaceParticipants,
@@ -510,6 +511,58 @@ describe("sessions", () => {
 
 // -----------------------------------------------------------------------------
 
+describe("deleting a session", () => {
+  it("deletes a session that has not started, for its owner only", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, { name: "Never started" });
+    createdSessionIds.push(session.id);
+
+    expect(await refusalCode(() => deleteSession(otherArchitect, session.id))).toBe("FORBIDDEN");
+    expect(await refusalCode(() => deleteSession(coderA, session.id))).toBe("FORBIDDEN");
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(1);
+
+    await deleteSession(owner, session.id);
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(0);
+  });
+
+  it("refuses a running session, and deletes it with its history once ended and graded", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Delete after end");
+
+    expect(await refusalCode(() => deleteSession(owner, session.id))).toBe("CONFLICT");
+
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+    await saveDraft(coderA, attempt.id, { language: "python", sourceCode: "print('kept?')" });
+    await endSession(owner, session.id);
+
+    // Ending queued the grading; the worker has not answered yet.
+    const submissions = await prisma.submission.findMany({
+      where: { sessionId: session.id },
+      select: { id: true },
+    });
+    expect(submissions).toHaveLength(1);
+    expect(await refusalCode(() => deleteSession(owner, session.id))).toBe("CONFLICT");
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(1);
+
+    await prisma.submission.updateMany({
+      where: { sessionId: session.id },
+      data: { status: "GRADED", score: 0 },
+    });
+    await deleteSession(owner, session.id);
+
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(0);
+    expect(await prisma.assessmentAttempt.count({ where: { sessionId: session.id } })).toBe(0);
+    expect(await prisma.submission.count({ where: { sessionId: session.id } })).toBe(0);
+    expect(await prisma.assessmentEvent.count({ where: { sessionId: session.id } })).toBe(0);
+
+    // The afterAll sweep finds jobs through their Submission, which is gone now.
+    await Promise.all(submissions.map((submission) => getSubmitQueue().remove(submission.id)));
+  });
+});
+
+// -----------------------------------------------------------------------------
+
 describe("attempts and submissions", () => {
   let assessment: AssessmentArchitectView;
   let session: SessionView;
@@ -553,6 +606,30 @@ describe("attempts and submissions", () => {
 
     const count = await prisma.submission.count({ where: { attemptId: attempt.id } });
     expect(count).toBe(0);
+  });
+
+  it("still runs when the assessment has no public case", async () => {
+    const attempt = await startAttempt(coderA, session.id);
+    await prisma.assessmentTestCase.updateMany({
+      where: { assessmentId: assessment.id, kind: "PUBLIC" },
+      data: { kind: "HIDDEN" },
+    });
+    try {
+      const { jobId } = await runAttempt(coderA, attempt.id, {
+        language: "python",
+        sourceCode: "print(4)",
+      });
+      createdJobIds.push(jobId);
+
+      const job = await getRunQueue().getJob(jobId);
+      expect(job?.data.testCases).toEqual([]);
+      expect(JSON.stringify(job?.data)).not.toContain("HIDDEN_SECRET");
+    } finally {
+      await prisma.assessmentTestCase.updateMany({
+        where: { assessmentId: assessment.id, name: "Sample" },
+        data: { kind: "PUBLIC" },
+      });
+    }
   });
 
   it("grades the source in the request, never the stored draft", async () => {
