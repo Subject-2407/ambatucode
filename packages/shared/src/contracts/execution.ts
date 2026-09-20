@@ -29,7 +29,7 @@ import {
  * Bump it whenever a field is added, removed, renamed, or changes meaning, and
  * update `apps/worker/internal/contract` in the same commit.
  */
-export const EXECUTION_CONTRACT_VERSION = 4;
+export const EXECUTION_CONTRACT_VERSION = 5;
 
 export const executionKindSchema = z.enum(["RUN", "SUBMIT"]);
 export type ExecutionKind = z.infer<typeof executionKindSchema>;
@@ -100,6 +100,13 @@ export type ExecutionJob = z.infer<typeof executionJobSchema>;
  * failed case, not the end of the job: the remaining cases still run, and the
  * submission's own status is the most severe of its cases.
  */
+/**
+ * Name of the single row a RUN with no cases and no scripts returns, carrying
+ * what the program printed. It has no expected output, so it is neither passed
+ * nor failed — only finished. Mirrors `FreeRunResultName` in the worker.
+ */
+export const FREE_RUN_RESULT_NAME = "Program output";
+
 export const executionTestResultSchema = z.object({
   testCaseId: z.string().min(1).nullable(),
   /** The script a script test came from; null for a stdin/stdout case. */

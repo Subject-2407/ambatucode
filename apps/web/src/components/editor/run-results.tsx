@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   describeCaseOutcome,
   describeRun,
+  isFreeRunResult,
   shouldShowCompilerOutput,
+  withoutRuntimeNotice,
 } from "@/components/content/run-status";
 import type { RunJobState } from "@/hooks/use-run-job";
 
@@ -37,7 +39,10 @@ export function ConsoleFrame({ children }: { children: ReactNode }) {
 
 /** Pass and fail carry an icon and a word, never colour alone. */
 export function TestResultRow({ result }: { result: RunTestResultView }) {
-  const output = result.stderrExcerpt.trim() === "" ? result.stdoutExcerpt : result.stderrExcerpt;
+  // Both streams are shown: a wrong answer is judged on stdout, so hiding it
+  // behind stderr leaves the Coder nothing to compare against what was expected.
+  const stdout = result.stdoutExcerpt;
+  const stderr = withoutRuntimeNotice(result.stderrExcerpt);
 
   return (
     <Stack
@@ -64,18 +69,27 @@ export function TestResultRow({ result }: { result: RunTestResultView }) {
         </Text>
       </HStack>
 
-      {output.trim() === "" ? null : (
-        <Box
-          as="pre"
-          textStyle="data"
-          fontSize="xs"
-          whiteSpace="pre-wrap"
-          color="fg.muted"
-          maxHeight="10rem"
-          overflowY="auto"
-        >
-          {output}
-        </Box>
+      {isFreeRunResult(result) && stdout.trim() === "" && stderr.trim() === "" ? (
+        <Text fontSize="xs" color="fg.muted">
+          The program printed nothing.
+        </Text>
+      ) : null}
+
+      {[stdout, stderr].map((output, index) =>
+        output.trim() === "" ? null : (
+          <Box
+            key={index === 0 ? "stdout" : "stderr"}
+            as="pre"
+            textStyle="data"
+            fontSize="xs"
+            whiteSpace="pre-wrap"
+            color={index === 0 ? "fg.muted" : "fg.error"}
+            maxHeight="10rem"
+            overflowY="auto"
+          >
+            {output}
+          </Box>
+        ),
       )}
     </Stack>
   );
@@ -135,7 +149,7 @@ export function RunOutcome({ state, idle }: { state: RunJobState; idle?: ReactNo
             maxHeight="12rem"
             overflowY="auto"
           >
-            {state.compilerOutput}
+            {withoutRuntimeNotice(state.compilerOutput ?? "")}
           </Box>
         ) : null}
 

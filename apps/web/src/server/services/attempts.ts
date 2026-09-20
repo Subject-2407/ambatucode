@@ -423,10 +423,8 @@ export async function runAttempt(
   assertActive(attempt, Date.now());
   assertLanguageAllowed(assessment.allowedLanguages, input.language);
 
-  if (assessment.testCases.length === 0) {
-    throw new AppError("VALIDATION_FAILED", "This assessment has no sample cases to run against");
-  }
-
+  // With no sample case the worker still runs the program once and returns what
+  // it printed, so a Run is never refused for lack of one.
   const limit = await consumeRateLimit(
     `attempt-run:${actor.id}:${attemptId}`,
     RUN_RATE_LIMIT.max,

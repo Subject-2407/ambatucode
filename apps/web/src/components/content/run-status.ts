@@ -1,4 +1,9 @@
-import type { RunTestResultView, SubmissionStatus, TestResultStatus } from "@ambatucode/shared";
+import {
+  FREE_RUN_RESULT_NAME,
+  type RunTestResultView,
+  type SubmissionStatus,
+  type TestResultStatus,
+} from "@ambatucode/shared";
 import type { BadgeTone } from "@/components/ui/badge";
 
 /**
@@ -29,7 +34,27 @@ export type RunSummary = {
   allPassed: boolean;
 };
 
+/**
+ * A Run with no sample case returns one row holding what the program printed.
+ * With nothing to compare against it is neither passed nor failed, so it is
+ * worded as finished and never counted.
+ */
+export function isFreeRunResult(result: Pick<RunTestResultView, "name">): boolean {
+  return result.name === FREE_RUN_RESULT_NAME;
+}
+
 export function describeRun(status: SubmissionStatus, results: RunTestResultView[]): RunSummary {
+  if (results.length === 1 && results[0] !== undefined && isFreeRunResult(results[0])) {
+    const finished = status === "GRADED";
+    return {
+      label: STATUS_LABEL[status],
+      tone: finished ? "success" : "danger",
+      passed: 0,
+      total: 0,
+      allPassed: false,
+    };
+  }
+
   const total = results.length;
   const passed = results.filter((result) => result.passed).length;
   const allPassed = total > 0 && passed === total;
@@ -63,9 +88,13 @@ export function describeRun(status: SubmissionStatus, results: RunTestResultView
  * says which, rather than a bare "Failed" that reads like a wrong answer.
  */
 export function describeCaseOutcome(result: {
+  name?: string;
   passed: boolean;
   status: TestResultStatus | null;
 }): string {
+  if (result.name === FREE_RUN_RESULT_NAME) {
+    return result.passed || result.status === null ? "Finished" : STATUS_LABEL[result.status];
+  }
   if (result.passed) return "Passed";
   if (result.status === null || result.status === "GRADED") return "Failed";
   return STATUS_LABEL[result.status];
@@ -77,4 +106,16 @@ export function shouldShowCompilerOutput(
   compilerOutput: string | null,
 ): boolean {
   return compilerOutput !== null && compilerOutput.trim() !== "" && status !== "GRADED";
+}
+
+/**
+ * Drops the line a JVM prints to stderr on every launch when the sandbox image
+ * sets JAVA_TOOL_OPTIONS. It says nothing about the Coder's program, and left
+ * in it makes stderr look like a failure on every Java run.
+ */
+export function withoutRuntimeNotice(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter((line) => !/^Picked up (?:JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS|_JAVA_OPTIONS): /.test(line))
+    .join("\n");
 }

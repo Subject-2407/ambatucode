@@ -21,7 +21,7 @@ import (
 // payload shape. Without this check a renamed field would surface as a
 // silently mis-graded submission; with it the worker refuses the job and says
 // exactly why.
-const Version = 4
+const Version = 5
 
 type Kind string
 
@@ -139,6 +139,13 @@ type Job struct {
 	TestScripts     []TestScript `json:"testScripts"`
 	CallbackToken   string       `json:"callbackToken"`
 }
+
+// FreeRunResultName names the single row a RUN job with no cases and no
+// scripts returns, so the Coder sees what their program printed. It mirrors
+// FREE_RUN_RESULT_NAME in the shared package: the browser tells that row from
+// a case by name, because a case's pass or fail has no meaning without an
+// expected output.
+const FreeRunResultName = "Program output"
 
 // TestResult is one case or one script test. Status is how that case alone
 // ended, and is only ever GRADED, RUNTIME_ERROR, TIME_LIMIT_EXCEEDED or

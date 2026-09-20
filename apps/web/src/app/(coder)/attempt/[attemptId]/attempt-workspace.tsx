@@ -377,8 +377,10 @@ export function AttemptWorkspace({
             state={runState}
             idle={
               <Text fontSize="sm" color="fg.muted">
-                Run your code to check it against the sample cases. Runs are unlimited and never
-                consume your submission.
+                {assessment.sampleCases.length === 0
+                  ? "Run your code to see what it prints."
+                  : "Run your code to check it against the sample cases."}{" "}
+                Runs are unlimited and never consume your submission.
               </Text>
             }
           />
