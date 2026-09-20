@@ -101,6 +101,8 @@ function assessmentDefaults(hideLeaderboard = false) {
       hideLeaderboard,
     },
     isPublished: true,
+    isOpenAccess: false,
+    exitPolicy: "RESUME" as const,
   };
 }
 

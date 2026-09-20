@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ChakraProvider } from "@chakra-ui/react";
 import { system } from "@/theme";
 import { Toaster } from "@/components/ui/toaster";
+import type { ColorModePreference } from "@/lib/color-mode-cookie";
 import { ColorModeProvider } from "./color-mode";
 import { QueryProvider } from "./query-client";
 
@@ -14,10 +15,17 @@ import { QueryProvider } from "./query-client";
  * only a role layout has, and mounting it at the root would open a socket on
  * the login page.
  */
-export function AppProviders({ children }: { children: ReactNode }) {
+export function AppProviders({
+  colorModePreference,
+  children,
+}: {
+  /** Read from the cookie by the root layout; the server knows it, so we do. */
+  colorModePreference: ColorModePreference;
+  children: ReactNode;
+}) {
   return (
     <ChakraProvider value={system}>
-      <ColorModeProvider>
+      <ColorModeProvider initialPreference={colorModePreference}>
         <QueryProvider>
           {children}
           <Toaster />

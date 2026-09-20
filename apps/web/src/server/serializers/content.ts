@@ -129,6 +129,7 @@ export function toModuleSectionViews(
         title: assessment.title,
         orderIndex: assessment.orderIndex,
         isPublished: assessment.isPublished,
+        isOpenAccess: assessment.isOpenAccess,
         timeMode: assessment.timeMode,
         durationMinutes: assessment.durationMinutes,
         executionMode: assessment.executionMode,

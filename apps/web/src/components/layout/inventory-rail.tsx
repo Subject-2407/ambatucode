@@ -8,7 +8,7 @@ import { PixelIcon } from "@/components/ui/pixel-icon";
 import type { SpriteName } from "@/components/ui/pixel-sprites";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useSession } from "@/providers/session-provider";
-import { PIXEL, pixelFocusRing, pixelNotch } from "@/theme/pixel";
+import { PIXEL, pixelSkin } from "@/theme/pixel";
 import type { NavItem } from "./navigation";
 
 /**
@@ -19,12 +19,19 @@ import type { NavItem } from "./navigation";
  * you already know and leaves you guessing on the first visit. The word costs
  * ten pixels of height and removes the guess.
  *
+ * The column takes its width from the longest label rather than a fixed number.
+ * A hard-coded 84px was a guess that had to be re-guessed every time a
+ * destination was added; with the column sized to its content the widest
+ * caption decides, and every slot matches it.
+ *
  * Vertical on desktop, a bottom row on a phone. Not a hamburger: hiding
  * navigation behind a button costs a tap on every single move, and the slots
  * already fit across the narrowest screen the product supports.
  */
 
-const SLOT = "56px";
+/** The slot's height, and its width on a phone where slots sit side by side. */
+const SLOT_HEIGHT = "56px";
+const PHONE_SLOT_WIDTH = "64px";
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -49,18 +56,20 @@ export function InventoryRail({
       gap={{ base: "1", md: "2" }}
       flexShrink="0"
       bg="bg.surface"
-      width={{ base: "full", md: "84px" }}
+      // `max-content` is what sizes the column to its widest slot; the slots
+      // then stretch to fill it, so one caption sets the width for all of them.
+      width={{ base: "full", md: "max-content" }}
       // The rail is the page's one persistent edge, so it carries a heavy one.
       borderTopWidth={{ base: `${PIXEL}px`, md: "0" }}
       borderEndWidth={{ md: `${PIXEL}px` }}
-      borderColor="border.default"
+      borderColor="border.rail"
       position="sticky"
       bottom={{ base: "0", md: "auto" }}
       top={{ md: "0" }}
       height={{ md: "100dvh" }}
       zIndex="docked"
       paddingY={{ base: "2", md: "3" }}
-      paddingX={{ base: "2", md: "0" }}
+      paddingX="2"
       // Clears the phone's home indicator without the last slot sliding under it.
       paddingBottom={{
         base: "calc(var(--chakra-spacing-2) + env(safe-area-inset-bottom, 0px))",
@@ -69,33 +78,19 @@ export function InventoryRail({
       overflowX={{ base: "auto", md: "visible" }}
       justifyContent={{ base: "space-between", md: "flex-start" }}
     >
-      <Box
-        aria-hidden
-        display={{ base: "none", md: "block" }}
-        textStyle="display"
-        fontSize="xl"
-        color="fg.default"
-        textAlign="center"
-        width="48px"
-        paddingBottom="2"
-        borderBottomWidth="3px"
-        borderColor="border.default"
-      >
-        A
-      </Box>
-
       <Flex
         direction={{ base: "row", md: "column" }}
         gap={{ base: "1", md: "2" }}
-        align="center"
+        align={{ base: "center", md: "stretch" }}
         flex={{ md: "1" }}
+        width={{ md: "full" }}
       >
         {items.map((item) => (
           <RailSlot key={item.href} item={item} active={isActive(pathname, item.href)} />
         ))}
       </Flex>
 
-      <Flex direction={{ base: "row", md: "column" }} gap="2" align="center">
+      <Flex direction={{ base: "row", md: "column" }} gap="2" align="center" width={{ md: "full" }}>
         {footer}
         <SignOutSlot />
       </Flex>
@@ -125,35 +120,46 @@ function SlotShell({
   const content = (
     <>
       <PixelIcon name={icon} size={20} />
-      <Text textStyle="display" fontSize="3xs" lineHeight="1" letterSpacing="0.02em">
+      <Text
+        textStyle="display"
+        fontSize="3xs"
+        lineHeight="1"
+        letterSpacing="0.02em"
+        whiteSpace="nowrap"
+      >
         {label}
       </Text>
     </>
   );
 
   return (
-    <Box position="relative" flexShrink="0">
+    <Box position="relative" flexShrink="0" width={{ base: "auto", md: "full" }}>
       <Flex
         asChild
         direction="column"
-        width={SLOT}
-        height={SLOT}
+        width={{ base: PHONE_SLOT_WIDTH, md: "full" }}
+        height={SLOT_HEIGHT}
+        paddingX={{ md: "3" }}
         gap="1"
         align="center"
         justify="center"
-        borderRadius="0"
-        borderWidth="0"
-        clipPath={pixelNotch(3)}
-        boxShadow={pixelFocusRing(
+        // Edge and fill in one element. The inset ring this replaces was clipped
+        // away at every corner by the notch, so each slot's diagonal steps were
+        // drawn in no colour at all.
+        {...pixelSkin(
           active ? "var(--amb-colors-border-emphasized)" : "var(--amb-colors-border-muted)",
+          active ? "var(--amb-colors-accent-solid)" : "var(--amb-colors-bg-canvas)",
           3,
         )}
-        bg={active ? "accent.solid" : "bg.canvas"}
         color={active ? "accent.contrast" : "fg.muted"}
         cursor="pointer"
-        _hover={active ? undefined : { bg: "bg.subtle", color: "fg.default" }}
-        // The notch clips the global outline away, so focus is drawn inside it.
-        _focusWithin={{ boxShadow: pixelFocusRing("var(--amb-colors-accent-solid)", 3) }}
+        _hover={
+          active
+            ? undefined
+            : { color: "fg.default", _before: { background: "var(--amb-colors-bg-subtle)" } }
+        }
+        // The notch clips the global outline away, so focus recolours the edge.
+        _focusWithin={{ background: "var(--amb-colors-accent-solid)" }}
       >
         {children(content)}
       </Flex>

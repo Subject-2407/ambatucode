@@ -2,6 +2,7 @@
 
 import { Box, Heading, Stack, Text } from "@chakra-ui/react";
 import type { SampleCaseView } from "@ambatucode/shared";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * The problem statement and its public sample cases.
@@ -52,10 +53,7 @@ function SampleCase({ sample }: { sample: SampleCaseView }) {
   return (
     <Stack
       gap="2"
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="md"
-      bg="bg.subtle"
+      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-subtle)", 2)}
       padding="3"
     >
       <Text textStyle="display" fontSize="2xs" color="fg.muted">

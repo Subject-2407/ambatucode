@@ -8,6 +8,7 @@ import {
   pixelEdge,
   pixelFocusRing,
   pixelNotch,
+  pixelSkin,
 } from "./pixel";
 
 describe("pixelNotch", () => {
@@ -37,6 +38,37 @@ describe("pixelNotch", () => {
     expect(notch.startsWith("polygon(0 ")).toBe(true);
     expect(notch.endsWith(")")).toBe(true);
     expect(notch).not.toMatch(/\(\s|\s\)/);
+  });
+});
+
+describe("pixelSkin", () => {
+  it("paints the edge as the background and the fill as a layer over it", () => {
+    const skin = pixelSkin("red", "blue", 2);
+    expect(skin.background).toBe("red");
+    expect(skin._before.background).toBe("blue");
+    // Inset by exactly the edge thickness: that inset *is* the border.
+    expect(skin._before.inset).toBe("2px");
+  });
+
+  it("notches both layers, so every step of the corner carries the edge", () => {
+    // The bug this replaces: an inset box-shadow is drawn along the border
+    // box, and the notch then clips away precisely the corners where it turns.
+    const skin = pixelSkin("red", "blue", 2);
+    expect(skin.clipPath).toBe(pixelNotch(2));
+    expect(skin._before.clipPath).toBe(pixelNotch(2));
+  });
+
+  it("isolates, so the fill layer cannot escape behind an ancestor", () => {
+    // `z-index: -1` is relative to the nearest stacking context. Without one of
+    // its own, the fill slides behind whatever ancestor forms it and the
+    // element renders as a solid block of edge colour.
+    const skin = pixelSkin("red", "blue");
+    expect(skin.isolation).toBe("isolate");
+    expect(skin._before.zIndex).toBe(-1);
+  });
+
+  it("defaults to the grid unit", () => {
+    expect(pixelSkin("red", "blue")._before.inset).toBe(`${PIXEL}px`);
   });
 });
 

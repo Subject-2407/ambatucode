@@ -6,6 +6,7 @@ import type { ModuleMaterialSummary } from "@ambatucode/shared";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button, IconButton } from "@/components/ui/button";
+import { pixelSkin } from "@/theme/pixel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PromptDialog } from "@/components/ui/prompt-dialog";
 import { toaster } from "@/components/ui/toaster";
@@ -107,10 +108,15 @@ export function MaterialList({
               key={material.id}
               align="center"
               gap="1"
-              borderWidth="1px"
-              borderColor={material.id === selectedId ? "accent.solid" : "border.default"}
-              bg={material.id === selectedId ? "bg.subtle" : "bg.surface"}
-              borderRadius="md"
+              {...pixelSkin(
+                material.id === selectedId
+                  ? "var(--amb-colors-accent-solid)"
+                  : "var(--amb-colors-border-default)",
+                material.id === selectedId
+                  ? "var(--amb-colors-bg-subtle)"
+                  : "var(--amb-colors-bg-surface)",
+                2,
+              )}
               padding="2"
             >
               <Box asChild flex="1" minWidth="0" textAlign="start">

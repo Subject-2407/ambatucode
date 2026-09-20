@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
+import { PixelFrame } from "@/components/ui/pixel-frame";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -80,7 +81,7 @@ export function ModulesScreen() {
               gap="4"
             >
               {Array.from({ length: 6 }, (_, index) => (
-                <Skeleton key={index} height="10rem" borderRadius="lg" />
+                <Skeleton key={index} height="10rem" />
               ))}
             </Grid>
           ) : items.length === 0 ? (
@@ -120,51 +121,46 @@ function ModuleCard({ module }: { module: ModuleSummary }) {
   const isClosed = module.visibility === "CLOSED";
 
   return (
-    <Stack
-      as="article"
-      aria-label={module.title}
-      bg="bg.surface"
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="lg"
-      padding="5"
-      gap="3"
-      justify="space-between"
-      height="full"
-    >
-      <Stack gap="2">
-        <HStack justify="space-between" align="start" gap="3">
-          <Text textStyle="display" fontSize="md" lineClamp={2}>
-            {module.title}
+    // A notched frame rather than a 1px rectangle. Every other surface in the
+    // product wears the pixel edge, and the catalog — the screen a Coder spends
+    // the most time in before they are enrolled anywhere — was the one place
+    // still drawing plain boxes.
+    <PixelFrame as="article" aria-label={module.title} height="full" pad="5">
+      <Stack gap="3" justify="space-between" height="full">
+        <Stack gap="2">
+          <HStack justify="space-between" align="start" gap="3">
+            <Text textStyle="display" fontSize="md" lineClamp={2}>
+              {module.title}
+            </Text>
+            <Badge tone={isClosed ? "warning" : "neutral"} flexShrink="0">
+              {isClosed ? (
+                <>
+                  <Lock size={12} aria-hidden /> Closed
+                </>
+              ) : (
+                "Public"
+              )}
+            </Badge>
+          </HStack>
+
+          <Text color="fg.muted" fontSize="sm" lineClamp={3}>
+            {module.description ?? "No description yet."}
           </Text>
-          <Badge tone={isClosed ? "warning" : "neutral"} flexShrink="0">
-            {isClosed ? (
-              <>
-                <Lock size={12} aria-hidden /> Closed
-              </>
-            ) : (
-              "Public"
-            )}
-          </Badge>
-        </HStack>
 
-        <Text color="fg.muted" fontSize="sm" lineClamp={3}>
-          {module.description ?? "No description yet."}
-        </Text>
+          <Text color="fg.muted" fontSize="xs">
+            {module.owner.displayName} · {module.sectionCount}{" "}
+            {module.sectionCount === 1 ? "section" : "sections"}
+          </Text>
+        </Stack>
 
-        <Text color="fg.muted" fontSize="xs">
-          {module.owner.displayName} · {module.sectionCount}{" "}
-          {module.sectionCount === 1 ? "section" : "sections"}
-        </Text>
+        {module.viewer.canRead ? (
+          <Button asChild variant="outline" size="sm" alignSelf="start">
+            <NextLink href={routes.module(module.slug)}>Open module</NextLink>
+          </Button>
+        ) : (
+          <EnrollButton module={module} size="sm" />
+        )}
       </Stack>
-
-      {module.viewer.canRead ? (
-        <Button asChild variant="outline" size="sm" alignSelf="start">
-          <NextLink href={routes.module(module.slug)}>Open module</NextLink>
-        </Button>
-      ) : (
-        <EnrollButton module={module} size="sm" />
-      )}
-    </Stack>
+    </PixelFrame>
   );
 }

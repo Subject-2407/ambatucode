@@ -22,7 +22,6 @@ const NAV_BY_ROLE: Readonly<Record<UserRole, readonly NavItem[]>> = {
     { href: routes.dashboard, label: "Dashboard", icon: "home" },
     { href: routes.modules, label: "Modules", icon: "books" },
     { href: routes.submissions, label: "Submissions", icon: "doc" },
-    { href: routes.achievements, label: "Achievements", icon: "trophy" },
     { href: routes.profile, label: "Profile", icon: "user" },
   ],
   ARCHITECT: [

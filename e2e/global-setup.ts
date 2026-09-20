@@ -17,7 +17,6 @@ const WARM_ROUTES = [
   "/dashboard",
   "/modules",
   "/submissions",
-  "/achievements",
   "/profile",
   "/manage/modules",
   "/manage/grades",

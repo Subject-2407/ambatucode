@@ -35,13 +35,22 @@ import {
   uploadTestScript,
   validateTestScripts,
 } from "./assessments";
-import { autoSubmitAttempt, runAttempt, saveDraft, startAttempt, submitAttempt } from "./attempts";
+import {
+  autoSubmitAttempt,
+  getAttemptSource,
+  runAttempt,
+  saveDraft,
+  startAttempt,
+  submitAttempt,
+} from "./attempts";
 import { EXPIRED_RESULT_MESSAGE, ingestExecutionResult } from "./execution-result";
 import {
   createSession,
   deleteSession,
   endSession,
   getMonitorSnapshot,
+  getSession,
+  listSessions,
   replaceParticipants,
   startSession,
 } from "./sessions";
@@ -159,6 +168,8 @@ function createDefaults() {
       hideLeaderboard: false,
     },
     isPublished: false,
+    isOpenAccess: false,
+    exitPolicy: "RESUME" as const,
   };
 }
 
@@ -511,6 +522,109 @@ describe("sessions", () => {
 
 // -----------------------------------------------------------------------------
 
+describe("open access", () => {
+  it("lets any enrolled Coder start without a session being scheduled", async () => {
+    const assessment = await createAssessment(owner, sectionId, {
+      ...createDefaults(),
+      title: `Open ${suffix}`,
+      isPublished: true,
+      isOpenAccess: true,
+    });
+    await createTestCase(owner, assessment.id, {
+      ...caseDefaults(),
+      name: "Sample",
+      kind: "PUBLIC",
+      input: "2",
+      expectedOutput: "4",
+    });
+
+    const view = await getAssessment(coderA, assessment.id);
+    if (view.view !== "CODER") throw new Error("expected the Coder view");
+    const open = view.assessment.sessions.find((entry) => entry.isOpenAccess);
+    expect(open?.canStart).toBe(true);
+    if (!open) throw new Error("no open-access session");
+    createdSessionIds.push(open.id);
+
+    // Nobody listed anybody, and both Coders get in.
+    const first = await startAttempt(coderA, open.id);
+    const second = await startAttempt(coderB, open.id);
+    createdAttemptIds.push(first.id, second.id);
+    expect(first.status).toBe("IN_PROGRESS");
+    expect(second.status).toBe("IN_PROGRESS");
+
+    // Enrollment is still the gate; open access is not public access.
+    expect(await refusalCode(() => startAttempt(outsider, open.id))).toBe("FORBIDDEN");
+
+    // One implicit session, however many Coders arrive.
+    expect(
+      await prisma.assessmentSession.count({
+        where: { assessmentId: assessment.id, isOpenAccess: true },
+      }),
+    ).toBe(1);
+
+    // It is not in the Architect's session list: there is nothing to schedule.
+    expect(await listSessions(owner, assessment.id)).toHaveLength(0);
+  });
+
+  it("refuses open access on a live assessment", async () => {
+    const live = await createAssessment(owner, sectionId, {
+      ...createDefaults(),
+      title: `Open live ${suffix}`,
+      timeMode: "TIMED",
+      durationMinutes: 30,
+      executionMode: "INDIVIDUAL",
+    });
+    expect(
+      await refusalCode(() => updateAssessment(owner, live.id, { executionMode: "LIVE", isOpenAccess: true })),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("closes the open session when open access is switched off", async () => {
+    const assessment = await createAssessment(owner, sectionId, {
+      ...createDefaults(),
+      title: `Open then closed ${suffix}`,
+      isPublished: true,
+      isOpenAccess: true,
+    });
+    const before = await prisma.assessmentSession.findFirstOrThrow({
+      where: { assessmentId: assessment.id, isOpenAccess: true },
+      select: { id: true },
+    });
+    createdSessionIds.push(before.id);
+
+    await updateAssessment(owner, assessment.id, { isOpenAccess: false });
+    expect(
+      (await prisma.assessmentSession.findUniqueOrThrow({ where: { id: before.id } })).status,
+    ).toBe("ENDED");
+  });
+
+  it("opens a scheduled session to the whole module even once participants are listed", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Whole class",
+      access: "MODULE",
+    });
+    createdSessionIds.push(session.id);
+    expect(session.access).toBe("MODULE");
+
+    // A list would normally make the session that list and nobody else.
+    await replaceParticipants(owner, session.id, { mode: "SELECTED", userIds: [coderA.id] });
+    const listed = await getSession(owner, session.id);
+    expect(listed.listedParticipantCount).toBe(1);
+    expect(listed.isRestricted).toBe(false);
+
+    const started = await startSession(owner, session.id, { force: true });
+    if (!started.started) throw new Error("session did not start");
+
+    const unlisted = await startAttempt(coderC, session.id);
+    createdAttemptIds.push(unlisted.id);
+    expect(unlisted.status).toBe("IN_PROGRESS");
+    expect(await refusalCode(() => startAttempt(outsider, session.id))).toBe("FORBIDDEN");
+  });
+});
+
+// -----------------------------------------------------------------------------
+
 describe("deleting a session", () => {
   it("deletes a session that has not started, for its owner only", async () => {
     const assessment = await individualAssessment();
@@ -589,6 +703,47 @@ describe("attempts and submissions", () => {
       deadlineJobId({ kind: "ATTEMPT", attemptId: first.id }),
     );
     expect(job).toBeDefined();
+  });
+
+  it("shows the Architect the code a Coder ran, and keeps Root out of it", async () => {
+    // Its own session: this test submits, and `startAttempt` is idempotent, so
+    // closing a Coder's attempt in the shared session would change what the
+    // tests after it are handed.
+    const own = await startedSession(assessment.id, "Source visibility");
+    const attempt = await startAttempt(coderB, own.id);
+    createdAttemptIds.push(attempt.id);
+
+    // Nothing to show before the Coder has done anything deliberate. A draft
+    // is autosaved and is expressly not surfaced here.
+    await saveDraft(coderB, attempt.id, { language: "python", sourceCode: "# half a thought" });
+    const empty = await getAttemptSource(owner, attempt.id);
+    expect(empty.snapshots).toHaveLength(0);
+    expect(empty.coder.id).toBe(coderB.id);
+
+    const { jobId } = await runAttempt(coderB, attempt.id, {
+      language: "python",
+      sourceCode: "print(int(input()) * 2)",
+    });
+    createdJobIds.push(jobId);
+
+    const afterRun = await getAttemptSource(owner, attempt.id);
+    expect(afterRun.snapshots).toHaveLength(1);
+    expect(afterRun.snapshots[0]?.origin).toBe("RUN");
+    expect(afterRun.snapshots[0]?.sourceCode).toBe("print(int(input()) * 2)");
+    expect(afterRun.runCount).toBe(1);
+
+    await submitAttempt(coderB, attempt.id, {
+      language: "python",
+      sourceCode: "print(int(input()) * 2)  # final",
+    });
+    const afterSubmit = await getAttemptSource(owner, attempt.id);
+    expect(afterSubmit.snapshots.map((snapshot) => snapshot.origin)).toEqual(["SUBMISSION", "RUN"]);
+    expect(afterSubmit.snapshots[0]?.sourceCode).toContain("# final");
+
+    // Participant source by another route is still participant source.
+    expect(await refusalCode(() => getAttemptSource(root, attempt.id))).toBe("FORBIDDEN");
+    expect(await refusalCode(() => getAttemptSource(otherArchitect, attempt.id))).toBe("FORBIDDEN");
+    expect(await refusalCode(() => getAttemptSource(coderA, attempt.id))).toBe("FORBIDDEN");
   });
 
   it("runs against public cases only", async () => {

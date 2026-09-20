@@ -216,6 +216,7 @@ export async function getModule(actor: AuthenticatedUser, ref: ModuleRef): Promi
           title: true,
           orderIndex: true,
           isPublished: true,
+          isOpenAccess: true,
           timeMode: true,
           durationMinutes: true,
           executionMode: true,

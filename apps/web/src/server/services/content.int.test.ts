@@ -18,6 +18,8 @@ import { createModule, deleteModule, getModule, listModules, updateModule } from
 import { decideEnrollment, listEnrollments, requestEnrollment } from "./enrollments";
 import { createSection, deleteSection, listSections, reorderSections } from "./sections";
 import { createMaterial, getMaterial, listMaterials, updateMaterial } from "./materials";
+import { moduleSequence, nextModuleItem } from "./module-progression";
+import { createAssessment } from "./assessments";
 import { ingestExecutionResult } from "./execution-result";
 import {
   createPracticeActivity,
@@ -355,6 +357,87 @@ describe("sections and materials", () => {
 
     const stored = await getMaterial(owner, material.id);
     expect(stored.content).toEqual(document);
+  });
+});
+
+/** The smallest Assessment the progression test needs; none of it is exercised. */
+function assessmentDefaults() {
+  return {
+    problemStatement: "Print it.",
+    allowedLanguages: ["python" as const],
+    starterCode: {},
+    timeMode: "UNTIMED" as const,
+    durationMinutes: null,
+    executionMode: null,
+    timeLimitMs: 2_000,
+    memoryLimitMb: 128,
+    gradingStrategy: "WEIGHTED_AVERAGE" as const,
+    exitPolicy: "RESUME" as const,
+    isOpenAccess: false,
+    antiCheat: {
+      blockClipboard: false,
+      blockContextMenu: false,
+      detectFocusLoss: false,
+      focusLossAction: "LOG_ONLY" as const,
+      focusLossThreshold: 0,
+      hideLeaderboard: false,
+    },
+  };
+}
+
+describe("module progression", () => {
+  it("walks materials then assessments, across sections, and stops at the end", async () => {
+    const module = await createModule(owner, {
+      title: `Progression ${suffix}`,
+      visibility: "PUBLIC",
+      isPublished: true,
+    });
+    const one = await createSection(owner, module.id, { title: "One" });
+    const two = await createSection(owner, module.id, { title: "Two" });
+
+    const readMe = await createMaterial(owner, one.id, { title: "Read me", isPublished: true });
+    const draft = await createMaterial(owner, one.id, { title: "Draft", isPublished: false });
+    const exam = await createAssessment(owner, one.id, {
+      ...assessmentDefaults(),
+      title: "Exam",
+      isPublished: true,
+    });
+    const last = await createMaterial(owner, two.id, { title: "Last", isPublished: true });
+
+    await requestEnrollment(enrolledCoder, module.id);
+
+    // Materials before assessments inside a section, then on to the next one —
+    // the order the module overview lays out, which is the order a Coder reads.
+    const sequence = await moduleSequence(enrolledCoder, module.id);
+    expect(sequence.items.map((item) => [item.kind, item.title])).toEqual([
+      ["MATERIAL", "Read me"],
+      ["ASSESSMENT", "Exam"],
+      ["MATERIAL", "Last"],
+    ]);
+
+    const afterMaterial = await nextModuleItem(enrolledCoder, module.id, {
+      kind: "MATERIAL",
+      id: readMe.id,
+    });
+    expect(afterMaterial.next).toMatchObject({ kind: "ASSESSMENT", id: exam.id });
+
+    const afterAssessment = await nextModuleItem(enrolledCoder, module.id, {
+      kind: "ASSESSMENT",
+      id: exam.id,
+    });
+    expect(afterAssessment.next).toMatchObject({ kind: "MATERIAL", id: last.id, sectionTitle: "Two" });
+
+    // Nothing after the last item, rather than a wrap back to the start.
+    const atEnd = await nextModuleItem(enrolledCoder, module.id, {
+      kind: "MATERIAL",
+      id: last.id,
+    });
+    expect(atEnd.next).toBeNull();
+
+    // The Architect previewing their own module sees the unpublished one too,
+    // which is the same rule the overview uses.
+    const ownerSequence = await moduleSequence(owner, module.id);
+    expect(ownerSequence.items.map((item) => item.id)).toContain(draft.id);
   });
 });
 

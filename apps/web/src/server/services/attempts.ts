@@ -10,6 +10,8 @@ import {
   individualDeadlineFrom,
   isAttemptOverdue,
   isLanguage,
+  type AttemptSourceSnapshot,
+  type AttemptSourceView,
   type AttemptView,
   type AuthenticatedUser,
   type AutoSubmitOutcome,
@@ -35,13 +37,15 @@ import { publishAssessmentBroadcast, publishExecutionStatus } from "../realtime/
 import {
   clockFor,
   readScriptContent,
+  storedLanguage,
   toAssessmentWorkspaceView,
   toAttemptView,
   toSubmissionSummary,
 } from "../serializers/assessment";
 import { announceEvents, recordEvent } from "./assessment-events";
-import { scopeForOwnAttempt, scopeForSession } from "./assessment-scope";
-import { ASSESSMENT_SELECT } from "./assessments";
+import { scopeForAttempt, scopeForOwnAttempt, scopeForSession } from "./assessment-scope";
+import { ASSESSMENT_SELECT } from "./assessment-select";
+import { assertCanWrite } from "./modules";
 import { claimOfficialIfUnset } from "./official-score";
 import { sessionEligibility } from "./participation";
 import { log } from "../logger";
@@ -192,13 +196,24 @@ export async function startAttempt(
 
   const session = await prisma.assessmentSession.findUniqueOrThrow({
     where: { id: sessionId },
-    select: { status: true, executionMode: true, durationMinutes: true, endsAt: true },
+    select: {
+      status: true,
+      executionMode: true,
+      durationMinutes: true,
+      endsAt: true,
+      access: true,
+    },
   });
   if (session.status !== "RUNNING") {
     throw new AppError("SESSION_NOT_RUNNING", ACTIVITY_MESSAGES.SESSION_NOT_RUNNING);
   }
 
-  const eligibility = await sessionEligibility(sessionId, actor.id, session.executionMode);
+  const eligibility = await sessionEligibility(
+    sessionId,
+    actor.id,
+    session.executionMode,
+    session.access,
+  );
   if (!eligibility.eligible) {
     throw new AppError("FORBIDDEN", "You are not a participant in this session");
   }
@@ -311,6 +326,77 @@ export async function getAttempt(
 ): Promise<AttemptView> {
   await scopeForOwnAttempt(attemptId, actor.id);
   return loadAttemptView(attemptId);
+}
+
+/**
+ * What a Coder has actually written, for the Architect supervising them.
+ *
+ * Authorized against the Module, not against the attempt's owner, and through
+ * `assertCanWrite`, which refuses Root outright. Root is forbidden from reading
+ * participant submissions, and participant source reached by another route is
+ * the same thing wearing a different name.
+ *
+ * Two snapshots at most, newest first: the last Run and the formal Submission.
+ * The draft is deliberately not among them. A draft is autosaved every few
+ * seconds, and surfacing it would turn supervision into a keystroke feed of
+ * somebody's half-written thought — the Architect asked to see the code that
+ * was run or handed in, which is a deliberate act with a moment attached.
+ */
+export async function getAttemptSource(
+  actor: AuthenticatedUser,
+  attemptId: string,
+): Promise<AttemptSourceView> {
+  const scope = await scopeForAttempt(attemptId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  const attempt = await prisma.assessmentAttempt.findUniqueOrThrow({
+    where: { id: attemptId },
+    select: {
+      sessionId: true,
+      attemptNumber: true,
+      status: true,
+      runCount: true,
+      lastRunLanguage: true,
+      lastRunSourceCode: true,
+      lastRunAt: true,
+      user: { select: { id: true, username: true, displayName: true } },
+      submissions: {
+        orderBy: { submittedAt: "desc" },
+        take: 1,
+        select: { language: true, sourceCode: true, submittedAt: true },
+      },
+    },
+  });
+
+  const snapshots: AttemptSourceSnapshot[] = [];
+  const submission = attempt.submissions[0];
+  if (submission) {
+    snapshots.push({
+      origin: "SUBMISSION",
+      language: storedLanguage(submission.language),
+      sourceCode: submission.sourceCode,
+      capturedAt: submission.submittedAt.toISOString(),
+    });
+  }
+  if (attempt.lastRunSourceCode !== null && attempt.lastRunAt !== null) {
+    snapshots.push({
+      origin: "RUN",
+      language: storedLanguage(attempt.lastRunLanguage ?? ""),
+      sourceCode: attempt.lastRunSourceCode,
+      capturedAt: attempt.lastRunAt.toISOString(),
+    });
+  }
+  snapshots.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+
+  return {
+    attemptId,
+    sessionId: attempt.sessionId,
+    attemptNumber: attempt.attemptNumber,
+    status: attempt.status,
+    coder: attempt.user,
+    runCount: attempt.runCount,
+    snapshots,
+  };
 }
 
 // --- Draft and Run ------------------------------------------------------------
@@ -467,13 +553,25 @@ export async function runAttempt(
     { userId: actor.id },
   );
 
-  // Counted, not recorded. A Run stays outside grading history — this is a
-  // tally so an achievement can tell a first-try solve from a twentieth, and
-  // a failure to bump it must never cost the Coder the run they already have.
+  // Counted and snapshotted, not recorded as history. The counter is so an
+  // achievement can tell a first-try solve from a twentieth; the source is so
+  // the supervising Architect can see what is actually being executed rather
+  // than waiting for a formal Submission that may never come.
+  //
+  // Both are best-effort: the job is already queued, and a failure to write a
+  // supervision aid must never cost the Coder the run they already have.
   await prisma.assessmentAttempt
-    .update({ where: { id: attemptId }, data: { runCount: { increment: 1 } } })
+    .update({
+      where: { id: attemptId },
+      data: {
+        runCount: { increment: 1 },
+        lastRunLanguage: input.language,
+        lastRunSourceCode: input.sourceCode,
+        lastRunAt: new Date(),
+      },
+    })
     .catch((error: unknown) => {
-      log.warn("attempt.run_count_failed", { attemptId, ...errorFields(error) });
+      log.warn("attempt.run_snapshot_failed", { attemptId, ...errorFields(error) });
     });
 
   return { jobId };

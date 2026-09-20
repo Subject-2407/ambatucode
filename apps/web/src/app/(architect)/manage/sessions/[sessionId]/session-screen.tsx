@@ -37,6 +37,7 @@ import {
 } from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * Session control: who takes part, who is ready, and starting.
@@ -286,10 +287,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   return (
     <Stack
       gap="4"
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="lg"
-      bg="bg.surface"
+      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)")}
       padding="5"
     >
       <Text textStyle="display">{title}</Text>

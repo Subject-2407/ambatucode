@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import NextLink from "next/link";
-import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
+import { Box, Flex, Grid, HStack, Stack, Text } from "@chakra-ui/react";
 import { ChevronRight, ClipboardCheck, FileText, Lock, Terminal } from "lucide-react";
 import type { AssessmentSummary, ModuleDetail, ModuleSectionView } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
@@ -9,7 +9,7 @@ import { ModuleLeaderboards } from "@/components/gamification/module-leaderboard
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PixelFrame } from "@/components/ui/pixel-frame";
-import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
+import { pixelSkin } from "@/theme/pixel";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { routes } from "@/lib/routes";
@@ -37,7 +37,10 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
   );
 
   return (
-    <PageContainer backdrop="constellation">
+    // The overview and the board it ranks are read together, so the page is
+    // locked to the window and each column scrolls on its own. Scrolling the
+    // whole page to reach the leaderboard meant losing sight of the sections.
+    <PageContainer backdrop="constellation" fill={module.viewer.canRead}>
       <PageHeader
         title={module.title}
         description={module.description ?? undefined}
@@ -53,28 +56,55 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
       />
 
       {module.viewer.canRead ? (
-        <Stack gap="8">
-          <SectionTree module={module} />
+        <Grid
+          templateColumns={{ base: "1fr", lg: "minmax(0, 1.6fr) minmax(0, 1fr)" }}
+          gap={{ base: "8", lg: "6" }}
+          flex={{ md: "1" }}
+          minHeight={{ md: "0" }}
+        >
+          {/* `minHeight: 0` on both: a grid item's default minimum is its
+              content, so without it neither column can be shorter than what is
+              inside it and the page scrolls after all. */}
+          <Column>
+            <SectionTree module={module} />
+          </Column>
+
           {/* Gamification belongs to learning, so it lives on the module page
               and never inside the attempt workspace. */}
-          <Stack gap="3">
-            <Text fontSize="sm" textStyle="display">
-              Leaderboard
-            </Text>
-            <ModuleLeaderboards
-              moduleId={module.id}
-              viewerId={session.user.id}
-              sections={module.sections.map((section) => ({
-                id: section.id,
-                title: section.title,
-              }))}
-            />
-          </Stack>
-        </Stack>
+          <Column>
+            <Stack gap="3">
+              <Text fontSize="sm" textStyle="display">
+                Leaderboard
+              </Text>
+              <ModuleLeaderboards
+                moduleId={module.id}
+                viewerId={session.user.id}
+                sections={module.sections.map((section) => ({
+                  id: section.id,
+                  title: section.title,
+                }))}
+              />
+            </Stack>
+          </Column>
+        </Grid>
       ) : (
         <AccessPanel module={module} />
       )}
     </PageContainer>
+  );
+}
+
+/** One scrolling half of the overview. See the grid above for why. */
+function Column({ children }: { children: ReactNode }) {
+  return (
+    <Box
+      minHeight={{ md: "0" }}
+      overflowY={{ base: "visible", md: "auto" }}
+      // Room for the scrollbar so a row's text does not sit under it.
+      pe={{ md: "2" }}
+    >
+      {children}
+    </Box>
   );
 }
 
@@ -221,15 +251,12 @@ function ItemLink({
   return (
     <Box
       asChild
-      borderWidth="0"
-      boxShadow={pixelFocusRing("var(--amb-colors-border-default)", 2)}
-      clipPath={pixelNotch(2)}
-      bg="bg.surface"
+      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)", 2)}
       px="4"
       py="3"
       _hover={{
-        boxShadow: pixelFocusRing("var(--amb-colors-accent-solid)", 2),
-        bg: "bg.subtle",
+        background: "var(--amb-colors-accent-solid)",
+        _before: { background: "var(--amb-colors-bg-subtle)" },
       }}
     >
       <NextLink href={href}>

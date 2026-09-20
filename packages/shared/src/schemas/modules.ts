@@ -113,3 +113,29 @@ export type ModuleMaterialSummary = {
   isPublished: boolean;
   practiceCount: number;
 };
+
+/**
+ * One step through a Module, as the Next control uses it.
+ *
+ * A Module is a sequence: the Materials of a Section, then its Assessments,
+ * then the next Section. A Coder working through it should not have to return
+ * to the overview between every two items, and the overview is the only place
+ * that order was written down — so it is computed once, server side, from the
+ * same rows the overview renders.
+ */
+export type ModuleItemKind = "MATERIAL" | "ASSESSMENT";
+
+export type ModuleItemRef = {
+  kind: ModuleItemKind;
+  id: string;
+  title: string;
+  /** Named so the control can say when Next crosses into a new Section. */
+  sectionId: string;
+  sectionTitle: string;
+};
+
+/** Null at the end of the Module. There is nothing after the last item. */
+export type NextModuleItem = {
+  moduleSlug: string;
+  next: ModuleItemRef | null;
+};

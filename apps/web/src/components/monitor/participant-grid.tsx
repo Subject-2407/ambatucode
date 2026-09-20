@@ -1,13 +1,14 @@
 "use client";
 
-import { memo, useRef } from "react";
-import { Box, HStack, Stack, Text } from "@chakra-ui/react";
+import { memo, useCallback, useRef, useState } from "react";
+import { Box, HStack, Stack, Text, chakra } from "@chakra-ui/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { MonitorParticipantRow } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { PixelFrame, type PixelFrameTone } from "@/components/ui/pixel-frame";
 import { describeSubmission } from "@/components/assessment/submission-status";
 import { formatRemaining } from "@/lib/attempt-clock";
+import { CodePeekDialog } from "./code-peek";
 import { ParticipantStateBadge, participantState, type ParticipantState } from "./readiness-board";
 
 /**
@@ -24,6 +25,13 @@ const OVERSCAN = 6;
 
 export function ParticipantGrid({ rows }: { rows: MonitorParticipantRow[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The card whose code is open. Held here rather than per card so opening one
+  // does not give every other card a piece of dialog state to re-render on.
+  const [peeking, setPeeking] = useState<{ attemptId: string; displayName: string } | null>(null);
+  const onPeek = useCallback(
+    (attemptId: string, displayName: string) => setPeeking({ attemptId, displayName }),
+    [],
+  );
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -59,11 +67,19 @@ export function ParticipantGrid({ rows }: { rows: MonitorParticipantRow[] }) {
               px="1"
               py="1"
             >
-              <ParticipantCard row={row} />
+              <ParticipantCard row={row} onPeek={onPeek} />
             </Box>
           );
         })}
       </Box>
+
+      {peeking === null ? null : (
+        <CodePeekDialog
+          attemptId={peeking.attemptId}
+          displayName={peeking.displayName}
+          onClose={() => setPeeking(null)}
+        />
+      )}
     </Box>
   );
 }
@@ -84,20 +100,51 @@ const STATE_TONE: Readonly<Record<ParticipantState, PixelFrameTone>> = {
 /**
  * Memoized on the row object: the feed replaces one participant at a time, so
  * every other card keeps its previous props and skips rendering entirely.
+ *
+ * `onPeek` is held by the grid and stable, so it does not defeat that.
  */
-const ParticipantCard = memo(function ParticipantCard({ row }: { row: MonitorParticipantRow }) {
+const ParticipantCard = memo(function ParticipantCard({
+  row,
+  onPeek,
+}: {
+  row: MonitorParticipantRow;
+  onPeek: (attemptId: string, displayName: string) => void;
+}) {
   const submission = row.submission;
   const summary = submission ? describeSubmission(submission.status, submission.score) : null;
   const state = participantState(row);
+  // Nothing to open before the Coder has started: there is no attempt, so
+  // there is no source and nothing the Architect could be shown.
+  const attemptId = row.attempt?.id ?? null;
 
   return (
     <PixelFrame tone={STATE_TONE[state]} height="100%">
       <Stack gap="2" height="100%" justify="center" px="3" py="2">
         <HStack justify="space-between" gap="3">
           <Stack gap="0" minWidth="0">
-            <Text fontSize="sm" truncate>
-              {row.displayName}
-            </Text>
+            {attemptId === null ? (
+              <Text fontSize="sm" truncate>
+                {row.displayName}
+              </Text>
+            ) : (
+              // A button rather than a card-wide click target: the card carries
+              // a name, a timer and several badges, and making all of it one
+              // control would leave a screen reader announcing the lot as the
+              // label of "view code".
+              <chakra.button
+                type="button"
+                textAlign="start"
+                minWidth="0"
+                cursor="pointer"
+                aria-label={`View ${row.displayName}'s code`}
+                onClick={() => onPeek(attemptId, row.displayName)}
+                _hover={{ color: "accent.fg", textDecoration: "underline" }}
+              >
+                <Text fontSize="sm" truncate>
+                  {row.displayName}
+                </Text>
+              </chakra.button>
+            )}
             <Text fontSize="xs" color="fg.muted" truncate>
               {row.username}
             </Text>

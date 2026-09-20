@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { HStack, Text } from "@chakra-ui/react";
-import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
+import { pixelSkin } from "@/theme/pixel";
 import { PauseCircle, Timer } from "lucide-react";
 import type { ExecutionMode } from "@ambatucode/shared";
 import {
@@ -137,10 +137,7 @@ export function AttemptTimer({
         fontSize="xl"
         fontVariantNumeric="tabular-nums"
         color={TIER_COLOR[tier]}
-        borderWidth="0"
-        boxShadow={pixelFocusRing("currentColor", 3)}
-        clipPath={pixelNotch(3)}
-        borderRadius="0"
+        {...pixelSkin("currentColor", "var(--amb-colors-bg-canvas)", 3)}
         paddingInline="2.5"
         paddingBlock="0.5"
         lineHeight="1.3"

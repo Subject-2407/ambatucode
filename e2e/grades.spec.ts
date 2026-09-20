@@ -286,8 +286,9 @@ test.describe("leaderboard and achievements", () => {
       // inventing a rank.
       await expect(coderPage.getByText(/No scores yet|Nothing to rank yet/)).toBeVisible();
 
-      await coderPage.goto("/achievements");
-      await expect(coderPage.getByRole("heading", { name: "Achievements" })).toBeVisible();
+      // Titles live on the Profile screen now, behind its second tab.
+      await coderPage.goto("/profile");
+      await coderPage.getByRole("tab", { name: "Achievements" }).click();
       // Locked titles are readable: they are goals, not surprises.
       await expect(coderPage.getByText("First Light")).toBeVisible({ timeout: 30_000 });
       await expect(coderPage.getByText(/titles earned/)).toBeVisible();

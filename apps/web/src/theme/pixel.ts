@@ -41,6 +41,50 @@ export function pixelNotch(unit: number = PIXEL): string {
 }
 
 /**
+ * The notched edge, drawn so that the corners actually carry ink.
+ *
+ * The obvious way to put a border on a notched box — `clip-path` plus an inset
+ * `box-shadow` — is subtly wrong, and it is why several edges in the app looked
+ * washed out or missing at the corners. An inset shadow is painted along the
+ * *border box*, which is a rectangle; the notch then clips away exactly the
+ * corner squares where that ring turns. What is left is four straight strokes
+ * and four bare diagonal steps, with the fill running right up to the cut and
+ * no edge colour on it at all.
+ *
+ * This paints the edge as the element's own background and lays the fill over
+ * it, inset by the edge's thickness and notched again — the same two-layer
+ * construction `PixelFrame` uses, in one element rather than two. Every step of
+ * the stair is the edge colour, at full weight, in both themes.
+ *
+ * `isolation: isolate` is load-bearing. It makes the element a stacking
+ * context, which is what lets the fill layer sit at `z-index: -1` — above the
+ * element's own background but below its text. Without it that layer escapes
+ * behind whatever ancestor happens to form the nearest context.
+ *
+ * Not usable on a replaced element: `<input>` and friends have no `::before`,
+ * so a field still draws its edge with an inset ring.
+ */
+export function pixelSkin(edge: string, fill: string, unit: number = PIXEL) {
+  return {
+    position: "relative",
+    isolation: "isolate",
+    borderWidth: "0",
+    borderRadius: "0",
+    background: edge,
+    clipPath: pixelNotch(unit),
+    _before: {
+      content: '""',
+      position: "absolute",
+      inset: `${unit}px`,
+      background: fill,
+      clipPath: pixelNotch(unit),
+      zIndex: -1,
+      pointerEvents: "none",
+    },
+  } as const;
+}
+
+/**
  * A hard border drawn with shadows rather than `border`, so it sits outside the
  * box and leaves the corners square-cut rather than mitred.
  *

@@ -21,6 +21,15 @@ export type TimeMode = (typeof TIME_MODES)[number];
 export const EXECUTION_MODES = ["INDIVIDUAL", "LIVE"] as const;
 export type ExecutionMode = (typeof EXECUTION_MODES)[number];
 
+/**
+ * What leaving the attempt workspace does, chosen per Assessment.
+ *
+ * RESUME keeps the attempt open and the draft saved. SUBMIT treats leaving as
+ * handing in, after a warning. BLOCKED offers no way out but Submit.
+ */
+export const EXIT_POLICIES = ["RESUME", "SUBMIT", "BLOCKED"] as const;
+export type ExitPolicy = (typeof EXIT_POLICIES)[number];
+
 export const GRADING_STRATEGIES = ["ALL_OR_NOTHING", "WEIGHTED_AVERAGE"] as const;
 export type GradingStrategy = (typeof GRADING_STRATEGIES)[number];
 
@@ -52,6 +61,16 @@ export const ASSESSMENT_SESSION_STATUSES = [
   "CANCELLED",
 ] as const;
 export type AssessmentSessionStatus = (typeof ASSESSMENT_SESSION_STATUSES)[number];
+
+/**
+ * Who may take part in a session beyond the Coders the Architect listed.
+ *
+ * LISTED keeps the long-standing rule: a list, once written, is the session.
+ * MODULE opens the session to every enrolled Coder whether or not a list
+ * exists, which is what lets a whole class join without being named first.
+ */
+export const SESSION_ACCESS_MODES = ["LISTED", "MODULE"] as const;
+export type SessionAccess = (typeof SESSION_ACCESS_MODES)[number];
 
 export const READY_STATES = ["NOT_READY", "READY"] as const;
 export type ReadyState = (typeof READY_STATES)[number];

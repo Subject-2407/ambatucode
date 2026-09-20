@@ -27,8 +27,9 @@ export const routes = {
   /** Every formal Submission this Coder has made. */
   submissions: "/submissions",
   submission: (submissionId: string) => `/submissions/${submissionId}`,
-  /** Titles this Coder has earned, and the ones still available. */
-  achievements: "/achievements",
+  /** Titles this Coder has earned. A tab on the Profile screen; the old
+   * standalone path redirects there, so links already in the wild survive. */
+  achievements: "/profile",
   /** The attempt workspace. Addressed by attempt, not by session: a reset
    * produces a new attempt, and the old URL must not reopen it. */
   attempt: (attemptId: string) => `/attempt/${attemptId}`,

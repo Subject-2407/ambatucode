@@ -99,6 +99,12 @@ export const semanticColors = defineSemanticTokens.colors({
     subtle: { value: { _light: "{colors.bone.400}", _dark: "{colors.brand.900}" } },
     // The selected or focused frame. Maximum edge in each theme.
     emphasized: { value: { _light: "{colors.brand.950}", _dark: "{colors.bone.200}" } },
+    // The navigation rail's own edge. Deliberately lighter than `default` on
+    // paper: the rail carries the active-item marker right against that edge,
+    // and a brand.800 line puts a near-black bar beside a near-black marker, so
+    // the one thing on the rail that has to be read at a glance disappeared
+    // into it. On glass the usual edge already contrasts and is left alone.
+    rail: { value: { _light: "{colors.bone.500}", _dark: "{colors.brand.700}" } },
     success: { value: { _light: "{colors.moss.700}", _dark: "{colors.moss.400}" } },
     warning: { value: { _light: "{colors.amber.700}", _dark: "{colors.amber.400}" } },
     error: { value: { _light: "{colors.crimson.700}", _dark: "{colors.crimson.400}" } },
@@ -144,6 +150,24 @@ export const semanticColors = defineSemanticTokens.colors({
     solid: { value: { _light: "{colors.gold.400}", _dark: "{colors.gold.400}" } },
     focusRing: { value: { _light: "{colors.gold.600}", _dark: "{colors.gold.400}" } },
     border: { value: { _light: "{colors.gold.600}", _dark: "{colors.gold.500}" } },
+  },
+
+  /**
+   * The wordmark, which is neither a surface nor a status and so belongs to
+   * neither vocabulary above.
+   *
+   * It used to be drawn in `fg.default`, so on paper the title screen showed a
+   * near-black name — correct for body text, far too heavy for a logo that
+   * fills the window. Light mode hands it the crimson seed with the navy one
+   * behind it, which is a pairing the palette already contains; dark mode keeps
+   * the bone ink and moves crimson into the offset.
+   *
+   * Not gold. Gold means an earned Title or Architect-authored content, and a
+   * logo wearing it would weaken that everywhere else.
+   */
+  mark: {
+    ink: { value: { _light: "{colors.crimson.700}", _dark: "{colors.bone.100}" } },
+    shadow: { value: { _light: "{colors.brand.900}", _dark: "{colors.crimson.700}" } },
   },
 
   secondary: palette("plum"),

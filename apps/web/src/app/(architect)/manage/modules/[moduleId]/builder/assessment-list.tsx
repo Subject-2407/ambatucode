@@ -13,6 +13,7 @@ import { toaster } from "@/components/ui/toaster";
 import { useCreateAssessment, useDeleteAssessment } from "@/hooks/use-assessments";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * The assessments of the selected section.
@@ -56,6 +57,8 @@ export function AssessmentList({
         timeLimitMs: 5_000,
         memoryLimitMb: 256,
         gradingStrategy: "WEIGHTED_AVERAGE",
+        exitPolicy: "RESUME",
+        isOpenAccess: false,
         antiCheat: {
           blockClipboard: false,
           blockContextMenu: false,
@@ -118,10 +121,11 @@ export function AssessmentList({
               key={assessment.id}
               align="center"
               gap="1"
-              borderWidth="1px"
-              borderColor="border.default"
-              bg="bg.surface"
-              borderRadius="md"
+              {...pixelSkin(
+                "var(--amb-colors-border-default)",
+                "var(--amb-colors-bg-surface)",
+                2,
+              )}
               padding="2"
             >
               <Box asChild flex="1" minWidth="0" textAlign="start">

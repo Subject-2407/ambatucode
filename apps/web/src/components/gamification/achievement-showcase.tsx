@@ -12,7 +12,7 @@ import {
   type UserAchievementView,
 } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
-import { pixelFocusRing, pixelNotch } from "@/theme/pixel";
+import { pixelSkin } from "@/theme/pixel";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -59,12 +59,14 @@ function AchievementCard({
       // card: the description is the goal, and fading it would fail contrast
       // for the very text a Coder is meant to read. A dashed edge cannot be an
       // inset shadow, so only the earned card takes the notch.
-      borderWidth={earned ? "0" : "1px"}
-      borderColor={earned ? undefined : "border.default"}
-      borderStyle={earned ? undefined : "dashed"}
-      boxShadow={earned ? pixelFocusRing("var(--amb-colors-gold-solid)", 3) : undefined}
-      clipPath={earned ? pixelNotch(3) : undefined}
-      bg={earned ? "bg.surface" : "bg.subtle"}
+      {...(earned
+        ? pixelSkin("var(--amb-colors-gold-solid)", "var(--amb-colors-bg-surface)", 3)
+        : {
+            borderWidth: "1px",
+            borderColor: "border.default",
+            borderStyle: "dashed",
+            bg: "bg.subtle",
+          })}
       align="start"
     >
       <Box color={earned ? "gold.fg" : "fg.muted"} paddingTop="0.5" flexShrink={0}>

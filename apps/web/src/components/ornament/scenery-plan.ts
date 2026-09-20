@@ -1,7 +1,7 @@
 import { SCENERY_SIZE, type SceneryName } from "./scenery-sprites";
 
 /**
- * Where the scenery stands, and how it idles.
+ * Where the scenery stands, what colour it is, and how it idles.
  *
  * Hand-placed rather than scattered by a generator. A random layout keeps
  * dropping a robot behind the sign-in form and a monitor under the page title,
@@ -15,10 +15,36 @@ import { SCENERY_SIZE, type SceneryName } from "./scenery-sprites";
  * every aspect ratio and the far edges are the part that may be cropped. That
  * is the right way round: losing the odd floppy disk off the side of an
  * ultrawide costs nothing.
+ *
+ * Each variant carries six props. It carried ten or eleven, and at that count
+ * the margins of every screen were a shelf of objects — the layer stopped being
+ * atmosphere and started being something to look past. Six fills the corners
+ * and leaves the page room to breathe.
  */
 
 export const BACKDROP_WIDTH = 480;
 export const BACKDROP_HEIGHT = 260;
+
+/**
+ * The inks an ornament may be drawn in.
+ *
+ * Everything in this layer used to be one colour — the default border — so a
+ * backdrop was a monochrome relief in whatever the darkest edge of the theme
+ * happened to be, which on paper is nearly black. These are the semantic
+ * palettes, so each one already resolves to something legible in both themes,
+ * and a page's margins carry a few hues instead of one weight of grey.
+ *
+ * `gold` is deliberately absent: it means an earned Title or Architect-authored
+ * content, and scenery wearing it would weaken that everywhere else.
+ */
+export type SceneryInk =
+  | "edge"
+  | "accent"
+  | "info"
+  | "success"
+  | "warning"
+  | "secondary"
+  | "danger";
 
 export type SceneryProp = {
   name: SceneryName;
@@ -26,6 +52,25 @@ export type SceneryProp = {
   y: number;
   /** Whole multiples keep the cells square; 1.5 is tolerable, 1.37 is not. */
   scale: number;
+  /** The body's ink. The lit accent layer takes its companion — see below. */
+  ink: SceneryInk;
+};
+
+/**
+ * What the lit part of a prop is drawn in, given its body.
+ *
+ * It is never the body's own ink. The accent layer is a screen, an eye, or a
+ * thruster, and it exists to be distinguishable from the shape around it — in
+ * one colour a blinking eye is a hole rather than an eye.
+ */
+export const SCENERY_ACCENT_INK: Readonly<Record<SceneryInk, SceneryInk>> = {
+  edge: "accent",
+  accent: "warning",
+  info: "warning",
+  success: "accent",
+  warning: "info",
+  secondary: "info",
+  danger: "warning",
 };
 
 /**
@@ -70,54 +115,36 @@ export const SCENERY_IDLE: Record<SceneryName, SceneryIdle> = {
  */
 export const SCENERY_PLAN = {
   circuit: [
-    { name: "monitor", x: 24, y: 30, scale: 2 },
-    { name: "chip", x: 76, y: 100, scale: 1.5 },
-    { name: "keyboard", x: 16, y: 176, scale: 2 },
-    { name: "cartridge", x: 140, y: 22, scale: 1 },
-    { name: "chip", x: 208, y: 14, scale: 1 },
-    { name: "mug", x: 124, y: 212, scale: 1.5 },
-    { name: "bug", x: 300, y: 224, scale: 1 },
-    { name: "floppy", x: 392, y: 36, scale: 1.5 },
-    { name: "terminal", x: 404, y: 116, scale: 2 },
-    { name: "disc", x: 372, y: 204, scale: 1.5 },
+    { name: "monitor", x: 24, y: 30, scale: 2, ink: "edge" },
+    { name: "chip", x: 76, y: 100, scale: 1.5, ink: "info" },
+    { name: "keyboard", x: 16, y: 176, scale: 2, ink: "secondary" },
+    { name: "terminal", x: 404, y: 116, scale: 2, ink: "accent" },
+    { name: "disc", x: 372, y: 204, scale: 1.5, ink: "warning" },
+    { name: "bug", x: 300, y: 224, scale: 1, ink: "danger" },
   ],
   grid: [
-    { name: "cartridge", x: 20, y: 44, scale: 2 },
-    { name: "disc", x: 92, y: 118, scale: 1.5 },
-    { name: "floppy", x: 28, y: 188, scale: 2 },
-    { name: "keyboard", x: 116, y: 14, scale: 1 },
-    { name: "floppy", x: 180, y: 18, scale: 1 },
-    { name: "monitor", x: 312, y: 14, scale: 1 },
-    { name: "mug", x: 212, y: 220, scale: 1 },
-    { name: "disc", x: 272, y: 224, scale: 1 },
-    { name: "robot", x: 396, y: 30, scale: 2 },
-    { name: "chip", x: 408, y: 140, scale: 1.5 },
-    { name: "cartridge", x: 364, y: 202, scale: 1.5 },
+    { name: "cartridge", x: 20, y: 44, scale: 2, ink: "secondary" },
+    { name: "disc", x: 92, y: 118, scale: 1.5, ink: "info" },
+    { name: "floppy", x: 28, y: 188, scale: 2, ink: "success" },
+    { name: "robot", x: 396, y: 30, scale: 2, ink: "accent" },
+    { name: "chip", x: 408, y: 140, scale: 1.5, ink: "warning" },
+    { name: "mug", x: 212, y: 220, scale: 1, ink: "danger" },
   ],
   constellation: [
-    { name: "robot", x: 28, y: 48, scale: 2.5 },
-    { name: "mug", x: 104, y: 124, scale: 1.5 },
-    { name: "monitor", x: 20, y: 176, scale: 2 },
-    { name: "keyboard", x: 92, y: 16, scale: 1 },
-    { name: "chip", x: 156, y: 14, scale: 1 },
-    { name: "floppy", x: 292, y: 16, scale: 1 },
-    { name: "bug", x: 118, y: 226, scale: 1 },
-    { name: "cartridge", x: 250, y: 222, scale: 1 },
-    { name: "rocket", x: 404, y: 32, scale: 2 },
-    { name: "disc", x: 400, y: 148, scale: 1.5 },
-    { name: "terminal", x: 376, y: 208, scale: 1.5 },
+    { name: "robot", x: 28, y: 48, scale: 2.5, ink: "info" },
+    { name: "monitor", x: 20, y: 176, scale: 2, ink: "edge" },
+    { name: "rocket", x: 404, y: 32, scale: 2, ink: "danger" },
+    { name: "disc", x: 400, y: 148, scale: 1.5, ink: "accent" },
+    { name: "terminal", x: 376, y: 208, scale: 1.5, ink: "success" },
+    { name: "cartridge", x: 250, y: 222, scale: 1, ink: "warning" },
   ],
   waveform: [
-    { name: "bug", x: 26, y: 38, scale: 2 },
-    { name: "mug", x: 96, y: 96, scale: 1.5 },
-    { name: "terminal", x: 18, y: 158, scale: 2 },
-    { name: "robot", x: 180, y: 12, scale: 1 },
-    { name: "disc", x: 288, y: 16, scale: 1 },
-    { name: "floppy", x: 140, y: 224, scale: 1 },
-    { name: "rocket", x: 320, y: 220, scale: 1 },
-    { name: "keyboard", x: 392, y: 44, scale: 2 },
-    { name: "chip", x: 412, y: 158, scale: 1.5 },
-    { name: "monitor", x: 360, y: 204, scale: 1.5 },
+    { name: "bug", x: 26, y: 38, scale: 2, ink: "danger" },
+    { name: "mug", x: 96, y: 96, scale: 1.5, ink: "warning" },
+    { name: "terminal", x: 18, y: 158, scale: 2, ink: "edge" },
+    { name: "keyboard", x: 392, y: 44, scale: 2, ink: "secondary" },
+    { name: "chip", x: 412, y: 158, scale: 1.5, ink: "info" },
+    { name: "floppy", x: 140, y: 224, scale: 1, ink: "accent" },
   ],
 } as const satisfies Record<string, readonly SceneryProp[]>;
 

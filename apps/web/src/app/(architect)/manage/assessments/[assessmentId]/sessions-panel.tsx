@@ -3,12 +3,13 @@
 import { useState } from "react";
 import NextLink from "next/link";
 import { Alert, HStack, Stack, Text } from "@chakra-ui/react";
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, DoorOpen, Plus } from "lucide-react";
 import {
   createSessionRequestSchema,
   type AssessmentArchitectView,
   type AssessmentSessionStatus,
   type ExecutionMode,
+  type SessionAccess,
   type SessionView,
 } from "@ambatucode/shared";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -23,6 +24,7 @@ import { validationWarning } from "@/components/test-scripts/validation";
 import { useCreateSession, useSessions } from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * The Assessment's sessions.
@@ -52,6 +54,10 @@ export function SessionsPanel({ assessment }: { assessment: AssessmentArchitectV
         </Button>
       </HStack>
 
+      {assessment.isOpenAccess && assessment.openAccessSessionId !== null ? (
+        <OpenAccessRow sessionId={assessment.openAccessSessionId} />
+      ) : null}
+
       {isPending ? (
         <Skeleton height="6rem" borderRadius="lg" />
       ) : isError || data === undefined ? (
@@ -79,6 +85,44 @@ export function SessionsPanel({ assessment }: { assessment: AssessmentArchitectV
   );
 }
 
+/**
+ * The open-access session, which is not one of the sessions above.
+ *
+ * It has no Start, no End, and no participant list, so it gets no controls —
+ * only the way in to its monitor, which is where the Coders sitting it right
+ * now, and the code they are writing, actually are. It is switched off in the
+ * assessment's Timing tab, where it was switched on.
+ */
+function OpenAccessRow({ sessionId }: { sessionId: string }) {
+  return (
+    <HStack
+      asChild
+      justify="space-between"
+      gap="3"
+      {...pixelSkin("var(--amb-colors-accent-solid)", "var(--amb-colors-bg-surface)", 2)}
+      px="4"
+      py="3"
+      _hover={{ _before: { background: "var(--amb-colors-bg-subtle)" } }}
+    >
+      <NextLink href={routes.manageSessionMonitor(sessionId)}>
+        <Stack gap="1" minWidth="0">
+          <HStack gap="2">
+            <DoorOpen size={14} aria-hidden />
+            <Text truncate>Open access</Text>
+          </HStack>
+          <Text fontSize="xs" color="fg.muted">
+            Any enrolled Coder may start this at any time · monitor them here
+          </Text>
+        </Stack>
+        <HStack gap="3">
+          <Badge tone="success">OPEN</Badge>
+          <ChevronRight size={16} aria-hidden />
+        </HStack>
+      </NextLink>
+    </HStack>
+  );
+}
+
 const STATUS_TONE: Readonly<Record<AssessmentSessionStatus, BadgeTone>> = {
   DRAFT: "neutral",
   READY: "info",
@@ -93,13 +137,13 @@ function SessionRow({ session }: { session: SessionView }) {
       asChild
       justify="space-between"
       gap="3"
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="md"
-      bg="bg.surface"
+      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)", 2)}
       px="4"
       py="3"
-      _hover={{ borderColor: "accent.solid", bg: "bg.subtle" }}
+      _hover={{
+        background: "var(--amb-colors-accent-solid)",
+        _before: { background: "var(--amb-colors-bg-subtle)" },
+      }}
     >
       <NextLink href={routes.manageSession(session.id)}>
         <Stack gap="1" minWidth="0">
@@ -108,9 +152,11 @@ function SessionRow({ session }: { session: SessionView }) {
             {session.executionMode === null
               ? "Untimed"
               : `${session.executionMode === "LIVE" ? "Live" : "Individual"} · ${String(session.durationMinutes ?? 0)} min`}
-            {session.isRestricted
-              ? ` · ${String(session.listedParticipantCount)} listed`
-              : " · open to everyone enrolled"}
+            {session.access === "MODULE"
+              ? " · open to everyone enrolled"
+              : session.isRestricted
+                ? ` · ${String(session.listedParticipantCount)} listed`
+                : " · open until you list participants"}
           </Text>
         </Stack>
         <HStack gap="3">
@@ -143,6 +189,7 @@ function CreateSessionDialog({
     assessment.executionMode ?? "INDIVIDUAL",
   );
   const [durationMinutes, setDurationMinutes] = useState(String(assessment.durationMinutes ?? 30));
+  const [access, setAccess] = useState<SessionAccess>("LISTED");
   const [error, setError] = useState<string | null>(null);
   // Advisory only: a session may still be created with unchecked scripts.
   const scriptWarning = validationWarning(assessment.testScripts);
@@ -154,6 +201,7 @@ function CreateSessionDialog({
       // An untimed Assessment only ever produces untimed sessions, and the
       // server refuses timing sent for one rather than ignoring it.
       ...(timed ? { executionMode, durationMinutes: Number.parseInt(durationMinutes, 10) } : {}),
+      access,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Check the fields above.");
@@ -205,6 +253,17 @@ function CreateSessionDialog({
           onChange={(event) => setName(event.currentTarget.value)}
           placeholder="Class A — Tuesday lab"
           autoFocus
+        />
+
+        <SelectField
+          label="Who may join"
+          value={access}
+          onChange={(value) => setAccess(value as SessionAccess)}
+          options={[
+            { value: "LISTED", label: "The participants I list" },
+            { value: "MODULE", label: "Anyone enrolled in the module" },
+          ]}
+          helperText="Listing participants is how a session is restricted. Choose the second option and the session stays open to the whole module even after you list people — useful when the list is a roll call rather than a gate."
         />
 
         {timed ? (

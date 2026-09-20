@@ -13,6 +13,7 @@ import {
   withoutRuntimeNotice,
 } from "@/components/content/run-status";
 import type { RunJobState } from "@/hooks/use-run-job";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * What a Run tells a Coder, rendered the same way wherever it is run.
@@ -26,10 +27,7 @@ import type { RunJobState } from "@/hooks/use-run-job";
 export function ConsoleFrame({ children }: { children: ReactNode }) {
   return (
     <Box
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="md"
-      bg="bg.subtle"
+      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-subtle)", 2)}
       padding="4"
     >
       {children}

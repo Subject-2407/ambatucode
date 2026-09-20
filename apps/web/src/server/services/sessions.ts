@@ -46,6 +46,8 @@ const SESSION_SELECT = {
   executionMode: true,
   durationMinutes: true,
   status: true,
+  access: true,
+  isOpenAccess: true,
   startedAt: true,
   endsAt: true,
   startedWithMissingParticipants: true,
@@ -128,6 +130,82 @@ async function broadcastSessionState(sessionId: string): Promise<void> {
   });
 }
 
+/**
+ * The name the implicit open-access session carries.
+ *
+ * It exists because every attempt, submission, grading record and monitor row
+ * in this product hangs off a session. Rather than make all of those nullable
+ * so that one Assessment can be sat without a schedule, an open-access
+ * Assessment gets exactly one long-lived session and the rest of the system
+ * never learns the difference.
+ */
+export const OPEN_ACCESS_SESSION_NAME = "Open access";
+
+/**
+ * The running open-access session for an Assessment, created on first need.
+ *
+ * Idempotent, and safe to call from a Coder's request: two Coders arriving at
+ * once is the ordinary case, and the unique-violation retry is what keeps that
+ * from producing two sessions. It never starts a clock of its own — an
+ * Individual attempt's deadline is computed when that Coder starts, and an
+ * untimed one has none.
+ */
+export async function ensureOpenAccessSession(assessmentId: string): Promise<string> {
+  const assessment = await prisma.assessment.findUniqueOrThrow({
+    where: { id: assessmentId },
+    select: { isOpenAccess: true, executionMode: true, durationMinutes: true },
+  });
+  if (!assessment.isOpenAccess) {
+    throw new AppError("NOT_FOUND", "Session not found");
+  }
+  // Refused rather than quietly downgraded: a Live assessment's timer is
+  // started by a person, so there is nothing for a Coder to walk into.
+  if (assessment.executionMode === "LIVE") {
+    throw new AppError("CONFLICT", "A live assessment cannot be open access");
+  }
+
+  const existing = await prisma.assessmentSession.findFirst({
+    where: { assessmentId, isOpenAccess: true, status: "RUNNING" },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.assessmentSession.create({
+    data: {
+      assessmentId,
+      name: OPEN_ACCESS_SESSION_NAME,
+      executionMode: assessment.executionMode,
+      durationMinutes: assessment.durationMinutes,
+      // Running from the moment it exists. There is no lobby to wait in and
+      // nobody to press Start.
+      status: "RUNNING",
+      startedAt: new Date(),
+      access: "MODULE",
+      isOpenAccess: true,
+    },
+    select: { id: true },
+  });
+  return created.id;
+}
+
+/**
+ * Closes the open-access session when an Assessment stops being open.
+ *
+ * It goes through the same path an Architect's End does, so attempts still in
+ * progress are auto-submitted and graded rather than stranded mid-answer.
+ * Re-opening the Assessment later creates a fresh session; the closed one keeps
+ * its attempts and their records, which is what makes the history readable.
+ */
+export async function closeOpenAccessSessions(assessmentId: string): Promise<void> {
+  const open = await prisma.assessmentSession.findMany({
+    where: { assessmentId, isOpenAccess: true, status: "RUNNING" },
+    select: { id: true },
+  });
+  for (const session of open) {
+    await closeSession(session.id, { reason: "ENDED_BY_ARCHITECT", endedById: null });
+  }
+}
+
 // --- CRUD ---------------------------------------------------------------------
 
 export async function listSessions(
@@ -137,8 +215,11 @@ export async function listSessions(
   const scope = await scopeForAssessment(assessmentId);
   await assertCanWrite(actor, scope.moduleId);
 
+  // The implicit open-access session is not a session an Architect schedules,
+  // starts, or ends, so it does not belong in the list of ones they do. It is
+  // reached through the Assessment's own open-access switch and its monitor.
   const rows = await prisma.assessmentSession.findMany({
-    where: { assessmentId },
+    where: { assessmentId, isOpenAccess: false },
     select: SESSION_SELECT,
     orderBy: { createdAt: "desc" },
   });
@@ -179,7 +260,16 @@ export async function createSession(
   }
 
   const row = await prisma.assessmentSession.create({
-    data: { assessmentId, name: input.name, executionMode, durationMinutes },
+    data: {
+      assessmentId,
+      name: input.name,
+      executionMode,
+      durationMinutes,
+      // Defaults to LISTED, which is the rule this product has always had.
+      // MODULE is the Architect saying "anyone enrolled may walk in", and it
+      // survives a participant list being written later.
+      access: input.access ?? "LISTED",
+    },
     select: SESSION_SELECT,
   });
   return sessionView(row, scope.moduleId);
@@ -221,6 +311,7 @@ export async function updateSession(
       ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
       ...(input.durationMinutes === undefined ? {} : { durationMinutes: input.durationMinutes }),
       ...(input.status === undefined ? {} : { status: input.status }),
+      ...(input.access === undefined ? {} : { access: input.access }),
     },
   });
   if (updated.count === 0) {

@@ -1,11 +1,13 @@
 import { z } from "zod";
 import {
   EXECUTION_MODES,
+  SESSION_ACCESS_MODES,
   type AssessmentSessionStatus,
   type AttemptStatus,
   type ConnectionState,
   type ExecutionMode,
   type ReadyState,
+  type SessionAccess,
   type SubmissionStatus,
 } from "../enums";
 import type { MonitorEventPayload, SessionCounts } from "../realtime-events";
@@ -31,6 +33,12 @@ export const createSessionRequestSchema = z.object({
   name: sessionNameSchema,
   executionMode: z.enum(EXECUTION_MODES).optional(),
   durationMinutes: durationMinutesSchema.optional(),
+  /**
+   * MODULE opens the session to every enrolled Coder even once a participant
+   * list exists. LISTED, the default, keeps the older rule: no list means
+   * everyone, a list means only those on it.
+   */
+  access: z.enum(SESSION_ACCESS_MODES).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
@@ -46,6 +54,7 @@ export const updateSessionRequestSchema = z
     executionMode: z.enum(EXECUTION_MODES),
     durationMinutes: durationMinutesSchema,
     status: z.enum(EDITABLE_SESSION_STATUSES),
+    access: z.enum(SESSION_ACCESS_MODES),
   })
   .partial()
   .refine((value) => Object.keys(value).length > 0, {
@@ -97,6 +106,9 @@ export type SessionView = {
   startedAt: string | null;
   endsAt: string | null;
   startedWithMissingParticipants: boolean;
+  access: SessionAccess;
+  /** The implicit always-open session behind an open-access Assessment. */
+  isOpenAccess: boolean;
   /** Listed participants only — Coders who joined an open session are not a list. */
   listedParticipantCount: number;
   /** True while a participant list exists and therefore limits who may start. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BACKDROP_HEIGHT,
   BACKDROP_WIDTH,
+  SCENERY_ACCENT_INK,
   SCENERY_IDLE,
   SCENERY_PLAN,
   propExtent,
@@ -54,10 +55,11 @@ describe("scenery plan", () => {
 
     for (const variant of VARIANTS) {
       const props = SCENERY_PLAN[variant];
-      // Medium density: enough to fill the margins, not so many that the
-      // background competes with the content.
-      expect(props.length, variant).toBeGreaterThanOrEqual(8);
-      expect(props.length, variant).toBeLessThanOrEqual(14);
+      // Low density, on purpose: enough to fill the margins, few enough that
+      // the background never competes with the content. Ten or more props per
+      // variant turned every screen margin into a shelf of objects.
+      expect(props.length, variant).toBeGreaterThanOrEqual(4);
+      expect(props.length, variant).toBeLessThanOrEqual(8);
 
       const names = [...new Set(props.map((prop) => prop.name))];
       expect(names.length, variant).toBeGreaterThanOrEqual(5);
@@ -66,6 +68,23 @@ describe("scenery plan", () => {
 
     // Four variants exist so that four pages do not look alike.
     expect(casts.size).toBe(VARIANTS.length);
+  });
+
+  it("varies the inks, so no screen's margins are one flat colour", () => {
+    for (const variant of VARIANTS) {
+      const inks = new Set(SCENERY_PLAN[variant].map((prop) => prop.ink));
+      // The whole layer was drawn in `edge` once, which on the bone ground is
+      // a near-black relief in every corner of every page.
+      expect(inks.size, variant).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it("gives every ink a lit companion that is not itself", () => {
+    for (const [ink, companion] of Object.entries(SCENERY_ACCENT_INK)) {
+      // A screen, an eye, or a thruster in the body's own colour is a hole in
+      // the shape rather than a lit part of it.
+      expect(companion, ink).not.toBe(ink);
+    }
   });
 
   it("scales every prop by a step that keeps the cells square", () => {

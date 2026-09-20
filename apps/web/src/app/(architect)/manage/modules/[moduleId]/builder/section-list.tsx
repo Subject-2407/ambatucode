@@ -22,6 +22,7 @@ import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
 import { GripVertical, Pencil, Plus, Trash } from "lucide-react";
 import type { ModuleSectionView } from "@ambatucode/shared";
 import { Button, IconButton } from "@/components/ui/button";
+import { pixelSkin } from "@/theme/pixel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PromptDialog } from "@/components/ui/prompt-dialog";
 import { toaster } from "@/components/ui/toaster";
@@ -231,10 +232,11 @@ function SortableSection({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       align="center"
       gap="1"
-      borderWidth="1px"
-      borderColor={selected ? "accent.solid" : "border.default"}
-      bg={selected ? "bg.subtle" : "bg.surface"}
-      borderRadius="md"
+      {...pixelSkin(
+        selected ? "var(--amb-colors-accent-solid)" : "var(--amb-colors-border-default)",
+        selected ? "var(--amb-colors-bg-subtle)" : "var(--amb-colors-bg-surface)",
+        2,
+      )}
       padding="2"
       opacity={isDragging ? 0.6 : 1}
     >

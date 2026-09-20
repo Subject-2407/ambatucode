@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { CircleDot, Play, Send } from "lucide-react";
+import { CircleDot, DoorOpen, Play, Send } from "lucide-react";
 import type { AttemptView, Language } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -74,6 +74,8 @@ export function AttemptWorkspace({
   );
   const [pendingLanguage, setPendingLanguage] = useState<Language | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
+  const [exitOpen, setExitOpen] = useState(false);
+  const [exiting, setExiting] = useState(false);
   const [awaitingDeadline, setAwaitingDeadline] = useState(false);
   /**
    * The auto-submit explanation is read once. The attempt stays auto-submitted,
@@ -275,6 +277,42 @@ export function AttemptWorkspace({
     }
   }, [attempt.id, language, router, source, submit]);
 
+  /**
+   * Leaving, under the rule the Architect set for this Assessment.
+   *
+   * RESUME saves what is in the editor and walks away — the attempt stays
+   * open, and the Coder returns to it with Continue. SUBMIT treats leaving as
+   * handing in, which is why it goes through `submit` with the buffer rather
+   * than trusting the draft. BLOCKED never reaches here: the control is not
+   * rendered at all, because a button that refuses is worse than no button.
+   *
+   * The draft save is awaited, not fired and forgotten. The whole promise of
+   * RESUME is that the code is there when they come back.
+   */
+  const confirmExit = useCallback(async () => {
+    setExiting(true);
+    try {
+      if (assessment.exitPolicy === "SUBMIT") {
+        await submit({ language, sourceCode: source });
+        void clearLocalDraft(attempt.id);
+        toaster.success({ title: "Submitted", description: "Grading has started." });
+      } else {
+        await apiClient.put(`/api/attempts/${attempt.id}/draft`, {
+          language,
+          sourceCode: source,
+        });
+      }
+      setExitOpen(false);
+      router.push(routes.assessment(moduleSlug, assessment.id));
+    } catch (error) {
+      setExiting(false);
+      toaster.error({
+        title: "Could not leave",
+        description: isApiError(error) ? error.userMessage : "Please try again.",
+      });
+    }
+  }, [assessment.exitPolicy, assessment.id, attempt.id, language, moduleSlug, router, source, submit]);
+
   function applyLanguage(next: Language) {
     const result = switchLanguage({
       current: source,
@@ -434,6 +472,21 @@ export function AttemptWorkspace({
               <Send aria-hidden />
               Submit
             </Button>
+            {/* There was no way out of this screen at all: the shell hides its
+                navigation during an attempt, so a Coder who opened one had the
+                browser's Back button and nothing else. What this does is the
+                Architect's decision — see `exitPolicy`. */}
+            {assessment.exitPolicy === "BLOCKED" ? null : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setExitOpen(true)}
+                disabled={locked}
+              >
+                <DoorOpen aria-hidden />
+                Leave
+              </Button>
+            )}
           </HStack>
         </HStack>
       </Flex>
@@ -510,6 +563,23 @@ export function AttemptWorkspace({
         submitting={submissionState.phase === "submitting"}
         onConfirm={() => void confirmSubmit()}
         onClose={() => setSubmitOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={exitOpen}
+        title={assessment.exitPolicy === "SUBMIT" ? "Leave and submit?" : "Leave this attempt?"}
+        description={
+          assessment.exitPolicy === "SUBMIT"
+            ? "Leaving submits this attempt with the code in the editor. It is your one formal submission, and you cannot come back to it."
+            : attempt.executionMode === "LIVE"
+              ? "Your code is saved and the attempt stays open, so you can continue it from the assessment page. The live timer keeps running while you are away."
+              : "Your code is saved and the attempt stays open, so you can continue it from the assessment page. Your timer pauses while you are away."
+        }
+        confirmLabel={assessment.exitPolicy === "SUBMIT" ? "Submit and leave" : "Leave"}
+        destructive={assessment.exitPolicy === "SUBMIT"}
+        loading={exiting}
+        onConfirm={() => void confirmExit()}
+        onClose={() => setExitOpen(false)}
       />
 
       <ConfirmDialog

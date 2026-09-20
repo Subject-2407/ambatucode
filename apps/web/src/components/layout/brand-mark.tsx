@@ -10,6 +10,10 @@ import { Text } from "@chakra-ui/react";
  *
  * `display` uppercases it, so the name is written normally everywhere in the
  * source and rendered as AMBATUCODE here.
+ *
+ * The two inks come from `mark.*` rather than `fg.default`: a logo the size of
+ * a title screen in body-text black is a wall, and on the bone ground it read
+ * as one. See the token's note in `theme/semantic-tokens.ts`.
  */
 export function BrandMark({
   size = "md",
@@ -28,12 +32,12 @@ export function BrandMark({
       as="span"
       textStyle="display"
       fontSize={fontSize}
-      color="fg.default"
+      color="mark.ink"
       letterSpacing={size === "hero" ? "0.12em" : "0.08em"}
       lineHeight="1"
-      // Hard offset in the secondary seed — the only place the two brand
-      // colours meet directly, kept from the mark it replaces.
-      textShadow={size === "hero" ? "4px 4px 0 var(--amb-colors-plum-950)" : undefined}
+      // Hard offset in the companion ink — the only place the two brand colours
+      // meet directly, kept from the mark this one replaces.
+      textShadow={size === "hero" ? "4px 4px 0 var(--amb-colors-mark-shadow)" : undefined}
     >
       Ambatucode
     </Text>
