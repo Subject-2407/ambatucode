@@ -240,7 +240,7 @@ export function TestScriptForm({
       ) : null}
 
       <Stack gap="1">
-        <Flex justify="space-between" align="center" gap="3">
+        <Flex justify="space-between" align="center" gap="3" wrap="wrap">
           <Text fontSize="sm" fontWeight="medium">
             Script
           </Text>

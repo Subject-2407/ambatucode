@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import NextLink from "next/link";
-import { Alert, HStack, Stack, Text } from "@chakra-ui/react";
+import { Alert, Checkbox, HStack, Stack, Text } from "@chakra-ui/react";
 import { ChevronRight, DoorOpen, Plus } from "lucide-react";
 import {
   createSessionRequestSchema,
+  sessionRuleProblem,
   type AssessmentArchitectView,
   type AssessmentSessionStatus,
   type ExecutionMode,
@@ -24,6 +25,7 @@ import { validationWarning } from "@/components/test-scripts/validation";
 import { useCreateSession, useSessions } from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
+import { describeSessionRules } from "@/lib/session-copy";
 import { pixelSkin } from "@/theme/pixel";
 
 /**
@@ -149,17 +151,10 @@ function SessionRow({ session }: { session: SessionView }) {
         <Stack gap="1" minWidth="0">
           <Text truncate>{session.name}</Text>
           <Text fontSize="xs" color="fg.muted">
-            {session.executionMode === null
-              ? "Untimed"
-              : `${session.executionMode === "LIVE" ? "Live" : "Individual"} · ${String(session.durationMinutes ?? 0)} min`}
-            {session.access === "MODULE"
-              ? " · open to everyone enrolled"
-              : session.isRestricted
-                ? ` · ${String(session.listedParticipantCount)} listed`
-                : " · open until you list participants"}
+            {describeSessionRules(session)}
           </Text>
         </Stack>
-        <HStack gap="3">
+        <HStack gap="3" flexShrink="0">
           <Badge tone={STATUS_TONE[session.status]}>{session.status}</Badge>
           <ChevronRight size={16} aria-hidden />
         </HStack>
@@ -190,18 +185,40 @@ function CreateSessionDialog({
   );
   const [durationMinutes, setDurationMinutes] = useState(String(assessment.durationMinutes ?? 30));
   const [access, setAccess] = useState<SessionAccess>("LISTED");
+  /** `datetime-local`, so an empty string is "no closing time". */
+  const [closesAt, setClosesAt] = useState("");
+  const [requireAllReady, setRequireAllReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Advisory only: a session may still be created with unchecked scripts.
   const scriptWarning = validationWarning(assessment.testScripts);
 
+  // Live sets both of these by itself: its shared clock is the closing time,
+  // and starting it before everyone is there costs those Coders their minutes.
+  const isLive = timed && executionMode === "LIVE";
+
   async function save() {
     setError(null);
+
+    const closing = closesAt === "" ? null : new Date(closesAt).toISOString();
+    const rule = sessionRuleProblem({
+      executionMode: timed ? executionMode : null,
+      closesAt: isLive ? null : closing,
+      requireAllReady,
+      nowMs: Date.now(),
+    });
+    if (rule) {
+      setError(rule);
+      return;
+    }
+
     const parsed = createSessionRequestSchema.safeParse({
       name,
       // An untimed Assessment only ever produces untimed sessions, and the
       // server refuses timing sent for one rather than ignoring it.
       ...(timed ? { executionMode, durationMinutes: Number.parseInt(durationMinutes, 10) } : {}),
       access,
+      closesAt: isLive ? null : closing,
+      requireAllReady: isLive || requireAllReady,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Check the fields above.");
@@ -260,10 +277,14 @@ function CreateSessionDialog({
           value={access}
           onChange={(value) => setAccess(value as SessionAccess)}
           options={[
-            { value: "LISTED", label: "The participants I list" },
+            { value: "LISTED", label: "Only the participants I list" },
             { value: "MODULE", label: "Anyone enrolled in the module" },
           ]}
-          helperText="Listing participants is how a session is restricted. Choose the second option and the session stays open to the whole module even after you list people — useful when the list is a roll call rather than a gate."
+          helperText={
+            access === "MODULE"
+              ? "You pick nobody. Every approved Coder in the module sees this session and walks in the moment you start it. A list, if you write one, only decides whose readiness the start rule counts."
+              : "Private to the Coders you name on the Participants list. Nobody else sees the session, and an empty list means every enrolled Coder until you write one."
+          }
         />
 
         {timed ? (
@@ -291,6 +312,39 @@ function CreateSessionDialog({
           <Text fontSize="sm" color="fg.muted">
             This assessment is untimed, so the session has no timer.
           </Text>
+        )}
+
+        {/* Live has both of these settled already: the shared countdown is the
+            closing time, and starting it early spends everybody's minutes. */}
+        {isLive ? (
+          <Text fontSize="sm" color="fg.muted">
+            A live session closes when its shared timer runs out, and waits for everyone on the list
+            before it starts.
+          </Text>
+        ) : (
+          <>
+            <TextField
+              label="Closes at (optional)"
+              type="datetime-local"
+              value={closesAt}
+              onChange={(event) => setClosesAt(event.currentTarget.value)}
+              helperText="After this moment nobody may join or submit, and anyone still working is submitted automatically. Leave it empty to close the session by hand."
+            />
+
+            <Checkbox.Root
+              checked={requireAllReady}
+              onCheckedChange={(details) => setRequireAllReady(details.checked === true)}
+            >
+              <Checkbox.HiddenInput />
+              <Checkbox.Control />
+              <Checkbox.Label>Wait until every listed participant is ready</Checkbox.Label>
+            </Checkbox.Root>
+            <Text fontSize="xs" color="fg.muted" mt="-2">
+              Coders mark themselves ready on the assessment page. You can still start anyway, with
+              the names of whoever is missing in front of you. With no participant list there is
+              nobody to wait for, so the rule stands aside.
+            </Text>
+          </>
         )}
 
         {error === null ? null : (

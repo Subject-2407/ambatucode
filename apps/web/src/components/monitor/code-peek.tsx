@@ -48,13 +48,19 @@ function formatMoment(iso: string): string {
 export function CodePeekDialog({
   attemptId,
   displayName,
+  live = true,
   onClose,
 }: {
   attemptId: string;
   displayName: string;
+  /**
+   * False where the attempt is history — the grading records — so the panel
+   * reads once instead of polling an answer that cannot change again.
+   */
+  live?: boolean;
   onClose: () => void;
 }) {
-  const { data, isPending, isError, error, refetch } = useAttemptSource(attemptId);
+  const { data, isPending, isError, error, refetch } = useAttemptSource(attemptId, live);
 
   return (
     <Modal

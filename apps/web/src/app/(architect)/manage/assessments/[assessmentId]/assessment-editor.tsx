@@ -144,7 +144,7 @@ function EditorBody({
         title={assessment.title}
         description="Problem, cases, limits, timing, and anti-cheat for this assessment."
         action={
-          <HStack gap="2">
+          <HStack gap="2" wrap="wrap" justify={{ base: "flex-start", sm: "flex-end" }}>
             <Badge tone={draft.isPublished ? "success" : "neutral"}>
               {draft.isPublished ? "Published" : "Draft"}
             </Badge>

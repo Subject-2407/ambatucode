@@ -14,6 +14,7 @@ import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { ExportGradesButton } from "@/components/grades/export-grades-button";
 import { GradeRecordRow } from "@/components/grades/grade-record-row";
 import { ResetAttemptDialog } from "@/components/grades/reset-attempt-dialog";
+import { CodePeekDialog } from "@/components/monitor/code-peek";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
@@ -25,6 +26,7 @@ import { toaster } from "@/components/ui/toaster";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useModuleGrades, useResetAttempt, useSetOfficialAttempt } from "@/hooks/use-grades";
 import { useModule, useModules } from "@/hooks/use-modules";
+import { useModuleSessions } from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 
 const PAGE_SIZE = 25;
@@ -43,6 +45,7 @@ const STATUS_LABEL: Readonly<Record<SubmissionStatus, string>> = {
 };
 
 type ResetTarget = { record: GradeRecordView; attempt: GradeAttemptView };
+type CodeTarget = { attemptId: string; displayName: string };
 
 /**
  * Grading records for one Module.
@@ -56,11 +59,13 @@ type ResetTarget = { record: GradeRecordView; attempt: GradeAttemptView };
 export function GradesScreen() {
   const [moduleId, setModuleId] = useState("");
   const [sectionId, setSectionId] = useState(ALL);
+  const [sessionId, setSessionId] = useState(ALL);
   const [status, setStatus] = useState<string>(ALL);
   const [resetOnly, setResetOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
   const [resetTarget, setResetTarget] = useState<ResetTarget | null>(null);
+  const [codeTarget, setCodeTarget] = useState<CodeTarget | null>(null);
   const search = useDebouncedValue(searchInput.trim(), 300);
 
   const modules = useModules({ page: 1, pageSize: 100, scope: "owned" });
@@ -69,6 +74,7 @@ export function GradesScreen() {
 
   const moduleDetail = useModule(selectedModuleId);
   const sections = moduleDetail.data?.sections ?? [];
+  const moduleSessions = useModuleSessions(selectedModuleId);
 
   const query = useMemo<GradeRecordQuery>(
     () => ({
@@ -76,10 +82,11 @@ export function GradesScreen() {
       pageSize: PAGE_SIZE,
       search: search || undefined,
       sectionId: sectionId === ALL ? undefined : sectionId,
+      sessionId: sessionId === ALL ? undefined : sessionId,
       status: status === ALL ? undefined : (status as SubmissionStatus),
       resetOnly: resetOnly ? true : undefined,
     }),
-    [page, search, sectionId, status, resetOnly],
+    [page, search, sectionId, sessionId, status, resetOnly],
   );
 
   const grades = useModuleGrades(selectedModuleId, query, selectedModuleId !== "");
@@ -162,6 +169,9 @@ export function GradesScreen() {
               changeFilter(() => {
                 setModuleId(value);
                 setSectionId(ALL);
+                // A session belongs to one module, so keeping the old choice
+                // would filter the new module's records down to nothing.
+                setSessionId(ALL);
               })
             }
           />
@@ -174,6 +184,21 @@ export function GradesScreen() {
               ...sections.map((section) => ({ value: section.id, label: section.title })),
             ]}
             onChange={(value) => changeFilter(() => setSectionId(value))}
+          />
+
+          {/* Named by assessment first: "Tuesday lab" does not identify one
+              session across a module that holds a dozen assessments. */}
+          <SelectField
+            label="Session"
+            value={sessionId}
+            options={[
+              { value: ALL, label: "All sessions" },
+              ...(moduleSessions.data ?? []).map((session) => ({
+                value: session.id,
+                label: `${session.assessmentTitle} — ${session.isOpenAccess ? "Open access" : session.name}`,
+              })),
+            ]}
+            onChange={(value) => changeFilter(() => setSessionId(value))}
           />
 
           <SelectField
@@ -234,6 +259,12 @@ export function GradesScreen() {
                       busy={reset.isPending || setOfficial.isPending}
                       onReset={(attempt) => setResetTarget({ record, attempt })}
                       onSetOfficial={(attemptId) => void chooseOfficial(attemptId)}
+                      onViewCode={(attempt) =>
+                        setCodeTarget({
+                          attemptId: attempt.id,
+                          displayName: record.displayName,
+                        })
+                      }
                     />
                   ))
                 )}
@@ -277,6 +308,17 @@ export function GradesScreen() {
         onConfirm={(reason) => void applyReset(reason)}
         onClose={() => setResetTarget(null)}
       />
+
+      {/* The same panel the monitor uses, so the submitted source reads the
+          same way whether it is watched live or read back afterwards. */}
+      {codeTarget === null ? null : (
+        <CodePeekDialog
+          attemptId={codeTarget.attemptId}
+          displayName={codeTarget.displayName}
+          live={false}
+          onClose={() => setCodeTarget(null)}
+        />
+      )}
     </PageContainer>
   );
 }

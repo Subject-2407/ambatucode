@@ -39,6 +39,15 @@ export function useAntiCheat(input: {
       const insideEditor = target instanceof Node && (editorRef.current?.contains(target) ?? false);
       if (!blocksClipboardEvent({ action, insideEditor })) return;
       event.preventDefault();
+      // `preventDefault` alone left the control doing nothing in the one place
+      // it matters. Monaco does not rely on the browser's default action: its
+      // own `paste` listener reads `clipboardData` and edits the model itself,
+      // and its `copy` listener calls `setData`. Cancelling the default action
+      // cancels neither. The event has to be stopped before it reaches the
+      // editor's hidden textarea at all, which is what these two do — the
+      // capture phase ends here and the target phase never runs.
+      event.stopPropagation();
+      if ("stopImmediatePropagation" in event) event.stopImmediatePropagation();
       onClipboard(action);
     };
 
@@ -46,14 +55,33 @@ export function useAntiCheat(input: {
     const onCut = handle("CUT");
     const onPaste = handle("PASTE");
 
+    /**
+     * Dragging text in is the same transfer wearing different clothes: it
+     * carries no `paste` event, and Monaco accepts a drop as an edit. Reported
+     * as PASTE because that is what it is from the Architect's side.
+     */
+    const onDrop = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if ("stopImmediatePropagation" in event) event.stopImmediatePropagation();
+      onClipboard("PASTE");
+    };
+    // Without cancelling dragover the drop never fires in the first place, so
+    // the report would be lost along with the block.
+    const onDragOver = (event: Event) => event.preventDefault();
+
     // Capture phase, so Monaco's own handlers do not get there first.
     root.addEventListener("copy", onCopy, true);
     root.addEventListener("cut", onCut, true);
     root.addEventListener("paste", onPaste, true);
+    root.addEventListener("drop", onDrop, true);
+    root.addEventListener("dragover", onDragOver, true);
     return () => {
       root.removeEventListener("copy", onCopy, true);
       root.removeEventListener("cut", onCut, true);
       root.removeEventListener("paste", onPaste, true);
+      root.removeEventListener("drop", onDrop, true);
+      root.removeEventListener("dragover", onDragOver, true);
     };
   }, [blockClipboard, editorRef, enabled, onClipboard, rootRef]);
 

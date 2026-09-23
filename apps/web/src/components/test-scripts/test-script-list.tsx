@@ -76,7 +76,10 @@ export function TestScriptList<Script extends ListedTestScript>({
               </Text>
             )}
           </Stack>
-          <HStack gap="1">
+          {/* The badges and the path to the left can be arbitrarily long, and
+              a flex item shrinks before it wraps — without this the two icon
+              buttons were squashed out past the row's edge. */}
+          <HStack gap="1" flexShrink="0">
             <IconButton aria-label={`Edit ${script.path}`} size="sm" onClick={() => onEdit(script)}>
               <Pencil aria-hidden />
             </IconButton>

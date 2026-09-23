@@ -82,7 +82,9 @@ export function MaterialList({
 
   return (
     <Stack gap="3" height="full">
-      <Flex justify="space-between" align="center">
+      {/* See the note in assessment-list.tsx: this pane is too narrow for a
+          heading and a labelled button on one line. */}
+      <Flex justify="space-between" align="center" gap="2" wrap="wrap">
         <Text textStyle="display" fontSize="sm">
           Materials
         </Text>

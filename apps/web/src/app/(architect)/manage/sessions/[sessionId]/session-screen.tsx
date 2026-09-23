@@ -5,12 +5,7 @@ import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { Box, HStack, Stack, Text } from "@chakra-ui/react";
 import { ChevronLeft, MonitorPlay, Play, Square, Trash2 } from "lucide-react";
-import {
-  everyoneReady,
-  type ParticipantView,
-  type SessionCounts,
-  type SessionView,
-} from "@ambatucode/shared";
+import { everyoneReady, type ParticipantView, type SessionCounts } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { ParticipantPicker } from "@/components/monitor/participant-picker";
 import {
@@ -37,6 +32,7 @@ import {
 } from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
+import { describeSessionRules } from "@/lib/session-copy";
 import { pixelSkin } from "@/theme/pixel";
 
 /**
@@ -165,9 +161,11 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
       <PageHeader
         title={view.name}
-        description={describeSession(view)}
+        description={describeSessionRules(view)}
         action={
-          <HStack gap="2">
+          // Four controls at their widest. On a narrow window they wrap onto a
+          // second line rather than running off the edge of the page.
+          <HStack gap="2" wrap="wrap" justify={{ base: "flex-start", sm: "flex-end" }}>
             <Badge tone={status === "RUNNING" ? "success" : "neutral"}>{status ?? "DRAFT"}</Badge>
             {status === "RUNNING" ? (
               <>
@@ -221,9 +219,15 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           ) : (
             <Stack gap="4">
               <ReadinessBoard counts={counts} />
-              {counts.total > 0 && !everyoneReady(counts) && editable ? (
+              {editable ? (
                 <Text fontSize="sm" color="fg.muted">
-                  You can start anyway. Anyone who joins later picks up the session where it is.
+                  {counts.total === 0
+                    ? "Readiness is counted over the participant list, and this session has none — so there is nobody to wait for and Start is free."
+                    : !everyoneReady(counts)
+                      ? view.requireAllReady
+                        ? "This session is set to wait until everyone listed is ready. You can still start anyway, with the names of whoever is missing in front of you."
+                        : "You can start anyway. Anyone who joins later picks up the session where it is."
+                      : "Everyone listed is ready."}
                 </Text>
               ) : null}
               <ParticipantRoster participants={participants} />
@@ -272,16 +276,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   );
 }
 
-function describeSession(view: SessionView): string {
-  const timing =
-    view.executionMode === null
-      ? "Untimed"
-      : `${view.executionMode === "LIVE" ? "Live" : "Individual"} · ${String(view.durationMinutes ?? 0)} minutes`;
-  const scope = view.isRestricted
-    ? `${String(view.listedParticipantCount)} listed participants`
-    : "open to every enrolled Coder";
-  return `${timing} · ${scope}`;
-}
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (

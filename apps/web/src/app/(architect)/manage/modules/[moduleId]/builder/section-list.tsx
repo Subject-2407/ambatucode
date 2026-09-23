@@ -129,7 +129,9 @@ export function SectionList({
 
   return (
     <Stack gap="3" height="full">
-      <Flex justify="space-between" align="center">
+      {/* See assessment-list.tsx: the builder's panes are narrower than a
+          heading and a labelled button laid side by side. */}
+      <Flex justify="space-between" align="center" gap="2" wrap="wrap">
         <Text textStyle="display" fontSize="sm">
           Sections
         </Text>
@@ -263,7 +265,8 @@ function SortableSection({
         </button>
       </Box>
 
-      <HStack gap="0">
+      {/* The title in the middle takes the slack; these two keep their size. */}
+      <HStack gap="0" flexShrink="0">
         <IconButton aria-label={`Rename ${section.title}`} size="xs" onClick={onRename}>
           <Pencil size={14} aria-hidden />
         </IconButton>

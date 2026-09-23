@@ -95,7 +95,10 @@ export function AssessmentList({
 
   return (
     <Stack gap="3">
-      <Flex justify="space-between" align="center">
+      {/* The builder's panes are 16–18rem wide, which is narrower than a
+          heading and a labelled button laid side by side. Without the wrap the
+          button ran out past the pane's edge. */}
+      <Flex justify="space-between" align="center" gap="2" wrap="wrap">
         <Text textStyle="display" fontSize="sm">
           Assessments
         </Text>
