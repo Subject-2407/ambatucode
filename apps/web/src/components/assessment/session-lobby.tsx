@@ -11,18 +11,42 @@ import { apiClient, isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
 
 /**
- * The waiting room for a Live Assessment Session.
+ * The waiting room for a scheduled Assessment Session.
  *
  * The Coder declares themselves ready; the Architect watches the count and
- * decides when to start. When the session starts the global clock is already
- * running, so this screen takes the Coder straight into the workspace rather
- * than showing them a button that costs them seconds to find.
+ * decides when to start. It was a Live-only screen, which left readiness
+ * half-built: an Architect could set a session to wait for the room and the
+ * Coders in an Individual session had no way to say they were in it.
+ *
+ * What happens when the Architect starts it depends on the mode, and the
+ * difference matters. A Live session's global clock is already running by then,
+ * so the Coder is taken straight into the workspace — a button to find would
+ * cost them seconds of an exam that has begun without them. Every other mode
+ * only reveals the Start button, because there the click is what starts that
+ * Coder's own clock, and spending it for them is exactly the thing this product
+ * promises not to do.
  */
-export function SessionLobby({ sessionId }: { sessionId: string }) {
+export function SessionLobby({
+  sessionId,
+  /** Whether Start actually waits for the count, or only reports it. */
+  requireAllReady = false,
+  /** Live sessions enter on their own; the rest wait for the Coder's click. */
+  autoEnter = false,
+}: {
+  sessionId: string;
+  requireAllReady?: boolean;
+  autoEnter?: boolean;
+}) {
   const router = useRouter();
   const [entering, setEntering] = useState(false);
 
   const onStarted = useCallback(() => {
+    if (!autoEnter) {
+      // The card above re-renders with its Start button. Nothing is begun.
+      router.refresh();
+      return;
+    }
+
     setEntering(true);
     void apiClient
       .post<AttemptView>(`/api/sessions/${sessionId}/attempt/start`)
@@ -38,7 +62,7 @@ export function SessionLobby({ sessionId }: { sessionId: string }) {
         // The module page will show the running session; the Coder is not stuck.
         router.refresh();
       });
-  }, [router, sessionId]);
+  }, [autoEnter, router, sessionId]);
 
   const lobby = useSessionLobby({ sessionId, enabled: true, onStarted });
 
@@ -78,7 +102,13 @@ export function SessionLobby({ sessionId }: { sessionId: string }) {
           ? "The session has started — opening your workspace…"
           : lobby.problem !== null
             ? lobby.problem
-            : "Your Architect starts this session for everyone at once. Stay on this page."}
+            : requireAllReady
+              ? autoEnter
+                ? "This session waits until everyone is ready. Once it starts you go straight in, so mark yourself ready and stay on this page."
+                : "This session waits until everyone is ready before it starts. Mark yourself ready, and a Start button appears here when it does."
+              : autoEnter
+                ? "Your Architect starts this session for everyone at once. Stay on this page."
+                : "Your Architect opens this session when the group is settled. A Start button appears here when it does, and your own timer begins only when you press it."}
       </Text>
 
       {/*

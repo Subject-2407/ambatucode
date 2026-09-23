@@ -12,6 +12,7 @@ import { CodeEditor } from "@/components/editor/code-editor";
 import { RunOutcome } from "@/components/editor/run-results";
 import { LanguagePicker } from "@/components/editor/language-picker";
 import { switchLanguage } from "@/components/editor/starter-code";
+import { Prose } from "@/components/content/prose";
 import { usePracticeRun } from "@/hooks/use-practice-run";
 import { isApiError } from "@/lib/api-client";
 
@@ -110,9 +111,7 @@ export function PracticeActivity({ activity }: { activity: PracticeActivityView 
         ) : null}
       </Flex>
 
-      <Text color="fg.muted" fontSize="sm" whiteSpace="pre-wrap">
-        {activity.prompt}
-      </Text>
+      <Prose source={activity.prompt} color="fg.muted" />
 
       <Box borderWidth="1px" borderColor="border.default" borderRadius="md" overflow="hidden">
         <CodeEditor
