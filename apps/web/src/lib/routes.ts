@@ -43,6 +43,8 @@ export const routes = {
   manageAssessment: (assessmentId: string) => `/manage/assessments/${assessmentId}`,
   manageSession: (sessionId: string) => `/manage/sessions/${sessionId}`,
   manageSessionMonitor: (sessionId: string) => `/manage/sessions/${sessionId}/monitor`,
+  /** Every session running right now, across the Architect's modules. */
+  manageMonitor: "/manage/monitor",
   manageGrades: "/manage/grades",
 
   // Root
