@@ -1,0 +1,39 @@
+[Unit]
+Description=Ambatucode execution worker
+After=network-online.target docker.service ambatucode-stack.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+# Create this user first: sudo useradd --system --create-home ambatucode-worker
+# It must be a member of the docker group to reach the Docker socket — that
+# is root-equivalent access, so nothing else on this host should be in that
+# group. apps/web and apps/realtime must never run as this user or as any
+# member of docker (CLAUDE.md security invariant #1).
+User=ambatucode-worker
+Group=docker
+WorkingDirectory=/opt/ambatucode
+
+EnvironmentFile=/opt/ambatucode/deploy/.env.production
+# The file above is written for the web/realtime containers, which reach
+# Postgres/Redis by Docker service name on the compose network. This worker
+# runs natively on the host instead — it holds no database credentials at
+# all by design (see .env.production.example), but it does need Redis and
+# the callback URL translated to the host-published addresses that
+# docker/compose/prod.yml actually publishes them on. Everything else
+# (secrets, WORKER_* tuning) is shared from the file above unchanged.
+Environment=REDIS_URL=redis://127.0.0.1:6379
+Environment=EXECUTION_CALLBACK_URL=http://127.0.0.1:3000/api/internal/execution/result
+
+ExecStart=/opt/ambatucode/apps/worker/bin/worker
+Restart=on-failure
+RestartSec=5
+# The worker drains in-flight jobs on SIGTERM within WORKER_SHUTDOWN_GRACE_MS
+# (default 30000ms) — give systemd more than that before it escalates to
+# SIGKILL mid-execution.
+TimeoutStopSec=40
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

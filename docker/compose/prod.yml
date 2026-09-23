@@ -1,0 +1,104 @@
+name: ambatucode-prod
+
+# Production stack for apps/web, apps/realtime, and their Postgres/Redis
+# dependencies. apps/worker is deliberately NOT here: it needs direct access
+# to the host's Docker socket to create sandbox containers, and mounting
+# that socket into a container is equivalent to giving that container root
+# on the host (see CLAUDE.md security invariant #1: only apps/worker ever
+# touches the Docker daemon). Run it natively instead, via
+# deploy/systemd/ambatucode-worker.service.
+#
+# web/realtime reach postgres/redis by Docker's own service-name DNS
+# (postgres, redis) on the default network this file creates — that is what
+# deploy/.env.production's DATABASE_URL/REDIS_URL should point at. The
+# native worker cannot use those hostnames (it isn't on this network); its
+# systemd unit overrides just those two variables to the host-published
+# addresses. See the comment in ambatucode-worker.service for why.
+#
+# Ports are published on 127.0.0.1 only. Nginx (or another reverse proxy),
+# running natively on the host, is the only thing meant to be reachable from
+# outside — see deploy/nginx/ambatucode.conf.
+#
+# Usage (from the repository root):
+#   docker compose -f docker/compose/prod.yml --env-file deploy/.env.production build
+#   docker compose -f docker/compose/prod.yml --env-file deploy/.env.production up -d
+#
+# Before the first run, also build the sandbox images the worker executes
+# participant code in — these are never pulled from a registry by design:
+#   docker compose -f docker/compose/sandbox.yml build
+#
+# To run migrations/seed inside the same network the app containers use:
+#   docker compose -f docker/compose/prod.yml --env-file deploy/.env.production \
+#     run --rm web pnpm --filter @ambatucode/db exec prisma migrate deploy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ambatucode-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ambatucode}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in deploy/.env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-ambatucode}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ambatucode} -d ${POSTGRES_DB:-ambatucode}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: ambatucode-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build:
+      context: ../..
+      dockerfile: docker/app/web.Dockerfile
+      args:
+        NEXT_PUBLIC_REALTIME_URL: ${NEXT_PUBLIC_REALTIME_URL:?NEXT_PUBLIC_REALTIME_URL must be set in deploy/.env.production}
+    container_name: ambatucode-web
+    restart: unless-stopped
+    env_file:
+      - ../../deploy/.env.production
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  realtime:
+    build:
+      context: ../..
+      dockerfile: docker/app/realtime.Dockerfile
+    container_name: ambatucode-realtime
+    restart: unless-stopped
+    env_file:
+      - ../../deploy/.env.production
+    ports:
+      - "127.0.0.1:${REALTIME_PORT:-3001}:${REALTIME_PORT:-3001}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
