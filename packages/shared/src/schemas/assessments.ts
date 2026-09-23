@@ -328,6 +328,24 @@ export type CoderSessionEntry = {
   isOpenAccess: boolean;
   /** Open to every enrolled Coder, rather than to a list the Architect wrote. */
   openToModule: boolean;
+  /**
+   * A retake the Architect opened after this session had ended, waiting for
+   * this Coder alone. The session shows as Ended and is, for everyone else —
+   * so the card has to say why there is a Start button on a finished exam.
+   */
+  isGrantedRetake: boolean;
+  /** When the session stops accepting work, for a session that has a limit. */
+  closesAt: string | null;
+  /** Readiness holds this session's Start until everyone listed has said so. */
+  requireAllReady: boolean;
+  /**
+   * True when the Architect named this Coder on the participant list.
+   *
+   * Readiness is counted over that list alone, so only a listed Coder has a
+   * readiness to declare — one who walked into an open session would be
+   * toggling a switch the board does not read.
+   */
+  isListed: boolean;
 };
 
 export type AssessmentCoderView = AssessmentWorkspaceView & {

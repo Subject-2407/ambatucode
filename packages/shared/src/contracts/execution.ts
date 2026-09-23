@@ -29,7 +29,7 @@ import {
  * Bump it whenever a field is added, removed, renamed, or changes meaning, and
  * update `apps/worker/internal/contract` in the same commit.
  */
-export const EXECUTION_CONTRACT_VERSION = 5;
+export const EXECUTION_CONTRACT_VERSION = 6;
 
 export const executionKindSchema = z.enum(["RUN", "SUBMIT"]);
 export type ExecutionKind = z.infer<typeof executionKindSchema>;
@@ -119,6 +119,21 @@ export const executionTestResultSchema = z.object({
   memoryUsedKb: z.number().nonnegative().nullable(),
   stdoutExcerpt: z.string(),
   stderrExcerpt: z.string(),
+  /**
+   * Why this test failed, in words a Coder can act on and with no value in
+   * them: "Assertion failed", "Your code threw NullPointerException", or the
+   * reason a script never reported at all.
+   *
+   * Deliberately not the framework's own message. That message quotes the
+   * assertion and the value it expected, which is exactly what invariant 8
+   * keeps out of the browser; this is the shape of the failure without its
+   * contents. The one exception is a CUSTOM script, whose message the
+   * Architect wrote themselves as feedback.
+   *
+   * Null on a passing test, and on a stdin/stdout case, which already shows
+   * the Coder both of its streams.
+   */
+  failureDetail: z.string().nullable(),
 });
 export type ExecutionTestResult = z.infer<typeof executionTestResultSchema>;
 

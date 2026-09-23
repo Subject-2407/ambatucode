@@ -129,6 +129,12 @@ export type SubmissionTestResultCoderView = {
   executionTimeMs: number | null;
   stdoutExcerpt: string;
   stderrExcerpt: string;
+  /**
+   * Why it failed, in words and with no value in them. Null on a passing test
+   * and on rows graded before it was recorded. See the execution contract for
+   * why the framework's own message is not what travels here.
+   */
+  failureDetail: string | null;
 };
 
 /**

@@ -87,6 +87,7 @@ describe("execution contract shapes", () => {
       memoryUsedKb: null,
       stdoutExcerpt: "",
       stderrExcerpt: "",
+      failureDetail: null,
     };
     const result = (testResult: unknown) => ({
       ...(validResult() as Record<string, unknown>),
