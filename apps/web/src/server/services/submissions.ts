@@ -49,6 +49,7 @@ const SUBMISSION_SELECT = {
       memoryUsedKb: true,
       stdoutExcerpt: true,
       stderrExcerpt: true,
+      failureDetail: true,
       isPublic: true,
     },
   },

@@ -10,6 +10,7 @@ import {
   individualDeadlineFrom,
   isAttemptOverdue,
   isLanguage,
+  type AssessmentSessionStatus,
   type AttemptSourceSnapshot,
   type AttemptSourceView,
   type AttemptView,
@@ -104,10 +105,30 @@ const ATTEMPT_ACTIVITY_SELECT = {
   individualDeadlineAt: true,
   pausedAt: true,
   consumedMs: true,
+  grantedOutsideSession: true,
   session: {
     select: { status: true, executionMode: true, durationMinutes: true, endsAt: true },
   },
 } satisfies Prisma.AssessmentAttemptSelect;
+
+/**
+ * The session status this attempt answers to.
+ *
+ * A retake granted after the session ended is not part of that session's
+ * lifecycle — the Architect opened it for one Coder afterwards, deliberately —
+ * so for the purpose of "may this attempt still be worked on" it reads as
+ * running. Its own status and its own clock still close it; only the session's
+ * ENDED is set aside, and only for the attempt that was granted.
+ *
+ * Substituted here rather than inside `attemptActivityProblem`, which is shared
+ * with apps/realtime and should stay a rule about one attempt's state.
+ */
+function effectiveSessionStatus(attempt: {
+  grantedOutsideSession: boolean;
+  session: { status: AssessmentSessionStatus };
+}): AssessmentSessionStatus {
+  return attempt.grantedOutsideSession ? "RUNNING" : attempt.session.status;
+}
 
 function assertActive(
   attempt: Prisma.AssessmentAttemptGetPayload<{ select: typeof ATTEMPT_ACTIVITY_SELECT }>,
@@ -115,7 +136,7 @@ function assertActive(
 ): void {
   const problem = attemptActivityProblem({
     status: attempt.status,
-    sessionStatus: attempt.session.status,
+    sessionStatus: effectiveSessionStatus(attempt),
     clock: clockFor(attempt, attempt.session),
     nowMs,
   });
@@ -204,7 +225,21 @@ export async function startAttempt(
       access: true,
     },
   });
-  if (session.status !== "RUNNING") {
+
+  const latest = await prisma.assessmentAttempt.findFirst({
+    where: { sessionId, userId: actor.id },
+    orderBy: { attemptNumber: "desc" },
+    select: { id: true, status: true, grantedOutsideSession: true },
+  });
+
+  /**
+   * A retake the Architect granted after the session ended, waiting for the
+   * Coder to open it. It is the one way into a session that is not running,
+   * and it is one named Coder's alone — see `resetAttempt`.
+   */
+  const granted = latest?.status === "NOT_STARTED" && latest.grantedOutsideSession;
+
+  if (session.status !== "RUNNING" && !granted) {
     throw new AppError("SESSION_NOT_RUNNING", ACTIVITY_MESSAGES.SESSION_NOT_RUNNING);
   }
 
@@ -214,12 +249,14 @@ export async function startAttempt(
     session.executionMode,
     session.access,
   );
-  if (!eligibility.eligible) {
+  // A granted retake is its own authorization: the Architect named this Coder
+  // when they opened it, which is a stronger statement than a participant list.
+  if (!eligibility.eligible && !granted) {
     throw new AppError("FORBIDDEN", "You are not a participant in this session");
   }
 
   const now = new Date();
-  if (session.endsAt !== null && session.endsAt.getTime() <= now.getTime()) {
+  if (!granted && session.endsAt !== null && session.endsAt.getTime() <= now.getTime()) {
     throw new AppError("ATTEMPT_EXPIRED", ACTIVITY_MESSAGES.ATTEMPT_EXPIRED);
   }
 
@@ -234,7 +271,7 @@ export async function startAttempt(
     });
   }
 
-  const deadlineAtMs = individualDeadlineFrom(
+  const ownDeadlineMs = individualDeadlineFrom(
     {
       executionMode: session.executionMode,
       durationMinutes: session.durationMinutes,
@@ -242,6 +279,23 @@ export async function startAttempt(
     },
     now.getTime(),
   );
+  /**
+   * An Individual clock never outlives the session it runs in.
+   *
+   * A session with a closing time can be joined ten minutes before it, and a
+   * forty-minute attempt started then has ten minutes, not forty. Without the
+   * clamp the Coder would watch a timer counting down past the moment their
+   * work is taken from them — the session's own deadline closes the attempt
+   * either way, so the only question is whether the number on screen was ever
+   * true.
+   */
+  const sessionEndMs = granted ? null : (session.endsAt?.getTime() ?? null);
+  const deadlineAtMs =
+    ownDeadlineMs === null
+      ? null
+      : sessionEndMs === null
+        ? ownDeadlineMs
+        : Math.min(ownDeadlineMs, sessionEndMs);
   const startFields = {
     status: "IN_PROGRESS" as const,
     startedAt: now,
@@ -249,12 +303,6 @@ export async function startAttempt(
     consumedMs: 0,
     pausedAt: null,
   };
-
-  const latest = await prisma.assessmentAttempt.findFirst({
-    where: { sessionId, userId: actor.id },
-    orderBy: { attemptNumber: "desc" },
-    select: { id: true, status: true },
-  });
 
   let attemptId = latest?.id ?? null;
   let startedEvent: MonitorEventPayload | null = null;
@@ -503,6 +551,16 @@ export async function runAttempt(
             memoryLimitMb: true,
           },
         },
+        testScripts: {
+          orderBy: { entrypoint: "asc" },
+          select: {
+            id: true,
+            language: true,
+            framework: true,
+            entrypoint: true,
+            filesJson: true,
+          },
+        },
       },
     }),
   ]);
@@ -537,6 +595,30 @@ export async function runAttempt(
     memoryLimitMb: testCase.memoryLimitMb,
   }));
 
+  /**
+   * The same scripts the formal submission will be graded by.
+   *
+   * A Run used to send none, on the reasoning that running them would preview
+   * hidden grading. What it previewed instead was nothing at all: an
+   * Assessment graded entirely by scripts has no public case, so Run executed
+   * the program, watched it print nothing, and reported "Finished" over code
+   * that had not been written yet.
+   *
+   * Nothing hidden travels back. The result ingest keeps a script test's name
+   * for the Coder only when the Architect opted in with showTestNames, and a
+   * script row's output is blanked whether they did or not.
+   */
+  const testScripts: ExecutionTestScript[] = assessment.testScripts
+    .filter((script) => script.language === input.language)
+    .map((script) => ({
+      id: script.id,
+      framework: script.framework,
+      path: script.entrypoint,
+      content: readScriptContent(script),
+      // A Run produces no grade, so weight carries nothing here either.
+      weight: 1,
+    }));
+
   const jobId = await enqueueExecutionJob(
     {
       jobId: randomUUID(),
@@ -544,11 +626,9 @@ export async function runAttempt(
       submissionId: null,
       language: input.language,
       sourceCode: input.sourceCode,
-      limits: limitsFor(assessment, testCases, 0),
+      limits: limitsFor(assessment, testCases, testScripts.length),
       testCases,
-      // An attempt's Run shows public cases only. Scripts grade the formal
-      // submission, and running them here would preview hidden grading.
-      testScripts: [],
+      testScripts,
     },
     { userId: actor.id },
   );

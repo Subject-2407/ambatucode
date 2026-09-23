@@ -425,7 +425,11 @@ describe("module progression", () => {
       kind: "ASSESSMENT",
       id: exam.id,
     });
-    expect(afterAssessment.next).toMatchObject({ kind: "MATERIAL", id: last.id, sectionTitle: "Two" });
+    expect(afterAssessment.next).toMatchObject({
+      kind: "MATERIAL",
+      id: last.id,
+      sectionTitle: "Two",
+    });
 
     // Nothing after the last item, rather than a wrap back to the start.
     const atEnd = await nextModuleItem(enrolledCoder, module.id, {
@@ -899,6 +903,14 @@ describe("practice test scripts", () => {
   });
 
   it("shows a Coder a script test's name and verdict, never what it printed", async () => {
+    // A real script id, because delivery decides whether a script test may be
+    // named by looking the script up: a Practice Activity's always may, and an
+    // id that belongs to nothing is numbered rather than named.
+    const { activity } = await scriptedActivity("Script Result");
+    const { scripts } = await listPracticeTestScripts(owner, activity.id);
+    const script = scripts.find((candidate) => candidate.path === "test_behaviour.py");
+    if (!script) throw new Error("fixture script missing");
+
     const jobId = `script-result-${suffix}`;
     await getRedis().set(runOwnerKey(jobId), enrolledCoder.id, "EX", 60);
 
@@ -932,15 +944,20 @@ describe("practice test scripts", () => {
           passed: true,
           stdoutExcerpt: "CASE_OUTPUT",
           stderrExcerpt: "",
+          failureDetail: null,
         },
         {
           ...row,
-          testScriptId: "script-1",
+          testScriptId: script.id,
           testCaseId: null,
           name: "test_has_increment",
           passed: false,
           stdoutExcerpt: "assert EXPECTED_VALUE",
           stderrExcerpt: "EXPECTED_VALUE",
+          // The platform's sentence about the failure, not the framework's.
+          // It is the one thing a failing script test can say for itself.
+          failureDetail:
+            "An assertion failed: what your code produced is not what this test expects.",
         },
       ],
     });
@@ -951,6 +968,7 @@ describe("practice test scripts", () => {
 
     expect(message).toContain("CASE_OUTPUT");
     expect(message).toContain("test_has_increment");
+    expect(message).toContain("An assertion failed");
     expect(message).not.toContain("EXPECTED_VALUE");
   });
 });

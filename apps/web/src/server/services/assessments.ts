@@ -300,13 +300,20 @@ async function loadCoderView(
           executionMode: true,
           durationMinutes: true,
           endsAt: true,
+          closesAt: true,
+          requireAllReady: true,
           access: true,
           isOpenAccess: true,
           attempts: {
             where: { userId: actor.id },
             orderBy: { attemptNumber: "desc" },
             take: 1,
-            select: { id: true, attemptNumber: true, status: true },
+            select: {
+              id: true,
+              attemptNumber: true,
+              status: true,
+              grantedOutsideSession: true,
+            },
           },
         },
       },
@@ -327,6 +334,13 @@ async function loadCoderView(
     // A finished session nobody here took part in is noise, not history.
     if (session.status === "ENDED" && attempt === null) continue;
 
+    /**
+     * The retake an Architect granted after this session ended. It is the one
+     * reason a Start button belongs on a session that shows as Ended, and the
+     * server admits exactly this case — see `startAttempt`.
+     */
+    const grantedRetake = attempt?.status === "NOT_STARTED" && attempt.grantedOutsideSession;
+
     sessions.push({
       id: session.id,
       name: session.name,
@@ -334,13 +348,23 @@ async function loadCoderView(
       executionMode: session.executionMode,
       durationMinutes: session.durationMinutes,
       endsAt: session.endsAt?.toISOString() ?? null,
-      attempt,
+      closesAt: session.closesAt?.toISOString() ?? null,
+      requireAllReady: session.requireAllReady,
+      attempt:
+        attempt === null
+          ? null
+          : { id: attempt.id, attemptNumber: attempt.attemptNumber, status: attempt.status },
       canStart:
-        session.status === "RUNNING" &&
-        eligibility.eligible &&
-        (attempt === null || attempt.status === "IN_PROGRESS" || attempt.status === "NOT_STARTED"),
+        grantedRetake ||
+        (session.status === "RUNNING" &&
+          eligibility.eligible &&
+          (attempt === null ||
+            attempt.status === "IN_PROGRESS" ||
+            attempt.status === "NOT_STARTED")),
       isOpenAccess: session.isOpenAccess,
       openToModule: session.access === "MODULE",
+      isGrantedRetake: grantedRetake,
+      isListed: eligibility.listed,
     });
   }
 

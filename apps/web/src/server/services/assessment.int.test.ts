@@ -5,6 +5,7 @@ import {
   EXECUTION_CONTRACT_VERSION,
   MAX_TEST_SCRIPTS_PER_LANGUAGE,
   QUEUE_NAMES,
+  REDIS_CHANNELS,
   deadlineJobId,
   isAppError,
   type AssessmentArchitectView,
@@ -22,9 +23,9 @@ import { POST as autoSubmitRoute } from "@/app/api/internal/attempts/[attemptId]
 import { POST as executionResultRoute } from "@/app/api/internal/execution/result/route";
 import { issueCallbackToken } from "../auth/callback-token";
 import { getServerEnv } from "../env";
-import { closeRedis } from "../redis";
+import { closeRedis, getRedis } from "../redis";
 import { closeDeadlineQueue, getDeadlineQueue } from "../queue/deadlines";
-import { closeQueueConnection, getRunQueue, getSubmitQueue } from "../queue/producer";
+import { closeQueueConnection, getRunQueue, getSubmitQueue, runOwnerKey } from "../queue/producer";
 import {
   createAssessment,
   createTestCase,
@@ -50,9 +51,11 @@ import {
   endSession,
   getMonitorSnapshot,
   getSession,
+  listMonitorableSessions,
   listSessions,
   replaceParticipants,
   startSession,
+  updateSession,
 } from "./sessions";
 import { getSubmission } from "./submissions";
 
@@ -575,7 +578,9 @@ describe("open access", () => {
       executionMode: "INDIVIDUAL",
     });
     expect(
-      await refusalCode(() => updateAssessment(owner, live.id, { executionMode: "LIVE", isOpenAccess: true })),
+      await refusalCode(() =>
+        updateAssessment(owner, live.id, { executionMode: "LIVE", isOpenAccess: true }),
+      ),
     ).toBe("VALIDATION_FAILED");
   });
 
@@ -620,6 +625,195 @@ describe("open access", () => {
     createdAttemptIds.push(unlisted.id);
     expect(unlisted.status).toBe("IN_PROGRESS");
     expect(await refusalCode(() => startAttempt(outsider, session.id))).toBe("FORBIDDEN");
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("a session's closing time", () => {
+  it("refuses one on a live session and one already in the past", async () => {
+    const assessment = await individualAssessment();
+
+    expect(
+      await refusalCode(() =>
+        createSession(owner, assessment.id, {
+          name: "Live with a closing time",
+          executionMode: "LIVE",
+          durationMinutes: 30,
+          closesAt: new Date(Date.now() + MINUTE).toISOString(),
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+
+    expect(
+      await refusalCode(() =>
+        createSession(owner, assessment.id, {
+          name: "Already over",
+          closesAt: new Date(Date.now() - MINUTE).toISOString(),
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("becomes the session's deadline at start, and nobody may join past it", async () => {
+    const assessment = await individualAssessment();
+    const closesAt = new Date(Date.now() + 5 * MINUTE);
+    const session = await createSession(owner, assessment.id, {
+      name: "Closes at five",
+      closesAt: closesAt.toISOString(),
+    });
+    createdSessionIds.push(session.id);
+    expect(session.closesAt).toBe(closesAt.toISOString());
+    // Not a deadline until it starts; there is nothing to be late for yet.
+    expect(session.endsAt).toBeNull();
+
+    const started = await startSession(owner, session.id, { force: true });
+    if (!started.started) throw new Error("session did not start");
+    expect(started.session.endsAt).toBe(closesAt.toISOString());
+
+    // An Individual clock never outlives the session: the assessment allows
+    // 30 minutes and only 5 remain, so the attempt gets the 5.
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+    expect(attempt.deadlineMs).toBe(closesAt.getTime());
+
+    // Move the close into the past and the door shuts on everyone else.
+    await prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: { endsAt: new Date(Date.now() - MINUTE) },
+    });
+    expect(await refusalCode(() => startAttempt(coderB, session.id))).toBe("ATTEMPT_EXPIRED");
+  });
+
+  it("still lets a session be edited once its closing time has passed", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Needs a new time",
+      closesAt: new Date(Date.now() + MINUTE).toISOString(),
+    });
+    createdSessionIds.push(session.id);
+    await prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: { closesAt: new Date(Date.now() - MINUTE) },
+    });
+
+    // A stored time in the past is a fact about the session, not a fault in a
+    // patch that renames it.
+    const renamed = await updateSession(owner, session.id, { name: "Renamed anyway" });
+    expect(renamed.name).toBe("Renamed anyway");
+
+    // And moving it forward is exactly how the Architect fixes it.
+    const moved = new Date(Date.now() + 10 * MINUTE).toISOString();
+    const rescheduled = await updateSession(owner, session.id, { closesAt: moved });
+    expect(rescheduled.closesAt).toBe(moved);
+
+    // Moving it into the past is still refused.
+    expect(
+      await refusalCode(() =>
+        updateSession(owner, session.id, {
+          closesAt: new Date(Date.now() - MINUTE).toISOString(),
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("refuses to start a session whose closing time has since passed", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Stale booking",
+      closesAt: new Date(Date.now() + MINUTE).toISOString(),
+    });
+    createdSessionIds.push(session.id);
+
+    await prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: { closesAt: new Date(Date.now() - MINUTE) },
+    });
+    expect(await refusalCode(() => startSession(owner, session.id, { force: true }))).toBe(
+      "VALIDATION_FAILED",
+    );
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("the readiness gate on a scheduled session", () => {
+  it("holds an individual session's start until everyone listed is ready, and yields to force", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Waits for the room",
+      requireAllReady: true,
+    });
+    createdSessionIds.push(session.id);
+    await replaceParticipants(owner, session.id, {
+      mode: "SELECTED",
+      userIds: [coderA.id, coderB.id],
+    });
+
+    const held = await startSession(owner, session.id, { force: false });
+    expect(held.started).toBe(false);
+    if (held.started) throw new Error("the gate did not hold");
+    expect(held.warning.counts.total).toBe(2);
+
+    const forced = await startSession(owner, session.id, { force: true });
+    expect(forced.started).toBe(true);
+  });
+
+  it("stands aside when there is no participant list to be ready", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Gate with nobody behind it",
+      requireAllReady: true,
+      access: "MODULE",
+    });
+    createdSessionIds.push(session.id);
+
+    // No list means nobody to wait for, so an unforced start still goes.
+    const started = await startSession(owner, session.id, { force: false });
+    expect(started.started).toBe(true);
+  });
+
+  it("leaves a session without the gate starting unready, as it always did", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, { name: "No gate" });
+    createdSessionIds.push(session.id);
+    await replaceParticipants(owner, session.id, { mode: "SELECTED", userIds: [coderA.id] });
+
+    const started = await startSession(owner, session.id, { force: false });
+    expect(started.started).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("the Architect's monitor index", () => {
+  it("lists the owner's running sessions with the open-access one, and nobody else's", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "On the index");
+
+    const rows = await listMonitorableSessions(owner);
+    const row = rows.find((entry) => entry.sessionId === session.id);
+    expect(row).toBeDefined();
+    expect(row?.assessmentTitle).toBe(assessment.title);
+    expect(row?.moduleId).toBe(moduleId);
+    expect(row?.isOpenAccess).toBe(false);
+
+    // An open-access session is running from the moment the switch is on, and
+    // is the whole reason this index exists — it is on no schedule to find.
+    const open = await individualAssessment();
+    await updateAssessment(owner, open.id, { isOpenAccess: true });
+    const withOpen = await listMonitorableSessions(owner);
+    expect(withOpen.some((entry) => entry.assessmentId === open.id && entry.isOpenAccess)).toBe(
+      true,
+    );
+    for (const entry of withOpen) createdSessionIds.push(entry.sessionId);
+
+    // Scoped to owned modules in the query, so another Architect sees none of
+    // this and Root — who owns nothing — is refused outright.
+    expect(
+      (await listMonitorableSessions(otherArchitect)).some((entry) => entry.moduleId === moduleId),
+    ).toBe(false);
+    expect(await refusalCode(() => listMonitorableSessions(root))).toBe("FORBIDDEN");
   });
 });
 
@@ -746,7 +940,7 @@ describe("attempts and submissions", () => {
     expect(await refusalCode(() => getAttemptSource(coderA, attempt.id))).toBe("FORBIDDEN");
   });
 
-  it("runs against public cases only", async () => {
+  it("runs against public cases only, and against the same scripts as a submission", async () => {
     const attempt = await startAttempt(coderA, session.id);
     const { jobId } = await runAttempt(coderA, attempt.id, {
       language: "python",
@@ -757,10 +951,81 @@ describe("attempts and submissions", () => {
     const job = await getRunQueue().getJob(jobId);
     expect(job?.data.testCases.every((testCase) => testCase.isPublic)).toBe(true);
     expect(JSON.stringify(job?.data)).not.toContain("HIDDEN_SECRET");
-    expect(job?.data.testScripts).toEqual([]);
+    // The scripts go to the worker, which is not the browser. Without them a
+    // Run against a script-graded Assessment executes a program with nothing
+    // to check it and reports that it finished.
+    expect(job?.data.testScripts.map((script) => script.path)).toEqual(["test_solution.py"]);
 
     const count = await prisma.submission.count({ where: { attemptId: attempt.id } });
     expect(count).toBe(0);
+  });
+
+  it("numbers a Run's script tests unless the Architect opted into their names", async () => {
+    // Its own Assessment: uploading a script is refused while a session of it
+    // is running, and this describe's fixture has one.
+    const own = await individualAssessment();
+    const named = await uploadTestScript(owner, own.id, {
+      language: "python",
+      framework: "PYTEST",
+      path: "test_named.py",
+      content: "x = 1\n",
+      weight: 1,
+      showTestNames: true,
+    });
+    const withheld = (await architectView(own.id)).testScripts.find(
+      (script) => script.path === "test_solution.py",
+    );
+    if (!withheld) throw new Error("fixture script missing");
+
+    const jobId = `run-script-names-${suffix}`;
+    await getRedis().set(runOwnerKey(jobId), coderA.id, "EX", 60);
+
+    const subscriber = getRedis().duplicate();
+    const received = new Promise<string>((resolve) => {
+      subscriber.on("message", (_channel, message: string) => resolve(message));
+    });
+    await subscriber.subscribe(REDIS_CHANNELS.EXECUTION_STATUS);
+
+    const row = (testScriptId: string, name: string) => ({
+      testCaseId: null,
+      testScriptId,
+      name,
+      status: "GRADED" as const,
+      passed: false,
+      weight: 1,
+      executionTimeMs: 4,
+      memoryUsedKb: null,
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+      failureDetail: "Your code threw AttributeError.",
+    });
+    await ingestExecutionResult({
+      contractVersion: EXECUTION_CONTRACT_VERSION,
+      jobId,
+      submissionId: null,
+      status: "GRADED",
+      compilerOutput: null,
+      systemError: null,
+      executionTimeMs: 8,
+      memoryUsedKb: null,
+      testResults: [
+        row(named.id, "test_named_one"),
+        row(withheld.id, "test_WITHHELD_NAME"),
+        row(withheld.id, "test_WITHHELD_OTHER"),
+      ],
+    });
+
+    const message = await received;
+    await subscriber.quit();
+    await getRedis().del(runOwnerKey(jobId));
+
+    expect(message).toContain("test_named_one");
+    expect(message).not.toContain("WITHHELD");
+    // Numbered rather than dropped: the count is what makes "2 of 3 passed"
+    // honest, and the reason is what the Coder is here for.
+    expect(message).toContain("Hidden test 1");
+    expect(message).toContain("Hidden test 2");
+    expect(message).toContain("Your code threw AttributeError.");
   });
 
   it("still runs when the assessment has no public case", async () => {
@@ -955,6 +1220,7 @@ describe("grading ingestion", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "4",
           stderrExcerpt: "",
+          failureDetail: null,
         },
         {
           testCaseId: hiddenCase.id,
@@ -967,6 +1233,7 @@ describe("grading ingestion", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "HIDDEN_SECRET_OUTPUT_ECHO",
           stderrExcerpt: "",
+          failureDetail: null,
         },
         {
           testCaseId: null,
@@ -979,6 +1246,7 @@ describe("grading ingestion", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "SCRIPT_SECRET",
           stderrExcerpt: "",
+          failureDetail: null,
         },
       ],
     };
@@ -1078,6 +1346,7 @@ describe("test script validation", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "",
           stderrExcerpt: "",
+          failureDetail: null,
         },
       ],
     });
@@ -1136,6 +1405,7 @@ describe("test script validation", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "",
           stderrExcerpt: "",
+          failureDetail: null,
         },
       ],
     });
@@ -1210,6 +1480,7 @@ describe("test names shown to Coders", () => {
       memoryUsedKb: null,
       stdoutExcerpt: "ASSERTION_OUTPUT",
       stderrExcerpt: "ASSERTION_OUTPUT",
+      failureDetail: null,
     });
     await ingestExecutionResult({
       contractVersion: EXECUTION_CONTRACT_VERSION,

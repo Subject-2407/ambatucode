@@ -46,6 +46,7 @@ function fabricateResult(job: ExecutionJob): ExecutionResult {
     memoryUsedKb: 2_048,
     stdoutExcerpt: testCase.expectedOutput,
     stderrExcerpt: "",
+    failureDetail: null,
   }));
 
   // Every script gets a row of its own. A job carrying scripts and no cases is
@@ -65,6 +66,7 @@ function fabricateResult(job: ExecutionJob): ExecutionResult {
     memoryUsedKb: 2_048,
     stdoutExcerpt: "",
     stderrExcerpt: "",
+    failureDetail: null,
   }));
 
   return {

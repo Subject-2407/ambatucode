@@ -5,10 +5,13 @@ import {
   attemptRemainingMs,
   countReadiness,
   everyoneReady,
+  sessionRuleProblem,
   type AuthenticatedUser,
   type CreateSessionRequest,
   type ExecutionMode,
   type ExpireSessionOutcome,
+  type ModuleSessionOption,
+  type MonitorableSession,
   type MonitorEventPayload,
   type MonitorParticipantRow,
   type MonitorSnapshot,
@@ -50,6 +53,8 @@ const SESSION_SELECT = {
   isOpenAccess: true,
   startedAt: true,
   endsAt: true,
+  closesAt: true,
+  requireAllReady: true,
   startedWithMissingParticipants: true,
   createdAt: true,
   updatedAt: true,
@@ -227,6 +232,45 @@ export async function listSessions(
 }
 
 /**
+ * Every session in a Module, for choosing one to filter a list by.
+ *
+ * Module-wide rather than per Assessment, because that is the scope the grading
+ * records are read at. The open-access session is included here — unlike in
+ * `listSessions`, where it is excluded because it is not one an Architect
+ * schedules. Here it is simply where a great many submissions came from, and
+ * leaving it out would make those records unfilterable.
+ */
+export async function listModuleSessions(
+  actor: AuthenticatedUser,
+  moduleId: string,
+): Promise<ModuleSessionOption[]> {
+  await assertCanWrite(actor, moduleId);
+
+  const rows = await prisma.assessmentSession.findMany({
+    where: { assessment: { section: { moduleId } } },
+    orderBy: [{ createdAt: "desc" }],
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      isOpenAccess: true,
+      createdAt: true,
+      assessment: { select: { id: true, title: true } },
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    isOpenAccess: row.isOpenAccess,
+    assessmentId: row.assessment.id,
+    assessmentTitle: row.assessment.title,
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
+/**
  * Timing is copied from the Assessment unless the request overrides it. An
  * untimed Assessment only ever produces untimed sessions: sending timing for
  * one is refused rather than ignored, so a request never looks as if it
@@ -259,6 +303,16 @@ export async function createSession(
     durationMinutes = input.durationMinutes ?? assessment.durationMinutes;
   }
 
+  const closesAt = input.closesAt ?? null;
+  const requireAllReady = input.requireAllReady ?? false;
+  const problem = sessionRuleProblem({
+    executionMode,
+    closesAt,
+    requireAllReady,
+    nowMs: Date.now(),
+  });
+  if (problem) throw new AppError("VALIDATION_FAILED", problem);
+
   const row = await prisma.assessmentSession.create({
     data: {
       assessmentId,
@@ -269,6 +323,8 @@ export async function createSession(
       // MODULE is the Architect saying "anyone enrolled may walk in", and it
       // survives a participant list being written later.
       access: input.access ?? "LISTED",
+      closesAt: closesAt === null ? null : new Date(closesAt),
+      requireAllReady,
     },
     select: SESSION_SELECT,
   });
@@ -302,6 +358,23 @@ export async function updateSession(
     }
   }
 
+  // Checked against the session as the patch will leave it, so switching to
+  // Live while a closing time is already set is refused here rather than only
+  // when the two arrive together.
+  //
+  // The clock is supplied only when this request is the one setting the closing
+  // time. A stored time that has since passed is a fact about the session, not
+  // a fault in a patch that renames it — judging it here would leave the
+  // Architect unable to edit the very session they need to fix.
+  const problem = sessionRuleProblem({
+    executionMode: input.executionMode ?? row.executionMode,
+    closesAt:
+      input.closesAt !== undefined ? input.closesAt : (row.closesAt?.toISOString() ?? null),
+    requireAllReady: input.requireAllReady ?? row.requireAllReady,
+    ...(input.closesAt === undefined ? {} : { nowMs: Date.now() }),
+  });
+  if (problem) throw new AppError("VALIDATION_FAILED", problem);
+
   // Conditional on the status just read, so a start that lands between the
   // read and this write cannot have its timing changed underneath it.
   const updated = await prisma.assessmentSession.updateMany({
@@ -312,6 +385,10 @@ export async function updateSession(
       ...(input.durationMinutes === undefined ? {} : { durationMinutes: input.durationMinutes }),
       ...(input.status === undefined ? {} : { status: input.status }),
       ...(input.access === undefined ? {} : { access: input.access }),
+      ...(input.closesAt === undefined
+        ? {}
+        : { closesAt: input.closesAt === null ? null : new Date(input.closesAt) }),
+      ...(input.requireAllReady === undefined ? {} : { requireAllReady: input.requireAllReady }),
     },
   });
   if (updated.count === 0) {
@@ -478,6 +555,14 @@ export async function startSession(
     throw new AppError("VALIDATION_FAILED", "A live session needs a duration");
   }
 
+  const now = new Date();
+  if (row.closesAt !== null && row.closesAt.getTime() <= now.getTime()) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      "This session's closing time has already passed; move it before starting",
+    );
+  }
+
   const participants = await prisma.assessmentParticipant.findMany({
     where: { sessionId },
     select: { isListed: true, readyState: true, connectionState: true },
@@ -488,7 +573,19 @@ export async function startSession(
     throw new AppError("VALIDATION_FAILED", "A live session needs a participant list");
   }
 
-  const missing = isLive && !everyoneReady(counts);
+  /**
+   * Whether readiness is a gate on this Start.
+   *
+   * Live always is — everybody shares one clock, so a Coder who is not there
+   * when it begins loses that time for good. Every other mode is the
+   * Architect's choice, and `requireAllReady` is where they made it.
+   *
+   * `counts` is over the participant list alone. A session with no list has
+   * nothing to be ready, so the gate stands aside rather than blocking a Start
+   * on a roster that does not exist.
+   */
+  const gated = (isLive || row.requireAllReady) && counts.total > 0;
+  const missing = gated && !everyoneReady(counts);
   if (missing && !input.force) {
     return {
       started: false,
@@ -500,11 +597,14 @@ export async function startSession(
     };
   }
 
-  const now = new Date();
-  const endsAt =
-    isLive && row.durationMinutes !== null
-      ? new Date(now.getTime() + row.durationMinutes * 60_000)
-      : null;
+  // Live computes its own deadline from the duration; every other mode takes
+  // the Architect's closing time, which may be null and then never closes on
+  // its own. Either way `endsAt` is the one field the clocks and guards read.
+  const endsAt = isLive
+    ? row.durationMinutes === null
+      ? null
+      : new Date(now.getTime() + row.durationMinutes * 60_000)
+    : row.closesAt;
 
   const event = await prisma.$transaction(async (tx) => {
     // Conditional on the editable statuses, so two Architects pressing Start
@@ -673,6 +773,72 @@ async function closeSession(
 }
 
 // --- Monitoring ---------------------------------------------------------------
+
+/**
+ * Every session of the Architect's that is worth watching right now.
+ *
+ * Running only, and that includes the implicit open-access one — which is the
+ * whole reason this exists. An open-access Assessment has no session an
+ * Architect ever schedules, so the Coders sitting it were reachable only by
+ * remembering which Assessment it was and opening its panel.
+ *
+ * Scoped to owned Modules in the query. Root owns none and so sees none, which
+ * is the same answer the monitor itself gives them.
+ */
+export async function listMonitorableSessions(
+  actor: AuthenticatedUser,
+): Promise<MonitorableSession[]> {
+  if (actor.role !== "ARCHITECT") {
+    throw new AppError("FORBIDDEN", "Only an Architect monitors a session");
+  }
+
+  const rows = await prisma.assessmentSession.findMany({
+    where: {
+      status: "RUNNING",
+      assessment: { section: { module: { ownerId: actor.id } } },
+    },
+    // Scheduled sessions first: an open-access session is always running, so
+    // sorting by recency alone would bury the exam that started ten minutes
+    // ago under every assessment left open all term.
+    orderBy: [{ isOpenAccess: "asc" }, { startedAt: "desc" }],
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      isOpenAccess: true,
+      executionMode: true,
+      startedAt: true,
+      endsAt: true,
+      assessment: {
+        select: {
+          id: true,
+          title: true,
+          section: { select: { module: { select: { id: true, title: true } } } },
+        },
+      },
+      _count: { select: { participants: true } },
+      // Counted in memory rather than with a filtered `_count`, which Prisma
+      // does not offer alongside an unfiltered one on the same relation.
+      attempts: { where: { status: "IN_PROGRESS" }, select: { id: true } },
+    },
+  });
+
+  return rows.map((row) => ({
+    sessionId: row.id,
+    name: row.name,
+    status: row.status,
+    isOpenAccess: row.isOpenAccess,
+    executionMode: row.executionMode,
+    assessmentId: row.assessment.id,
+    assessmentTitle: row.assessment.title,
+    moduleId: row.assessment.section.module.id,
+    moduleTitle: row.assessment.section.module.title,
+    startedAt: row.startedAt?.toISOString() ?? null,
+    endsAt: row.endsAt?.toISOString() ?? null,
+    activeAttempts: row.attempts.length,
+    participantCount: row._count.participants,
+  }));
+}
 
 export async function getMonitorSnapshot(
   actor: AuthenticatedUser,

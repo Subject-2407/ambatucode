@@ -334,10 +334,39 @@ export async function resetAttempt(
   const { response, event } = await prisma.$transaction(async (tx) => {
     const attempt = await tx.assessmentAttempt.findUniqueOrThrow({
       where: { id: attemptId },
-      select: { id: true, sessionId: true, userId: true, attemptNumber: true, status: true },
+      select: {
+        id: true,
+        sessionId: true,
+        userId: true,
+        attemptNumber: true,
+        status: true,
+        session: { select: { status: true, executionMode: true } },
+      },
     });
     if (attempt.status === "RESET") {
       throw new AppError("CONFLICT", "This attempt has already been reset");
+    }
+
+    /**
+     * Whether the new attempt has to stand on its own.
+     *
+     * Resets are usually made from the grading records, which an Architect
+     * reads after the lab — by which time the session has ended and, under the
+     * old rule, the attempt this creates could never be started by anybody. A
+     * retake granted then belongs to the Coder rather than to the session, so
+     * it ignores the session's status and closing time and runs on its own
+     * clock. See `grantedOutsideSession` on the model.
+     *
+     * Live is the exception. Its clock is one shared countdown that has already
+     * finished, so there is no such thing as sitting it alone afterwards; a
+     * Live retake needs a new session, and the Architect is told so.
+     */
+    const outsideSession = attempt.session.status !== "RUNNING";
+    if (outsideSession && attempt.session.executionMode === "LIVE") {
+      throw new AppError(
+        "CONFLICT",
+        "This live session has ended, and a live attempt cannot be sat alone; schedule a new session for the retake",
+      );
     }
 
     // The next number comes from the highest attempt at this session, not from
@@ -367,6 +396,7 @@ export async function resetAttempt(
         userId: attempt.userId,
         attemptNumber: (latest?.attemptNumber ?? attempt.attemptNumber) + 1,
         status: "NOT_STARTED",
+        grantedOutsideSession: outsideSession,
       },
       select: { id: true, attemptNumber: true },
     });

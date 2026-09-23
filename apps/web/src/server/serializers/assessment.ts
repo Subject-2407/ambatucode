@@ -287,6 +287,8 @@ export type SessionRow = {
   isOpenAccess: boolean;
   startedAt: Date | null;
   endsAt: Date | null;
+  closesAt: Date | null;
+  requireAllReady: boolean;
   startedWithMissingParticipants: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -306,6 +308,8 @@ export function toSessionView(
     status: row.status,
     startedAt: iso(row.startedAt),
     endsAt: iso(row.endsAt),
+    closesAt: iso(row.closesAt),
+    requireAllReady: row.requireAllReady,
     startedWithMissingParticipants: row.startedWithMissingParticipants,
     access: row.access,
     isOpenAccess: row.isOpenAccess,
@@ -476,6 +480,7 @@ export type SubmissionResultRow = {
   memoryUsedKb: number | null;
   stdoutExcerpt: string;
   stderrExcerpt: string;
+  failureDetail: string | null;
   isPublic: boolean;
 };
 
@@ -521,6 +526,7 @@ export function toSubmissionCoderView(row: SubmissionRow): SubmissionCoderView {
         executionTimeMs: result.executionTimeMs,
         stdoutExcerpt: result.stdoutExcerpt,
         stderrExcerpt: result.stderrExcerpt,
+        failureDetail: result.failureDetail,
       })),
   };
 }
@@ -548,6 +554,7 @@ export function toSubmissionArchitectView(row: SubmissionRow): SubmissionArchite
       memoryUsedKb: result.memoryUsedKb,
       stdoutExcerpt: result.stdoutExcerpt,
       stderrExcerpt: result.stderrExcerpt,
+      failureDetail: result.failureDetail,
     })),
   };
 }
