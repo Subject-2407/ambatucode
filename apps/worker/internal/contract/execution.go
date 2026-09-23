@@ -21,7 +21,7 @@ import (
 // payload shape. Without this check a renamed field would surface as a
 // silently mis-graded submission; with it the worker refuses the job and says
 // exactly why.
-const Version = 5
+const Version = 6
 
 type Kind string
 
@@ -162,6 +162,12 @@ type TestResult struct {
 	MemoryUsedKb    *float64 `json:"memoryUsedKb"`
 	StdoutExcerpt   string   `json:"stdoutExcerpt"`
 	StderrExcerpt   string   `json:"stderrExcerpt"`
+	// FailureDetail says why the test failed in words a Coder can act on, and
+	// carries no value from the assertion that failed. The framework's own
+	// message quotes what it expected, which is the one thing that may not
+	// reach a browser; this is the shape of the failure without its contents.
+	// Nil on a passing test and on a stdin/stdout case.
+	FailureDetail *string `json:"failureDetail"`
 }
 
 // Result never carries the source code back — the backend already has it.
