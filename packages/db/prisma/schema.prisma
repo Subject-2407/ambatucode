@@ -393,8 +393,20 @@ model AssessmentSession {
   // start or end, and is the only session a Coder may join without one having
   // been scheduled.
   isOpenAccess                   Boolean                  @default(false)
+  // The Architect's own closing time for a scheduled session, set before it
+  // starts. Live mode computes its deadline from the duration instead, so this
+  // is for the Individual and Untimed sessions that otherwise had no way to
+  // stop: past it nobody may join, nobody may submit, and whoever is still
+  // working is auto-submitted. Copied into `endsAt` at start, which is what
+  // every clock and every guard already reads.
+  closesAt                       DateTime?
+  // When true the session refuses to start until every listed participant is
+  // ready. The Architect may still override with an explicit Start anyway.
+  requireAllReady                Boolean                  @default(false)
   startedAt                      DateTime?
-  // Authoritative deadline for Live mode. Set once at start, never moved.
+  // The authoritative deadline once a session is running. Live mode sets it
+  // from the duration at start; every other mode copies `closesAt`, or leaves
+  // it null when the Architect set none.
   endsAt                         DateTime?
   startedById                    String?
   startedWithMissingParticipants Boolean                  @default(false)
@@ -479,6 +491,13 @@ model AssessmentAttempt {
   // hold false rather than null, so a partial unique index cannot express it —
   // the official-score transaction enforces it instead.
   isOfficial           Boolean       @default(false)
+  // Set when a reset opened this attempt in a session that was no longer
+  // running. The Architect granted a retake to one named Coder after the exam
+  // was over, so this attempt answers to itself: the session's status and its
+  // closing time do not apply to it, and it carries its own Individual clock.
+  // Without it the attempt existed but could never be started, which made
+  // resetting from the grading records produce a record nobody could act on.
+  grantedOutsideSession Boolean      @default(false)
   resetById            String?
   resetAt              DateTime?
   resetReason          String?
@@ -570,6 +589,11 @@ model SubmissionTestResult {
   memoryUsedKb    Int?
   stdoutExcerpt   String            @default("")
   stderrExcerpt   String            @default("")
+  // Why a failing test failed, in words and with no value from the assertion
+  // in them. Null on a passing test and on rows graded before it existed; a
+  // script row keeps it even though its excerpts are blanked, because this is
+  // the platform's sentence rather than the framework's output.
+  failureDetail   String?
   // Rows with isPublic = false are stripped before any Coder-facing response.
   isPublic        Boolean           @default(false)
   createdAt       DateTime          @default(now())
