@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { RunTestResultView } from "@ambatucode/shared";
-import { describeCaseOutcome, describeRun } from "./run-status";
+import { describeCaseOutcome, describeRun, withoutRuntimeNotice } from "./run-status";
 
 function row(passed: boolean, status: RunTestResultView["status"] = "GRADED"): RunTestResultView {
-  return { name: "case", status, passed, executionTimeMs: 1, stdoutExcerpt: "", stderrExcerpt: "" };
+  return {
+    name: "case",
+    status,
+    passed,
+    executionTimeMs: 1,
+    stdoutExcerpt: "",
+    stderrExcerpt: "",
+    failureDetail: null,
+  };
 }
 
 describe("describeRun", () => {
@@ -37,5 +45,34 @@ describe("describeCaseOutcome", () => {
     expect(describeCaseOutcome(row(false))).toBe("Failed");
     expect(describeCaseOutcome({ passed: false, status: null })).toBe("Failed");
     expect(describeCaseOutcome(row(true))).toBe("Passed");
+  });
+});
+
+describe("withoutRuntimeNotice", () => {
+  it("drops the JVM launch notice and keeps the program's own errors", () => {
+    const stderr =
+      "Picked up JAVA_TOOL_OPTIONS: -Djava.awt.headless=true\nException in thread \"main\" boom";
+    expect(withoutRuntimeNotice(stderr)).toBe('Exception in thread "main" boom');
+  });
+
+  it("leaves stderr without the notice untouched", () => {
+    expect(withoutRuntimeNotice("Picked up nothing")).toBe("Picked up nothing");
+  });
+});
+
+describe("a Run with no sample case", () => {
+  const output = { ...row(true), name: "Program output" };
+
+  it("reads as finished, never as a pass count", () => {
+    const summary = describeRun("GRADED", [output]);
+    expect(summary.label).toBe("Finished");
+    expect(summary.tone).toBe("success");
+    expect(describeCaseOutcome(output)).toBe("Finished");
+  });
+
+  it("names the failure when the program crashed or hit a limit", () => {
+    const crashed = { ...output, passed: false, status: "RUNTIME_ERROR" as const };
+    expect(describeRun("RUNTIME_ERROR", [crashed]).label).toBe("Runtime error");
+    expect(describeCaseOutcome(crashed)).toBe("Runtime error");
   });
 });

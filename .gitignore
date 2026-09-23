@@ -12,13 +12,16 @@ blob-report/
 *.tsbuildinfo
 next-env.d.ts
 
-# `go build ./cmd/worker` drops its binary beside the source.
+# `go build ./cmd/worker` drops its binary beside the source; deploy/deploy.sh
+# builds it into bin/ instead.
 apps/worker/worker
 apps/worker/worker.exe
+apps/worker/bin/
 
 .env
 .env.local
 .env.*.local
+deploy/.env.production
 
 .DS_Store
 Thumbs.db

@@ -13,6 +13,7 @@ import { toaster } from "@/components/ui/toaster";
 import { useCreateAssessment, useDeleteAssessment } from "@/hooks/use-assessments";
 import { isApiError } from "@/lib/api-client";
 import { routes } from "@/lib/routes";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * The assessments of the selected section.
@@ -56,6 +57,8 @@ export function AssessmentList({
         timeLimitMs: 5_000,
         memoryLimitMb: 256,
         gradingStrategy: "WEIGHTED_AVERAGE",
+        exitPolicy: "RESUME",
+        isOpenAccess: false,
         antiCheat: {
           blockClipboard: false,
           blockContextMenu: false,
@@ -92,7 +95,10 @@ export function AssessmentList({
 
   return (
     <Stack gap="3">
-      <Flex justify="space-between" align="center">
+      {/* The builder's panes are 16–18rem wide, which is narrower than a
+          heading and a labelled button laid side by side. Without the wrap the
+          button ran out past the pane's edge. */}
+      <Flex justify="space-between" align="center" gap="2" wrap="wrap">
         <Text textStyle="display" fontSize="sm">
           Assessments
         </Text>
@@ -118,10 +124,11 @@ export function AssessmentList({
               key={assessment.id}
               align="center"
               gap="1"
-              borderWidth="1px"
-              borderColor="border.default"
-              bg="bg.surface"
-              borderRadius="md"
+              {...pixelSkin(
+                "var(--amb-colors-border-default)",
+                "var(--amb-colors-bg-surface)",
+                2,
+              )}
               padding="2"
             >
               <Box asChild flex="1" minWidth="0" textAlign="start">

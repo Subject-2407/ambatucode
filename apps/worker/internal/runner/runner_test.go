@@ -333,3 +333,31 @@ func TestOOMMeterIsAttributableUntilItsCounterProvesOtherwise(t *testing.T) {
 		t.Fatal("an unreadable counter reported usable")
 	}
 }
+
+// With no case to compare against, a Run still has to show the Coder what the
+// program printed, and must not claim a pass or a fail it cannot know.
+func TestFreeRunRowCarriesTheProgramsOutput(t *testing.T) {
+	run := caseRun{
+		status:   contract.StatusGraded,
+		outcome:  sandbox.RunOutcome{Stdout: "Nama: Miku\n", Stderr: "warning\n"},
+		duration: 42 * time.Millisecond,
+	}
+	got := freeRunRow(run)
+
+	if got.Name != contract.FreeRunResultName || !got.Passed || got.Weight != 0 {
+		t.Fatalf("free run row = %+v", got)
+	}
+	if got.TestCaseID != nil || got.TestScriptID != nil {
+		t.Fatal("a free run row names no case or script")
+	}
+	if got.StdoutExcerpt != "Nama: Miku\n" || got.StderrExcerpt != "warning\n" {
+		t.Fatalf("excerpts = %q / %q", got.StdoutExcerpt, got.StderrExcerpt)
+	}
+}
+
+func TestFreeRunRowIsNotPassedWhenTheProgramCrashed(t *testing.T) {
+	got := freeRunRow(caseRun{status: contract.StatusRuntimeError})
+	if got.Passed || got.Status != contract.StatusRuntimeError {
+		t.Fatalf("free run row = %+v", got)
+	}
+}

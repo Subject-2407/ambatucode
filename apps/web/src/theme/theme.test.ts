@@ -85,9 +85,54 @@ describe("theme tokens", () => {
     }
   });
 
+  it("steps surfaces away from the page, in the right direction per theme", () => {
+    // Shipped backwards once. In light the page is the lightest thing and a
+    // card is pressed into it; in dark the page is darkest and a card lifts off
+    // it. There is no light source in this treatment to cast a shadow, so the
+    // relationship has to be carried by the fills — and getting it inverted
+    // makes every screen look subtly wrong without failing a contrast check.
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((offset) => {
+        const channel = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+        return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+    };
+
+    const lightCanvas = luminance(resolve("bg.canvas", "_light"));
+    const lightSurface = luminance(resolve("bg.surface", "_light"));
+    const lightSubtle = luminance(resolve("bg.subtle", "_light"));
+    expect(lightCanvas, "light canvas must be lighter than its surfaces").toBeGreaterThan(
+      lightSurface,
+    );
+    expect(lightSurface, "light surfaces must darken as they recede").toBeGreaterThan(lightSubtle);
+
+    const darkCanvas = luminance(resolve("bg.canvas", "_dark"));
+    const darkSurface = luminance(resolve("bg.surface", "_dark"));
+    const darkSubtle = luminance(resolve("bg.subtle", "_dark"));
+    expect(darkCanvas, "dark canvas must be darker than its surfaces").toBeLessThan(darkSurface);
+    expect(darkSurface, "dark surfaces must lighten as they lift").toBeLessThan(darkSubtle);
+  });
+
+  it("keeps every status ink readable on every ground it can land on", () => {
+    // `bg.emphasized` is the darkest light ground and the lightest dark one, so
+    // it is where a status ink runs out of contrast first.
+    const inks = ["fg.success", "fg.warning", "fg.error", "fg.info"];
+    const backgrounds = ["bg.canvas", "bg.surface", "bg.subtle", "bg.emphasized"];
+
+    for (const theme of ["_light", "_dark"] as const) {
+      for (const ink of inks) {
+        for (const background of backgrounds) {
+          const ratio = contrast(resolve(ink, theme), resolve(background, theme));
+          expect(ratio, `${ink} on ${background} (${theme})`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+
   it("keeps every text colour at 4.5:1 on every background, in both themes", () => {
     const text = ["fg.default", "fg.muted", "fg.subtle"];
-    const backgrounds = ["bg.canvas", "bg.surface", "bg.subtle", "bg.muted"];
+    const backgrounds = ["bg.canvas", "bg.surface", "bg.subtle", "bg.muted", "bg.emphasized"];
 
     for (const theme of ["_light", "_dark"] as const) {
       for (const foreground of text) {

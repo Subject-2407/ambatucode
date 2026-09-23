@@ -52,7 +52,7 @@ export function SubmissionPanel({ state }: { state: AttemptSubmissionState }) {
         {detail?.compilerOutput && detail.compilerOutput.trim() !== "" ? (
           <Box
             as="pre"
-            fontFamily="mono"
+            textStyle="data"
             fontSize="xs"
             whiteSpace="pre-wrap"
             color="fg.muted"

@@ -10,6 +10,9 @@ import {
   individualDeadlineFrom,
   isAttemptOverdue,
   isLanguage,
+  type AssessmentSessionStatus,
+  type AttemptSourceSnapshot,
+  type AttemptSourceView,
   type AttemptView,
   type AuthenticatedUser,
   type AutoSubmitOutcome,
@@ -35,13 +38,15 @@ import { publishAssessmentBroadcast, publishExecutionStatus } from "../realtime/
 import {
   clockFor,
   readScriptContent,
+  storedLanguage,
   toAssessmentWorkspaceView,
   toAttemptView,
   toSubmissionSummary,
 } from "../serializers/assessment";
 import { announceEvents, recordEvent } from "./assessment-events";
-import { scopeForOwnAttempt, scopeForSession } from "./assessment-scope";
-import { ASSESSMENT_SELECT } from "./assessments";
+import { scopeForAttempt, scopeForOwnAttempt, scopeForSession } from "./assessment-scope";
+import { ASSESSMENT_SELECT } from "./assessment-select";
+import { assertCanWrite } from "./modules";
 import { claimOfficialIfUnset } from "./official-score";
 import { sessionEligibility } from "./participation";
 import { log } from "../logger";
@@ -100,10 +105,30 @@ const ATTEMPT_ACTIVITY_SELECT = {
   individualDeadlineAt: true,
   pausedAt: true,
   consumedMs: true,
+  grantedOutsideSession: true,
   session: {
     select: { status: true, executionMode: true, durationMinutes: true, endsAt: true },
   },
 } satisfies Prisma.AssessmentAttemptSelect;
+
+/**
+ * The session status this attempt answers to.
+ *
+ * A retake granted after the session ended is not part of that session's
+ * lifecycle — the Architect opened it for one Coder afterwards, deliberately —
+ * so for the purpose of "may this attempt still be worked on" it reads as
+ * running. Its own status and its own clock still close it; only the session's
+ * ENDED is set aside, and only for the attempt that was granted.
+ *
+ * Substituted here rather than inside `attemptActivityProblem`, which is shared
+ * with apps/realtime and should stay a rule about one attempt's state.
+ */
+function effectiveSessionStatus(attempt: {
+  grantedOutsideSession: boolean;
+  session: { status: AssessmentSessionStatus };
+}): AssessmentSessionStatus {
+  return attempt.grantedOutsideSession ? "RUNNING" : attempt.session.status;
+}
 
 function assertActive(
   attempt: Prisma.AssessmentAttemptGetPayload<{ select: typeof ATTEMPT_ACTIVITY_SELECT }>,
@@ -111,7 +136,7 @@ function assertActive(
 ): void {
   const problem = attemptActivityProblem({
     status: attempt.status,
-    sessionStatus: attempt.session.status,
+    sessionStatus: effectiveSessionStatus(attempt),
     clock: clockFor(attempt, attempt.session),
     nowMs,
   });
@@ -192,19 +217,46 @@ export async function startAttempt(
 
   const session = await prisma.assessmentSession.findUniqueOrThrow({
     where: { id: sessionId },
-    select: { status: true, executionMode: true, durationMinutes: true, endsAt: true },
+    select: {
+      status: true,
+      executionMode: true,
+      durationMinutes: true,
+      endsAt: true,
+      access: true,
+    },
   });
-  if (session.status !== "RUNNING") {
+
+  const latest = await prisma.assessmentAttempt.findFirst({
+    where: { sessionId, userId: actor.id },
+    orderBy: { attemptNumber: "desc" },
+    select: { id: true, status: true, grantedOutsideSession: true },
+  });
+
+  /**
+   * A retake the Architect granted after the session ended, waiting for the
+   * Coder to open it. It is the one way into a session that is not running,
+   * and it is one named Coder's alone — see `resetAttempt`.
+   */
+  const granted = latest?.status === "NOT_STARTED" && latest.grantedOutsideSession;
+
+  if (session.status !== "RUNNING" && !granted) {
     throw new AppError("SESSION_NOT_RUNNING", ACTIVITY_MESSAGES.SESSION_NOT_RUNNING);
   }
 
-  const eligibility = await sessionEligibility(sessionId, actor.id, session.executionMode);
-  if (!eligibility.eligible) {
+  const eligibility = await sessionEligibility(
+    sessionId,
+    actor.id,
+    session.executionMode,
+    session.access,
+  );
+  // A granted retake is its own authorization: the Architect named this Coder
+  // when they opened it, which is a stronger statement than a participant list.
+  if (!eligibility.eligible && !granted) {
     throw new AppError("FORBIDDEN", "You are not a participant in this session");
   }
 
   const now = new Date();
-  if (session.endsAt !== null && session.endsAt.getTime() <= now.getTime()) {
+  if (!granted && session.endsAt !== null && session.endsAt.getTime() <= now.getTime()) {
     throw new AppError("ATTEMPT_EXPIRED", ACTIVITY_MESSAGES.ATTEMPT_EXPIRED);
   }
 
@@ -219,7 +271,7 @@ export async function startAttempt(
     });
   }
 
-  const deadlineAtMs = individualDeadlineFrom(
+  const ownDeadlineMs = individualDeadlineFrom(
     {
       executionMode: session.executionMode,
       durationMinutes: session.durationMinutes,
@@ -227,6 +279,23 @@ export async function startAttempt(
     },
     now.getTime(),
   );
+  /**
+   * An Individual clock never outlives the session it runs in.
+   *
+   * A session with a closing time can be joined ten minutes before it, and a
+   * forty-minute attempt started then has ten minutes, not forty. Without the
+   * clamp the Coder would watch a timer counting down past the moment their
+   * work is taken from them — the session's own deadline closes the attempt
+   * either way, so the only question is whether the number on screen was ever
+   * true.
+   */
+  const sessionEndMs = granted ? null : (session.endsAt?.getTime() ?? null);
+  const deadlineAtMs =
+    ownDeadlineMs === null
+      ? null
+      : sessionEndMs === null
+        ? ownDeadlineMs
+        : Math.min(ownDeadlineMs, sessionEndMs);
   const startFields = {
     status: "IN_PROGRESS" as const,
     startedAt: now,
@@ -234,12 +303,6 @@ export async function startAttempt(
     consumedMs: 0,
     pausedAt: null,
   };
-
-  const latest = await prisma.assessmentAttempt.findFirst({
-    where: { sessionId, userId: actor.id },
-    orderBy: { attemptNumber: "desc" },
-    select: { id: true, status: true },
-  });
 
   let attemptId = latest?.id ?? null;
   let startedEvent: MonitorEventPayload | null = null;
@@ -311,6 +374,77 @@ export async function getAttempt(
 ): Promise<AttemptView> {
   await scopeForOwnAttempt(attemptId, actor.id);
   return loadAttemptView(attemptId);
+}
+
+/**
+ * What a Coder has actually written, for the Architect supervising them.
+ *
+ * Authorized against the Module, not against the attempt's owner, and through
+ * `assertCanWrite`, which refuses Root outright. Root is forbidden from reading
+ * participant submissions, and participant source reached by another route is
+ * the same thing wearing a different name.
+ *
+ * Two snapshots at most, newest first: the last Run and the formal Submission.
+ * The draft is deliberately not among them. A draft is autosaved every few
+ * seconds, and surfacing it would turn supervision into a keystroke feed of
+ * somebody's half-written thought — the Architect asked to see the code that
+ * was run or handed in, which is a deliberate act with a moment attached.
+ */
+export async function getAttemptSource(
+  actor: AuthenticatedUser,
+  attemptId: string,
+): Promise<AttemptSourceView> {
+  const scope = await scopeForAttempt(attemptId);
+  await assertCanWrite(actor, scope.moduleId);
+
+  const attempt = await prisma.assessmentAttempt.findUniqueOrThrow({
+    where: { id: attemptId },
+    select: {
+      sessionId: true,
+      attemptNumber: true,
+      status: true,
+      runCount: true,
+      lastRunLanguage: true,
+      lastRunSourceCode: true,
+      lastRunAt: true,
+      user: { select: { id: true, username: true, displayName: true } },
+      submissions: {
+        orderBy: { submittedAt: "desc" },
+        take: 1,
+        select: { language: true, sourceCode: true, submittedAt: true },
+      },
+    },
+  });
+
+  const snapshots: AttemptSourceSnapshot[] = [];
+  const submission = attempt.submissions[0];
+  if (submission) {
+    snapshots.push({
+      origin: "SUBMISSION",
+      language: storedLanguage(submission.language),
+      sourceCode: submission.sourceCode,
+      capturedAt: submission.submittedAt.toISOString(),
+    });
+  }
+  if (attempt.lastRunSourceCode !== null && attempt.lastRunAt !== null) {
+    snapshots.push({
+      origin: "RUN",
+      language: storedLanguage(attempt.lastRunLanguage ?? ""),
+      sourceCode: attempt.lastRunSourceCode,
+      capturedAt: attempt.lastRunAt.toISOString(),
+    });
+  }
+  snapshots.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+
+  return {
+    attemptId,
+    sessionId: attempt.sessionId,
+    attemptNumber: attempt.attemptNumber,
+    status: attempt.status,
+    coder: attempt.user,
+    runCount: attempt.runCount,
+    snapshots,
+  };
 }
 
 // --- Draft and Run ------------------------------------------------------------
@@ -417,16 +551,24 @@ export async function runAttempt(
             memoryLimitMb: true,
           },
         },
+        testScripts: {
+          orderBy: { entrypoint: "asc" },
+          select: {
+            id: true,
+            language: true,
+            framework: true,
+            entrypoint: true,
+            filesJson: true,
+          },
+        },
       },
     }),
   ]);
   assertActive(attempt, Date.now());
   assertLanguageAllowed(assessment.allowedLanguages, input.language);
 
-  if (assessment.testCases.length === 0) {
-    throw new AppError("VALIDATION_FAILED", "This assessment has no sample cases to run against");
-  }
-
+  // With no sample case the worker still runs the program once and returns what
+  // it printed, so a Run is never refused for lack of one.
   const limit = await consumeRateLimit(
     `attempt-run:${actor.id}:${attemptId}`,
     RUN_RATE_LIMIT.max,
@@ -453,6 +595,30 @@ export async function runAttempt(
     memoryLimitMb: testCase.memoryLimitMb,
   }));
 
+  /**
+   * The same scripts the formal submission will be graded by.
+   *
+   * A Run used to send none, on the reasoning that running them would preview
+   * hidden grading. What it previewed instead was nothing at all: an
+   * Assessment graded entirely by scripts has no public case, so Run executed
+   * the program, watched it print nothing, and reported "Finished" over code
+   * that had not been written yet.
+   *
+   * Nothing hidden travels back. The result ingest keeps a script test's name
+   * for the Coder only when the Architect opted in with showTestNames, and a
+   * script row's output is blanked whether they did or not.
+   */
+  const testScripts: ExecutionTestScript[] = assessment.testScripts
+    .filter((script) => script.language === input.language)
+    .map((script) => ({
+      id: script.id,
+      framework: script.framework,
+      path: script.entrypoint,
+      content: readScriptContent(script),
+      // A Run produces no grade, so weight carries nothing here either.
+      weight: 1,
+    }));
+
   const jobId = await enqueueExecutionJob(
     {
       jobId: randomUUID(),
@@ -460,22 +626,32 @@ export async function runAttempt(
       submissionId: null,
       language: input.language,
       sourceCode: input.sourceCode,
-      limits: limitsFor(assessment, testCases, 0),
+      limits: limitsFor(assessment, testCases, testScripts.length),
       testCases,
-      // An attempt's Run shows public cases only. Scripts grade the formal
-      // submission, and running them here would preview hidden grading.
-      testScripts: [],
+      testScripts,
     },
     { userId: actor.id },
   );
 
-  // Counted, not recorded. A Run stays outside grading history — this is a
-  // tally so an achievement can tell a first-try solve from a twentieth, and
-  // a failure to bump it must never cost the Coder the run they already have.
+  // Counted and snapshotted, not recorded as history. The counter is so an
+  // achievement can tell a first-try solve from a twentieth; the source is so
+  // the supervising Architect can see what is actually being executed rather
+  // than waiting for a formal Submission that may never come.
+  //
+  // Both are best-effort: the job is already queued, and a failure to write a
+  // supervision aid must never cost the Coder the run they already have.
   await prisma.assessmentAttempt
-    .update({ where: { id: attemptId }, data: { runCount: { increment: 1 } } })
+    .update({
+      where: { id: attemptId },
+      data: {
+        runCount: { increment: 1 },
+        lastRunLanguage: input.language,
+        lastRunSourceCode: input.sourceCode,
+        lastRunAt: new Date(),
+      },
+    })
     .catch((error: unknown) => {
-      log.warn("attempt.run_count_failed", { attemptId, ...errorFields(error) });
+      log.warn("attempt.run_snapshot_failed", { attemptId, ...errorFields(error) });
     });
 
   return { jobId };

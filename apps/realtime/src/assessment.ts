@@ -63,6 +63,10 @@ const ATTEMPT_SELECT = {
   individualDeadlineAt: true,
   pausedAt: true,
   consumedMs: true,
+  // A retake granted after the session ended answers to itself, not to the
+  // session's status. apps/web sets it; both processes have to agree, or the
+  // HTTP autosave would accept what the socket autosave refused.
+  grantedOutsideSession: true,
   draft: { select: { language: true, sourceCode: true } },
   session: {
     select: {
@@ -557,7 +561,7 @@ export function createAssessmentRuntime(options: {
 
     const problem = attemptActivityProblem({
       status: row.status,
-      sessionStatus: row.session.status,
+      sessionStatus: row.grantedOutsideSession ? "RUNNING" : row.session.status,
       clock: clockOf(row),
       nowMs: Date.now(),
     });

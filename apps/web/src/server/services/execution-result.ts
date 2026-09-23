@@ -61,6 +61,10 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
     return { persisted: validated, delivered: false };
   }
 
+  const named = await scriptsThatMayBeNamed(result.testResults);
+  /** Numbers the rows whose names are withheld, so they stay tellable apart. */
+  let anonymous = 0;
+
   const payload: SubmissionStatusPayload = {
     kind: "RUN",
     jobId: result.jobId,
@@ -71,19 +75,28 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
     // dropped is the shape rather than the rows: no test case id, no weight,
     // and no expected output ever reaches the browser.
     //
-    // A Practice Activity's script tests arrive here too. For those the Coder
-    // gets the test's name and verdict only. The worker already sends them
-    // with no excerpts; blanking them again means a framework that ever
-    // printed an assertion into one still could not show it to a Coder.
+    // Script tests arrive here from a Practice Activity and, since an
+    // Assessment's Run started carrying its scripts, from an attempt too. A
+    // script row keeps its name only where `scriptsThatMayBeNamed` says so;
+    // everywhere else it is numbered, which leaves the count honest without
+    // saying what the test was checking. Its excerpts are blanked either way:
+    // the worker already sends them empty, and blanking them again means a
+    // framework that ever printed an assertion into one still could not show
+    // it to a Coder. `failureDetail` is not an excerpt — it is the platform's
+    // own sentence about the failure, with no value from it.
     testResults: result.testResults.map((testResult) => {
-      const fromScript = testResult.testScriptId !== null;
+      const scriptId = testResult.testScriptId;
+      const fromScript = scriptId !== null;
+      const withheld = fromScript && !named.has(scriptId);
+      if (withheld) anonymous += 1;
       return {
-        name: testResult.name,
+        name: withheld ? `Hidden test ${String(anonymous)}` : testResult.name,
         status: testResult.status,
         passed: testResult.passed,
         executionTimeMs: testResult.executionTimeMs,
         stdoutExcerpt: fromScript ? "" : testResult.stdoutExcerpt,
         stderrExcerpt: fromScript ? "" : testResult.stderrExcerpt,
+        failureDetail: testResult.failureDetail,
       };
     }),
     compilerOutput: result.compilerOutput,
@@ -97,6 +110,40 @@ async function ingestRun(result: ExecutionResult): Promise<IngestOutcome> {
   await recordPracticeRun(result.jobId, userId, result);
 
   return { persisted: validated, delivered: true };
+}
+
+/**
+ * Which of a Run's script rows may be shown under the test's own name.
+ *
+ * A Practice Activity's scripts always may: practice is never graded, and its
+ * tests are what the Coder is there to work against. An Assessment's are the
+ * Architect's decision, taken once with `showTestNames`, and the default is no.
+ *
+ * Looked up by id rather than trusted from the payload, and an id in neither
+ * table is withheld: a script deleted between the enqueue and the result is
+ * not a reason to start naming its tests.
+ */
+async function scriptsThatMayBeNamed(
+  testResults: ExecutionResult["testResults"],
+): Promise<ReadonlySet<string>> {
+  const ids = [
+    ...new Set(
+      testResults
+        .map((testResult) => testResult.testScriptId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  if (ids.length === 0) return new Set();
+
+  const [assessmentScripts, practiceScripts] = await Promise.all([
+    prisma.assessmentTestScript.findMany({
+      where: { id: { in: ids }, showTestNames: true },
+      select: { id: true },
+    }),
+    prisma.practiceTestScript.findMany({ where: { id: { in: ids } }, select: { id: true } }),
+  ]);
+
+  return new Set([...assessmentScripts, ...practiceScripts].map((script) => script.id));
 }
 
 /** Shown to the Architect; a Coder's view never includes a system error. */
@@ -277,6 +324,10 @@ async function ingestSubmission(result: ExecutionResult): Promise<IngestOutcome>
             testResult.memoryUsedKb === null ? null : Math.round(testResult.memoryUsedKb),
           stdoutExcerpt: fromScript ? "" : testResult.stdoutExcerpt,
           stderrExcerpt: fromScript ? "" : testResult.stderrExcerpt,
+          // Kept on a script row where the output is not: this is the
+          // platform's sentence about the failure, built from a fixed
+          // vocabulary, and it carries no value the test was holding.
+          failureDetail: testResult.failureDetail,
           isPublic: isPublicRow(testResult),
         };
       }),

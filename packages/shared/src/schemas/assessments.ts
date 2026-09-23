@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   COMPARISON_MODES,
   EXECUTION_MODES,
+  EXIT_POLICIES,
   FOCUS_LOSS_ACTIONS,
   GRADING_STRATEGIES,
   LANGUAGES,
@@ -11,6 +12,7 @@ import {
   type AttemptStatus,
   type ComparisonMode,
   type ExecutionMode,
+  type ExitPolicy,
   type GradingStrategy,
   type Language,
   type TestCaseKind,
@@ -92,6 +94,24 @@ export function timingProblem(fields: AssessmentTimingFields): string | null {
 }
 
 /**
+ * Open access and a Live execution mode are mutually exclusive.
+ *
+ * Live means one global clock that an Architect starts, and every participant
+ * shares its deadline. There is no coherent way for a Coder to walk into that
+ * whenever they feel like it, so the combination is refused at the boundary
+ * rather than half-honoured later.
+ */
+export function openAccessProblem(fields: {
+  isOpenAccess: boolean;
+  executionMode: ExecutionMode | null;
+}): string | null {
+  if (fields.isOpenAccess && fields.executionMode === "LIVE") {
+    return "A live assessment cannot be open access: its timer is started by an Architect";
+  }
+  return null;
+}
+
+/**
  * The problem statement is prose, not a rich text document. Interactive Blocks
  * belong to Materials alone, and a plain string cannot carry one — the rule is
  * enforced by the shape of the field rather than by a tree walk.
@@ -107,8 +127,22 @@ const assessmentShape = {
   timeLimitMs: z.number().int().min(100).max(60_000),
   memoryLimitMb: z.number().int().min(16).max(2_048),
   gradingStrategy: z.enum(GRADING_STRATEGIES),
+  /**
+   * What the workspace's exit control does. A take-home exercise wants RESUME;
+   * a supervised exam may want leaving to count as handing in, or to offer no
+   * way out at all. See EXIT_POLICIES.
+   */
+  exitPolicy: z.enum(EXIT_POLICIES),
   antiCheat: antiCheatConfigSchema,
   isPublished: z.boolean(),
+  /**
+   * Open access: any Coder enrolled in the Module may start this Assessment
+   * whenever they like, without an Architect scheduling a session for them.
+   *
+   * It is refused for Live mode. A Live session is one shared clock started by
+   * a person, and "whenever you like" has no meaning against it.
+   */
+  isOpenAccess: z.boolean(),
 };
 
 export const createAssessmentRequestSchema = z
@@ -121,12 +155,18 @@ export const createAssessmentRequestSchema = z
     timeLimitMs: assessmentShape.timeLimitMs.default(5_000),
     memoryLimitMb: assessmentShape.memoryLimitMb.default(256),
     gradingStrategy: assessmentShape.gradingStrategy.default("WEIGHTED_AVERAGE"),
+    exitPolicy: assessmentShape.exitPolicy.default("RESUME"),
     antiCheat: assessmentShape.antiCheat.default(antiCheatConfigSchema.parse({})),
     isPublished: assessmentShape.isPublished.default(false),
+    isOpenAccess: assessmentShape.isOpenAccess.default(false),
   })
   .superRefine((value, context) => {
     const problem = timingProblem(value);
     if (problem) context.addIssue({ code: "custom", message: problem, path: ["timeMode"] });
+    const openAccess = openAccessProblem(value);
+    if (openAccess) {
+      context.addIssue({ code: "custom", message: openAccess, path: ["isOpenAccess"] });
+    }
   });
 export type CreateAssessmentRequest = z.infer<typeof createAssessmentRequestSchema>;
 
@@ -191,6 +231,8 @@ export type AssessmentSummary = {
   title: string;
   orderIndex: number;
   isPublished: boolean;
+  /** Startable by any enrolled Coder at any time, with no session scheduled. */
+  isOpenAccess: boolean;
   timeMode: TimeMode;
   durationMinutes: number | null;
   executionMode: ExecutionMode | null;
@@ -219,11 +261,20 @@ export type AssessmentArchitectView = AssessmentSummary & {
   timeLimitMs: number;
   memoryLimitMb: number;
   gradingStrategy: GradingStrategy;
+  exitPolicy: ExitPolicy;
   antiCheat: AntiCheatConfig;
   testCases: TestCaseView[];
   testScripts: TestScriptView[];
   /** Architect-only: what the test scripts are validated against, by language. */
   referenceSolutions: StarterCodeMap;
+  /**
+   * The implicit session an open-access Assessment is sat in, if it is open.
+   *
+   * It is not in the session list — there is nothing about it to schedule,
+   * start or end — but the Architect still needs its monitor, which is where
+   * the Coders taking it right now, and their code, can be seen.
+   */
+  openAccessSessionId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -253,6 +304,8 @@ export type AssessmentWorkspaceView = {
   timeLimitMs: number;
   memoryLimitMb: number;
   antiCheat: AntiCheatConfig;
+  /** The workspace reads this to decide what, if anything, its exit does. */
+  exitPolicy: ExitPolicy;
   sampleCases: SampleCaseView[];
 };
 
@@ -267,6 +320,32 @@ export type CoderSessionEntry = {
   attempt: { id: string; attemptNumber: number; status: AttemptStatus } | null;
   /** True when pressing Start would begin or resume an attempt. */
   canStart: boolean;
+  /**
+   * The implicit session behind an open-access Assessment. A Coder is shown
+   * one Start button for it rather than a scheduled session's card, because
+   * there is no schedule to describe.
+   */
+  isOpenAccess: boolean;
+  /** Open to every enrolled Coder, rather than to a list the Architect wrote. */
+  openToModule: boolean;
+  /**
+   * A retake the Architect opened after this session had ended, waiting for
+   * this Coder alone. The session shows as Ended and is, for everyone else —
+   * so the card has to say why there is a Start button on a finished exam.
+   */
+  isGrantedRetake: boolean;
+  /** When the session stops accepting work, for a session that has a limit. */
+  closesAt: string | null;
+  /** Readiness holds this session's Start until everyone listed has said so. */
+  requireAllReady: boolean;
+  /**
+   * True when the Architect named this Coder on the participant list.
+   *
+   * Readiness is counted over that list alone, so only a listed Coder has a
+   * readiness to declare — one who walked into an open session would be
+   * toggling a switch the board does not read.
+   */
+  isListed: boolean;
 };
 
 export type AssessmentCoderView = AssessmentWorkspaceView & {

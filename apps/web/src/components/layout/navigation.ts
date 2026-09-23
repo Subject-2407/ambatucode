@@ -22,11 +22,14 @@ const NAV_BY_ROLE: Readonly<Record<UserRole, readonly NavItem[]>> = {
     { href: routes.dashboard, label: "Dashboard", icon: "home" },
     { href: routes.modules, label: "Modules", icon: "books" },
     { href: routes.submissions, label: "Submissions", icon: "doc" },
-    { href: routes.achievements, label: "Achievements", icon: "trophy" },
     { href: routes.profile, label: "Profile", icon: "user" },
   ],
   ARCHITECT: [
     { href: routes.manageModules, label: "Modules", icon: "books" },
+    // Supervising a live session was three screens deep — module, assessment,
+    // session — which is two too many for something an Architect opens while a
+    // lab is already running.
+    { href: routes.manageMonitor, label: "Monitor", icon: "bars" },
     { href: routes.manageGrades, label: "Grades", icon: "clipboard" },
   ],
   // Root administers users and nothing else here. No leaderboards, no grading

@@ -55,7 +55,6 @@ const SCREENS: Screen[] = [
     ready: "Submit",
   },
   { name: "submissions", role: "coder", path: () => "/submissions", ready: "Submissions" },
-  { name: "achievements", role: "coder", path: () => "/achievements", ready: "Achievements" },
   { name: "profile", role: "coder", path: () => "/profile", ready: "Profile" },
   { name: "manage modules", role: "architect", path: () => "/manage/modules", ready: "Modules" },
   {
@@ -76,6 +75,7 @@ const SCREENS: Screen[] = [
     path: (f) => `/manage/sessions/${f.sessionId}`,
     ready: "Readiness",
   },
+  { name: "monitor index", role: "architect", path: () => "/manage/monitor", ready: "Monitor" },
   {
     name: "live monitor",
     role: "architect",

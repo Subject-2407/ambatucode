@@ -248,6 +248,7 @@ describe("execution:status", () => {
             executionTimeMs: 12,
             stdoutExcerpt: "hello",
             stderrExcerpt: "",
+            failureDetail: null,
           },
         ],
         compilerOutput: null,

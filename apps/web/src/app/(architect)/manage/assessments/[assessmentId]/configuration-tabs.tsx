@@ -4,6 +4,7 @@ import { Checkbox, Stack, Text } from "@chakra-ui/react";
 import {
   ASSESSMENT_DURATION_MINUTES,
   type ExecutionMode,
+  type ExitPolicy,
   type FocusLossAction,
   type GradingStrategy,
   type TimeMode,
@@ -97,7 +98,14 @@ export function TimingTab({ draft, onChange }: TabProps) {
           <SelectField
             label="Execution mode"
             value={draft.executionMode ?? "INDIVIDUAL"}
-            onChange={(value) => onChange({ executionMode: value as ExecutionMode })}
+            onChange={(value) =>
+              onChange({
+                executionMode: value as ExecutionMode,
+                // Cleared rather than left behind: the two are mutually
+                // exclusive, and the server refuses the pair outright.
+                ...(value === "LIVE" ? { isOpenAccess: false } : {}),
+              })
+            }
             options={[
               { value: "INDIVIDUAL", label: "Individual — each Coder has their own timer" },
               { value: "LIVE", label: "Live — everyone shares one timer" },
@@ -111,6 +119,39 @@ export function TimingTab({ draft, onChange }: TabProps) {
           attempt, grading, anti-cheat — still applies.
         </Text>
       )}
+
+      {/* What leaving the workspace means. It belongs beside timing rather
+          than under anti-cheat: for an untimed exercise this is a convenience,
+          and only in an exam does it become a control. */}
+      <SelectField
+        label="Leaving the workspace"
+        value={draft.exitPolicy}
+        onChange={(value) => onChange({ exitPolicy: value as ExitPolicy })}
+        options={[
+          { value: "RESUME", label: "Keeps the attempt open — the Coder can come back" },
+          { value: "SUBMIT", label: "Submits the attempt, after a warning" },
+          { value: "BLOCKED", label: "No way out — the Coder must submit" },
+        ]}
+        helperText="Coming back resumes the saved draft. An individual timer pauses while the Coder is away; a live one does not."
+      />
+
+      {/* Open access sits with timing because that is what it interacts with:
+          a live assessment cannot be open, and an individual one that is open
+          starts its timer the moment the Coder does. */}
+      <Toggle
+        label="Open access"
+        description="Any Coder enrolled in the module can start this assessment whenever they like, without a session being scheduled for them. They still get one attempt and one formal submission."
+        checked={draft.isOpenAccess}
+        onChange={(checked) => onChange({ isOpenAccess: checked })}
+        disabled={draft.executionMode === "LIVE"}
+      />
+
+      {draft.executionMode === "LIVE" ? (
+        <Text fontSize="sm" color="fg.muted">
+          A live assessment cannot be open access: its timer is one clock that an Architect starts,
+          so there is nothing for a Coder to walk into.
+        </Text>
+      ) : null}
 
       <Text fontSize="xs" color="fg.muted">
         A session can override the duration and execution mode when it is created, so the same
@@ -215,16 +256,20 @@ function Toggle({
   description,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   description: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  /** The reason is always spelled out beside it; a dead control on its own is a puzzle. */
+  disabled?: boolean;
 }) {
   return (
     <Stack gap="1">
       <Checkbox.Root
         checked={checked}
+        disabled={disabled}
         colorPalette="accent"
         onCheckedChange={(details) => onChange(details.checked === true)}
       >

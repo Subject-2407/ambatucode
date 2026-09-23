@@ -85,7 +85,7 @@ export function BuilderScreen({ moduleId }: { moduleId: string }) {
         title={module?.title ?? "Module builder"}
         description="Arrange sections, write materials, and embed practice activities."
         action={
-          <HStack gap="2">
+          <HStack gap="2" wrap="wrap" justify={{ base: "flex-start", sm: "flex-end" }}>
             {module ? (
               <Badge tone={module.isPublished ? "success" : "neutral"}>
                 {module.isPublished ? "Published" : "Draft"}
@@ -104,7 +104,18 @@ export function BuilderScreen({ moduleId }: { moduleId: string }) {
       {isPending || !module ? (
         <Skeleton height="28rem" borderRadius="lg" />
       ) : (
-        <Grid templateColumns={{ base: "1fr", lg: "16rem 18rem 1fr" }} gap="5" alignItems="start">
+        <Grid
+          // `minmax(0, …)` rather than bare widths: a grid track's default
+          // minimum is its content, so the panes refused to give ground and
+          // whatever was inside them — a long section title, a row of buttons —
+          // pushed out past the track instead of shrinking or wrapping.
+          templateColumns={{
+            base: "1fr",
+            lg: "minmax(0, 16rem) minmax(0, 18rem) minmax(0, 1fr)",
+          }}
+          gap="5"
+          alignItems="start"
+        >
           <Pane>
             <SectionList
               moduleId={moduleId}

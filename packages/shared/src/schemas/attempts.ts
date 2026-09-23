@@ -78,6 +78,42 @@ export type AttemptView = {
   assessment: AssessmentWorkspaceView;
 };
 
+/**
+ * Where a piece of a Coder's source came from.
+ *
+ * RUN is the editor's contents at the moment they pressed Run; SUBMISSION is
+ * the immutable source of their formal Submission. The two are kept apart
+ * because they mean different things to the Architect reading them: one is
+ * work in progress, the other is the record.
+ */
+export const ATTEMPT_SOURCE_ORIGINS = ["RUN", "SUBMISSION"] as const;
+export type AttemptSourceOrigin = (typeof ATTEMPT_SOURCE_ORIGINS)[number];
+
+export type AttemptSourceSnapshot = {
+  origin: AttemptSourceOrigin;
+  language: Language;
+  sourceCode: string;
+  capturedAt: string;
+};
+
+/**
+ * What a Coder is writing, as the supervising Architect sees it.
+ *
+ * Architect-only, and never Root: Root is forbidden from reading participant
+ * submissions, and this is participant source by another route. Nothing here
+ * carries a hidden test case, an expected output, or a script.
+ */
+export type AttemptSourceView = {
+  attemptId: string;
+  sessionId: string;
+  attemptNumber: number;
+  status: AttemptStatus;
+  coder: { id: string; username: string; displayName: string };
+  runCount: number;
+  /** Newest first. Empty until the Coder has run or submitted at least once. */
+  snapshots: AttemptSourceSnapshot[];
+};
+
 export type SaveDraftResponse = { savedAt: string };
 
 export type RunAttemptResponse = { jobId: string };
@@ -93,6 +129,12 @@ export type SubmissionTestResultCoderView = {
   executionTimeMs: number | null;
   stdoutExcerpt: string;
   stderrExcerpt: string;
+  /**
+   * Why it failed, in words and with no value in them. Null on a passing test
+   * and on rows graded before it was recorded. See the execution contract for
+   * why the framework's own message is not what travels here.
+   */
+  failureDetail: string | null;
 };
 
 /**

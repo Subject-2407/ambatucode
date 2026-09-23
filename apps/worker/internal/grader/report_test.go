@@ -30,7 +30,10 @@ const junitReport = `<?xml version="1.0" encoding="UTF-8"?>
 const jestSample = `{"numTotalTests":3,"testResults":[
 {"name":"/workspace/checks/add.check.js","status":"failed","assertionResults":[
  {"fullName":"adds","status":"passed","duration":4},
- {"fullName":"group wrong","status":"failed","duration":2},
+ {"fullName":"group wrong","status":"failed","duration":2,
+  "failureMessages":["Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: 5\nReceived: 4"]},
+ {"fullName":"throws","status":"failed","duration":1,
+  "failureMessages":["TypeError: add is not a function\n    at Object.<anonymous>"]},
  {"fullName":"later","status":"pending","duration":null}]},
 {"name":"/workspace/checks/broken.check.js","status":"failed","message":"Cannot find module","assertionResults":[]}
 ]}`
@@ -42,9 +45,23 @@ func TestParsePytestReport(t *testing.T) {
 	}
 	want := []ScriptTest{
 		{Name: "tests.test_main.test_adds", Passed: true, DurationMs: 4},
-		{Name: "tests.test_main.test_wrong", Passed: false, DurationMs: 1},
+		{Name: "tests.test_main.test_wrong", Passed: false, DurationMs: 1, Detail: detailAssertion},
 	}
 	assertTests(t, tests, want)
+}
+
+// The detail says what kind of failure it was and never what pytest printed:
+// "assert 4 == 5" names the value the test was holding.
+func TestPytestDetailDoesNotQuoteTheFramework(t *testing.T) {
+	tests, err := ParseReport(ReportJUnitXML, []byte(pytestReport))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, forbidden := range []string{"4 == 5", "add(2, 2)"} {
+		if strings.Contains(tests[1].Detail, forbidden) {
+			t.Errorf("detail %q carries %q", tests[1].Detail, forbidden)
+		}
+	}
 }
 
 // A Coder's syntax error is a failed test, not a platform failure.
@@ -53,7 +70,26 @@ func TestParsePytestCollectionErrorAsAFailedTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	assertTests(t, tests, []ScriptTest{{Name: "tests.test_main", Passed: false}})
+	assertTests(t, tests, []ScriptTest{
+		{Name: "tests.test_main", Passed: false, Detail: "Your code threw SyntaxError."},
+	})
+}
+
+// An exception thrown by the Coder's own code is named, because naming it is
+// the difference between "wrong answer" and "your code fell over".
+func TestJUnitDetailNamesAThrownException(t *testing.T) {
+	const report = `<testsuite name="JUnit Jupiter" tests="1" failures="1" time="0.01">
+<testcase name="reads()" classname="MahasiswaTest" time="0.002">
+<failure message="Cannot invoke &quot;String.length()&quot;" type="java.lang.NullPointerException">stack</failure>
+</testcase>
+</testsuite>`
+	tests, err := ParseReport(ReportJUnitXML, []byte(report))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	assertTests(t, tests, []ScriptTest{
+		{Name: "MahasiswaTest.reads()", Passed: false, DurationMs: 2, Detail: "Your code threw NullPointerException."},
+	})
 }
 
 func TestParseJUnitConsoleReport(t *testing.T) {
@@ -63,7 +99,7 @@ func TestParseJUnitConsoleReport(t *testing.T) {
 	}
 	want := []ScriptTest{
 		{Name: "SolutionTest.adds()", Passed: true, DurationMs: 21},
-		{Name: "SolutionTest.wrong()", Passed: false, DurationMs: 4},
+		{Name: "SolutionTest.wrong()", Passed: false, DurationMs: 4, Detail: detailAssertion},
 	}
 	assertTests(t, tests, want)
 }
@@ -97,7 +133,10 @@ func TestParseGoogleTestReport(t *testing.T) {
 	}
 	assertTests(t, tests, []ScriptTest{
 		{Name: "Rectangle.Area", Passed: true},
-		{Name: "Rectangle.Wrong", Passed: false},
+		// GoogleTest writes no type, and its body is the comparison itself.
+		// An unrecognised failure reads as an assertion rather than as
+		// nothing, and the body stays where it is.
+		{Name: "Rectangle.Wrong", Passed: false, Detail: detailAssertion},
 	})
 }
 
@@ -108,21 +147,37 @@ func TestParseJestReport(t *testing.T) {
 	}
 	want := []ScriptTest{
 		{Name: "adds", Passed: true, DurationMs: 4},
-		{Name: "group wrong", Passed: false, DurationMs: 2},
-		{Name: "broken.check.js (failed to run)", Passed: false},
+		// Jest reports a failed expectation and a thrown error through the
+		// same field, and the matcher call at the head of the message is what
+		// tells them apart. Neither detail carries the numbers Jest printed.
+		{Name: "group wrong", Passed: false, DurationMs: 2, Detail: detailAssertion},
+		{Name: "throws", Passed: false, DurationMs: 1, Detail: "Your code threw TypeError."},
+		{Name: "broken.check.js (failed to run)", Passed: false, Detail: detailSuiteFailedToLoad},
 	}
 	assertTests(t, tests, want)
+
+	for _, test := range tests {
+		for _, forbidden := range []string{"Expected: 5", "Received: 4"} {
+			if strings.Contains(test.Detail, forbidden) {
+				t.Errorf("detail %q carries %q", test.Detail, forbidden)
+			}
+		}
+	}
 }
 
+// A CUSTOM script is the Architect's own program, so its message is the one
+// failure text that reaches a Coder in the words it was written in. A message
+// on a passing test is dropped: there is nothing to explain.
 func TestParseCustomReport(t *testing.T) {
 	tests, err := ParseReport(ReportCustomJSON,
-		[]byte(`{"tests":[{"name":"adds","passed":true},{"name":"rejects negatives","passed":false}]}`))
+		[]byte(`{"tests":[{"name":"adds","passed":true,"message":"ignored"},
+		{"name":"rejects negatives","passed":false,"message":"Guard the input before you use it."}]}`))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	assertTests(t, tests, []ScriptTest{
 		{Name: "adds", Passed: true},
-		{Name: "rejects negatives", Passed: false},
+		{Name: "rejects negatives", Passed: false, Detail: "Guard the input before you use it."},
 	})
 }
 

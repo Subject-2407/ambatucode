@@ -1,0 +1,38 @@
+node_modules
+**/node_modules
+.pnpm-store
+
+.git
+
+.next
+**/.next
+dist
+build
+out
+coverage
+test-results
+playwright-report
+blob-report
+.playwright
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+deploy/.env.production
+
+# Generated at Docker build time from the installed monaco-editor package —
+# never carry over whatever happens to exist on the host that ran the build.
+apps/web/public/monaco/
+
+apps/worker/worker
+apps/worker/worker.exe
+apps/worker/bin
+
+# Reference documents this project's own CLAUDE.md says never to commit or
+# ship; no reason for them to be in a build context either.
+CLAUDE.md
+SRS.md
+HANDOVER.md
+docs/
+docs_v2.zip

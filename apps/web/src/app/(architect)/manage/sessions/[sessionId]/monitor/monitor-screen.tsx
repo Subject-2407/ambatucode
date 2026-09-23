@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useMonitorSocket } from "@/hooks/use-monitor-socket";
 import { useMonitorSnapshot } from "@/hooks/use-sessions";
 import { routes } from "@/lib/routes";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * Live monitoring of one Assessment Session.
@@ -125,10 +126,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   return (
     <Stack
       gap="3"
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="lg"
-      bg="bg.surface"
+      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)")}
       padding="4"
       minWidth="0"
     >

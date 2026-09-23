@@ -181,6 +181,8 @@ export const runTestResultViewSchema = z.object({
   executionTimeMs: z.number().nonnegative(),
   stdoutExcerpt: z.string(),
   stderrExcerpt: z.string(),
+  /** Why it failed, without the value it expected. See the execution contract. */
+  failureDetail: z.string().nullable(),
 });
 export type RunTestResultView = z.infer<typeof runTestResultViewSchema>;
 

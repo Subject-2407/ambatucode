@@ -22,6 +22,7 @@ import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
 import { GripVertical, Pencil, Plus, Trash } from "lucide-react";
 import type { ModuleSectionView } from "@ambatucode/shared";
 import { Button, IconButton } from "@/components/ui/button";
+import { pixelSkin } from "@/theme/pixel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PromptDialog } from "@/components/ui/prompt-dialog";
 import { toaster } from "@/components/ui/toaster";
@@ -128,7 +129,9 @@ export function SectionList({
 
   return (
     <Stack gap="3" height="full">
-      <Flex justify="space-between" align="center">
+      {/* See assessment-list.tsx: the builder's panes are narrower than a
+          heading and a labelled button laid side by side. */}
+      <Flex justify="space-between" align="center" gap="2" wrap="wrap">
         <Text textStyle="display" fontSize="sm">
           Sections
         </Text>
@@ -231,10 +234,11 @@ function SortableSection({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       align="center"
       gap="1"
-      borderWidth="1px"
-      borderColor={selected ? "accent.solid" : "border.default"}
-      bg={selected ? "bg.subtle" : "bg.surface"}
-      borderRadius="md"
+      {...pixelSkin(
+        selected ? "var(--amb-colors-accent-solid)" : "var(--amb-colors-border-default)",
+        selected ? "var(--amb-colors-bg-subtle)" : "var(--amb-colors-bg-surface)",
+        2,
+      )}
       padding="2"
       opacity={isDragging ? 0.6 : 1}
     >
@@ -261,7 +265,8 @@ function SortableSection({
         </button>
       </Box>
 
-      <HStack gap="0">
+      {/* The title in the middle takes the slack; these two keep their size. */}
+      <HStack gap="0" flexShrink="0">
         <IconButton aria-label={`Rename ${section.title}`} size="xs" onClick={onRename}>
           <Pencil size={14} aria-hidden />
         </IconButton>

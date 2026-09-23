@@ -218,6 +218,11 @@ func (r *Runner) runCases(
 		}
 		result.Status = run.status
 		result.ExecutionTimeMs = float64(run.duration.Milliseconds())
+		// A Run has no case to carry the output, so it gets a row of its own. A
+		// submission never does: an extra row there would be graded.
+		if job.Kind == contract.KindRun {
+			result.TestResults = append(result.TestResults, freeRunRow(run))
+		}
 		return result, nil
 	}
 
@@ -276,6 +281,20 @@ func (r *Runner) runCases(
 	result.Status = worst
 	result.ExecutionTimeMs = float64(totalDuration.Milliseconds())
 	return result, nil
+}
+
+// freeRunRow reports what a program printed when there was no case to compare
+// it with. Passed means only that it ran to completion, and the weight is zero
+// because nothing here is ever scored.
+func freeRunRow(run caseRun) contract.TestResult {
+	return contract.TestResult{
+		Name:            contract.FreeRunResultName,
+		Status:          run.status,
+		Passed:          run.status == contract.StatusGraded,
+		ExecutionTimeMs: float64(run.duration.Milliseconds()),
+		StdoutExcerpt:   excerpt(run.outcome.Stdout, run.outcome.StdoutTruncated),
+		StderrExcerpt:   excerpt(run.outcome.Stderr, run.outcome.StderrTruncated),
+	}
 }
 
 // runCase runs the program once under one case's limits and classifies it.

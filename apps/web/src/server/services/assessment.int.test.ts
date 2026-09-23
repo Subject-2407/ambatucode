@@ -5,6 +5,7 @@ import {
   EXECUTION_CONTRACT_VERSION,
   MAX_TEST_SCRIPTS_PER_LANGUAGE,
   QUEUE_NAMES,
+  REDIS_CHANNELS,
   deadlineJobId,
   isAppError,
   type AssessmentArchitectView,
@@ -22,9 +23,9 @@ import { POST as autoSubmitRoute } from "@/app/api/internal/attempts/[attemptId]
 import { POST as executionResultRoute } from "@/app/api/internal/execution/result/route";
 import { issueCallbackToken } from "../auth/callback-token";
 import { getServerEnv } from "../env";
-import { closeRedis } from "../redis";
+import { closeRedis, getRedis } from "../redis";
 import { closeDeadlineQueue, getDeadlineQueue } from "../queue/deadlines";
-import { closeQueueConnection, getRunQueue, getSubmitQueue } from "../queue/producer";
+import { closeQueueConnection, getRunQueue, getSubmitQueue, runOwnerKey } from "../queue/producer";
 import {
   createAssessment,
   createTestCase,
@@ -35,14 +36,26 @@ import {
   uploadTestScript,
   validateTestScripts,
 } from "./assessments";
-import { autoSubmitAttempt, runAttempt, saveDraft, startAttempt, submitAttempt } from "./attempts";
+import {
+  autoSubmitAttempt,
+  getAttemptSource,
+  runAttempt,
+  saveDraft,
+  startAttempt,
+  submitAttempt,
+} from "./attempts";
 import { EXPIRED_RESULT_MESSAGE, ingestExecutionResult } from "./execution-result";
 import {
   createSession,
+  deleteSession,
   endSession,
   getMonitorSnapshot,
+  getSession,
+  listMonitorableSessions,
+  listSessions,
   replaceParticipants,
   startSession,
+  updateSession,
 } from "./sessions";
 import { getSubmission } from "./submissions";
 
@@ -158,6 +171,8 @@ function createDefaults() {
       hideLeaderboard: false,
     },
     isPublished: false,
+    isOpenAccess: false,
+    exitPolicy: "RESUME" as const,
   };
 }
 
@@ -510,6 +525,352 @@ describe("sessions", () => {
 
 // -----------------------------------------------------------------------------
 
+describe("open access", () => {
+  it("lets any enrolled Coder start without a session being scheduled", async () => {
+    const assessment = await createAssessment(owner, sectionId, {
+      ...createDefaults(),
+      title: `Open ${suffix}`,
+      isPublished: true,
+      isOpenAccess: true,
+    });
+    await createTestCase(owner, assessment.id, {
+      ...caseDefaults(),
+      name: "Sample",
+      kind: "PUBLIC",
+      input: "2",
+      expectedOutput: "4",
+    });
+
+    const view = await getAssessment(coderA, assessment.id);
+    if (view.view !== "CODER") throw new Error("expected the Coder view");
+    const open = view.assessment.sessions.find((entry) => entry.isOpenAccess);
+    expect(open?.canStart).toBe(true);
+    if (!open) throw new Error("no open-access session");
+    createdSessionIds.push(open.id);
+
+    // Nobody listed anybody, and both Coders get in.
+    const first = await startAttempt(coderA, open.id);
+    const second = await startAttempt(coderB, open.id);
+    createdAttemptIds.push(first.id, second.id);
+    expect(first.status).toBe("IN_PROGRESS");
+    expect(second.status).toBe("IN_PROGRESS");
+
+    // Enrollment is still the gate; open access is not public access.
+    expect(await refusalCode(() => startAttempt(outsider, open.id))).toBe("FORBIDDEN");
+
+    // One implicit session, however many Coders arrive.
+    expect(
+      await prisma.assessmentSession.count({
+        where: { assessmentId: assessment.id, isOpenAccess: true },
+      }),
+    ).toBe(1);
+
+    // It is not in the Architect's session list: there is nothing to schedule.
+    expect(await listSessions(owner, assessment.id)).toHaveLength(0);
+  });
+
+  it("refuses open access on a live assessment", async () => {
+    const live = await createAssessment(owner, sectionId, {
+      ...createDefaults(),
+      title: `Open live ${suffix}`,
+      timeMode: "TIMED",
+      durationMinutes: 30,
+      executionMode: "INDIVIDUAL",
+    });
+    expect(
+      await refusalCode(() =>
+        updateAssessment(owner, live.id, { executionMode: "LIVE", isOpenAccess: true }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("closes the open session when open access is switched off", async () => {
+    const assessment = await createAssessment(owner, sectionId, {
+      ...createDefaults(),
+      title: `Open then closed ${suffix}`,
+      isPublished: true,
+      isOpenAccess: true,
+    });
+    const before = await prisma.assessmentSession.findFirstOrThrow({
+      where: { assessmentId: assessment.id, isOpenAccess: true },
+      select: { id: true },
+    });
+    createdSessionIds.push(before.id);
+
+    await updateAssessment(owner, assessment.id, { isOpenAccess: false });
+    expect(
+      (await prisma.assessmentSession.findUniqueOrThrow({ where: { id: before.id } })).status,
+    ).toBe("ENDED");
+  });
+
+  it("opens a scheduled session to the whole module even once participants are listed", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Whole class",
+      access: "MODULE",
+    });
+    createdSessionIds.push(session.id);
+    expect(session.access).toBe("MODULE");
+
+    // A list would normally make the session that list and nobody else.
+    await replaceParticipants(owner, session.id, { mode: "SELECTED", userIds: [coderA.id] });
+    const listed = await getSession(owner, session.id);
+    expect(listed.listedParticipantCount).toBe(1);
+    expect(listed.isRestricted).toBe(false);
+
+    const started = await startSession(owner, session.id, { force: true });
+    if (!started.started) throw new Error("session did not start");
+
+    const unlisted = await startAttempt(coderC, session.id);
+    createdAttemptIds.push(unlisted.id);
+    expect(unlisted.status).toBe("IN_PROGRESS");
+    expect(await refusalCode(() => startAttempt(outsider, session.id))).toBe("FORBIDDEN");
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("a session's closing time", () => {
+  it("refuses one on a live session and one already in the past", async () => {
+    const assessment = await individualAssessment();
+
+    expect(
+      await refusalCode(() =>
+        createSession(owner, assessment.id, {
+          name: "Live with a closing time",
+          executionMode: "LIVE",
+          durationMinutes: 30,
+          closesAt: new Date(Date.now() + MINUTE).toISOString(),
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+
+    expect(
+      await refusalCode(() =>
+        createSession(owner, assessment.id, {
+          name: "Already over",
+          closesAt: new Date(Date.now() - MINUTE).toISOString(),
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("becomes the session's deadline at start, and nobody may join past it", async () => {
+    const assessment = await individualAssessment();
+    const closesAt = new Date(Date.now() + 5 * MINUTE);
+    const session = await createSession(owner, assessment.id, {
+      name: "Closes at five",
+      closesAt: closesAt.toISOString(),
+    });
+    createdSessionIds.push(session.id);
+    expect(session.closesAt).toBe(closesAt.toISOString());
+    // Not a deadline until it starts; there is nothing to be late for yet.
+    expect(session.endsAt).toBeNull();
+
+    const started = await startSession(owner, session.id, { force: true });
+    if (!started.started) throw new Error("session did not start");
+    expect(started.session.endsAt).toBe(closesAt.toISOString());
+
+    // An Individual clock never outlives the session: the assessment allows
+    // 30 minutes and only 5 remain, so the attempt gets the 5.
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+    expect(attempt.deadlineMs).toBe(closesAt.getTime());
+
+    // Move the close into the past and the door shuts on everyone else.
+    await prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: { endsAt: new Date(Date.now() - MINUTE) },
+    });
+    expect(await refusalCode(() => startAttempt(coderB, session.id))).toBe("ATTEMPT_EXPIRED");
+  });
+
+  it("still lets a session be edited once its closing time has passed", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Needs a new time",
+      closesAt: new Date(Date.now() + MINUTE).toISOString(),
+    });
+    createdSessionIds.push(session.id);
+    await prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: { closesAt: new Date(Date.now() - MINUTE) },
+    });
+
+    // A stored time in the past is a fact about the session, not a fault in a
+    // patch that renames it.
+    const renamed = await updateSession(owner, session.id, { name: "Renamed anyway" });
+    expect(renamed.name).toBe("Renamed anyway");
+
+    // And moving it forward is exactly how the Architect fixes it.
+    const moved = new Date(Date.now() + 10 * MINUTE).toISOString();
+    const rescheduled = await updateSession(owner, session.id, { closesAt: moved });
+    expect(rescheduled.closesAt).toBe(moved);
+
+    // Moving it into the past is still refused.
+    expect(
+      await refusalCode(() =>
+        updateSession(owner, session.id, {
+          closesAt: new Date(Date.now() - MINUTE).toISOString(),
+        }),
+      ),
+    ).toBe("VALIDATION_FAILED");
+  });
+
+  it("refuses to start a session whose closing time has since passed", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Stale booking",
+      closesAt: new Date(Date.now() + MINUTE).toISOString(),
+    });
+    createdSessionIds.push(session.id);
+
+    await prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: { closesAt: new Date(Date.now() - MINUTE) },
+    });
+    expect(await refusalCode(() => startSession(owner, session.id, { force: true }))).toBe(
+      "VALIDATION_FAILED",
+    );
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("the readiness gate on a scheduled session", () => {
+  it("holds an individual session's start until everyone listed is ready, and yields to force", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Waits for the room",
+      requireAllReady: true,
+    });
+    createdSessionIds.push(session.id);
+    await replaceParticipants(owner, session.id, {
+      mode: "SELECTED",
+      userIds: [coderA.id, coderB.id],
+    });
+
+    const held = await startSession(owner, session.id, { force: false });
+    expect(held.started).toBe(false);
+    if (held.started) throw new Error("the gate did not hold");
+    expect(held.warning.counts.total).toBe(2);
+
+    const forced = await startSession(owner, session.id, { force: true });
+    expect(forced.started).toBe(true);
+  });
+
+  it("stands aside when there is no participant list to be ready", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Gate with nobody behind it",
+      requireAllReady: true,
+      access: "MODULE",
+    });
+    createdSessionIds.push(session.id);
+
+    // No list means nobody to wait for, so an unforced start still goes.
+    const started = await startSession(owner, session.id, { force: false });
+    expect(started.started).toBe(true);
+  });
+
+  it("leaves a session without the gate starting unready, as it always did", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, { name: "No gate" });
+    createdSessionIds.push(session.id);
+    await replaceParticipants(owner, session.id, { mode: "SELECTED", userIds: [coderA.id] });
+
+    const started = await startSession(owner, session.id, { force: false });
+    expect(started.started).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("the Architect's monitor index", () => {
+  it("lists the owner's running sessions with the open-access one, and nobody else's", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "On the index");
+
+    const rows = await listMonitorableSessions(owner);
+    const row = rows.find((entry) => entry.sessionId === session.id);
+    expect(row).toBeDefined();
+    expect(row?.assessmentTitle).toBe(assessment.title);
+    expect(row?.moduleId).toBe(moduleId);
+    expect(row?.isOpenAccess).toBe(false);
+
+    // An open-access session is running from the moment the switch is on, and
+    // is the whole reason this index exists — it is on no schedule to find.
+    const open = await individualAssessment();
+    await updateAssessment(owner, open.id, { isOpenAccess: true });
+    const withOpen = await listMonitorableSessions(owner);
+    expect(withOpen.some((entry) => entry.assessmentId === open.id && entry.isOpenAccess)).toBe(
+      true,
+    );
+    for (const entry of withOpen) createdSessionIds.push(entry.sessionId);
+
+    // Scoped to owned modules in the query, so another Architect sees none of
+    // this and Root — who owns nothing — is refused outright.
+    expect(
+      (await listMonitorableSessions(otherArchitect)).some((entry) => entry.moduleId === moduleId),
+    ).toBe(false);
+    expect(await refusalCode(() => listMonitorableSessions(root))).toBe("FORBIDDEN");
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("deleting a session", () => {
+  it("deletes a session that has not started, for its owner only", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, { name: "Never started" });
+    createdSessionIds.push(session.id);
+
+    expect(await refusalCode(() => deleteSession(otherArchitect, session.id))).toBe("FORBIDDEN");
+    expect(await refusalCode(() => deleteSession(coderA, session.id))).toBe("FORBIDDEN");
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(1);
+
+    await deleteSession(owner, session.id);
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(0);
+  });
+
+  it("refuses a running session, and deletes it with its history once ended and graded", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Delete after end");
+
+    expect(await refusalCode(() => deleteSession(owner, session.id))).toBe("CONFLICT");
+
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+    await saveDraft(coderA, attempt.id, { language: "python", sourceCode: "print('kept?')" });
+    await endSession(owner, session.id);
+
+    // Ending queued the grading; the worker has not answered yet.
+    const submissions = await prisma.submission.findMany({
+      where: { sessionId: session.id },
+      select: { id: true },
+    });
+    expect(submissions).toHaveLength(1);
+    expect(await refusalCode(() => deleteSession(owner, session.id))).toBe("CONFLICT");
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(1);
+
+    await prisma.submission.updateMany({
+      where: { sessionId: session.id },
+      data: { status: "GRADED", score: 0 },
+    });
+    await deleteSession(owner, session.id);
+
+    expect(await prisma.assessmentSession.count({ where: { id: session.id } })).toBe(0);
+    expect(await prisma.assessmentAttempt.count({ where: { sessionId: session.id } })).toBe(0);
+    expect(await prisma.submission.count({ where: { sessionId: session.id } })).toBe(0);
+    expect(await prisma.assessmentEvent.count({ where: { sessionId: session.id } })).toBe(0);
+
+    // The afterAll sweep finds jobs through their Submission, which is gone now.
+    await Promise.all(submissions.map((submission) => getSubmitQueue().remove(submission.id)));
+  });
+});
+
+// -----------------------------------------------------------------------------
+
 describe("attempts and submissions", () => {
   let assessment: AssessmentArchitectView;
   let session: SessionView;
@@ -538,7 +899,48 @@ describe("attempts and submissions", () => {
     expect(job).toBeDefined();
   });
 
-  it("runs against public cases only", async () => {
+  it("shows the Architect the code a Coder ran, and keeps Root out of it", async () => {
+    // Its own session: this test submits, and `startAttempt` is idempotent, so
+    // closing a Coder's attempt in the shared session would change what the
+    // tests after it are handed.
+    const own = await startedSession(assessment.id, "Source visibility");
+    const attempt = await startAttempt(coderB, own.id);
+    createdAttemptIds.push(attempt.id);
+
+    // Nothing to show before the Coder has done anything deliberate. A draft
+    // is autosaved and is expressly not surfaced here.
+    await saveDraft(coderB, attempt.id, { language: "python", sourceCode: "# half a thought" });
+    const empty = await getAttemptSource(owner, attempt.id);
+    expect(empty.snapshots).toHaveLength(0);
+    expect(empty.coder.id).toBe(coderB.id);
+
+    const { jobId } = await runAttempt(coderB, attempt.id, {
+      language: "python",
+      sourceCode: "print(int(input()) * 2)",
+    });
+    createdJobIds.push(jobId);
+
+    const afterRun = await getAttemptSource(owner, attempt.id);
+    expect(afterRun.snapshots).toHaveLength(1);
+    expect(afterRun.snapshots[0]?.origin).toBe("RUN");
+    expect(afterRun.snapshots[0]?.sourceCode).toBe("print(int(input()) * 2)");
+    expect(afterRun.runCount).toBe(1);
+
+    await submitAttempt(coderB, attempt.id, {
+      language: "python",
+      sourceCode: "print(int(input()) * 2)  # final",
+    });
+    const afterSubmit = await getAttemptSource(owner, attempt.id);
+    expect(afterSubmit.snapshots.map((snapshot) => snapshot.origin)).toEqual(["SUBMISSION", "RUN"]);
+    expect(afterSubmit.snapshots[0]?.sourceCode).toContain("# final");
+
+    // Participant source by another route is still participant source.
+    expect(await refusalCode(() => getAttemptSource(root, attempt.id))).toBe("FORBIDDEN");
+    expect(await refusalCode(() => getAttemptSource(otherArchitect, attempt.id))).toBe("FORBIDDEN");
+    expect(await refusalCode(() => getAttemptSource(coderA, attempt.id))).toBe("FORBIDDEN");
+  });
+
+  it("runs against public cases only, and against the same scripts as a submission", async () => {
     const attempt = await startAttempt(coderA, session.id);
     const { jobId } = await runAttempt(coderA, attempt.id, {
       language: "python",
@@ -549,10 +951,105 @@ describe("attempts and submissions", () => {
     const job = await getRunQueue().getJob(jobId);
     expect(job?.data.testCases.every((testCase) => testCase.isPublic)).toBe(true);
     expect(JSON.stringify(job?.data)).not.toContain("HIDDEN_SECRET");
-    expect(job?.data.testScripts).toEqual([]);
+    // The scripts go to the worker, which is not the browser. Without them a
+    // Run against a script-graded Assessment executes a program with nothing
+    // to check it and reports that it finished.
+    expect(job?.data.testScripts.map((script) => script.path)).toEqual(["test_solution.py"]);
 
     const count = await prisma.submission.count({ where: { attemptId: attempt.id } });
     expect(count).toBe(0);
+  });
+
+  it("numbers a Run's script tests unless the Architect opted into their names", async () => {
+    // Its own Assessment: uploading a script is refused while a session of it
+    // is running, and this describe's fixture has one.
+    const own = await individualAssessment();
+    const named = await uploadTestScript(owner, own.id, {
+      language: "python",
+      framework: "PYTEST",
+      path: "test_named.py",
+      content: "x = 1\n",
+      weight: 1,
+      showTestNames: true,
+    });
+    const withheld = (await architectView(own.id)).testScripts.find(
+      (script) => script.path === "test_solution.py",
+    );
+    if (!withheld) throw new Error("fixture script missing");
+
+    const jobId = `run-script-names-${suffix}`;
+    await getRedis().set(runOwnerKey(jobId), coderA.id, "EX", 60);
+
+    const subscriber = getRedis().duplicate();
+    const received = new Promise<string>((resolve) => {
+      subscriber.on("message", (_channel, message: string) => resolve(message));
+    });
+    await subscriber.subscribe(REDIS_CHANNELS.EXECUTION_STATUS);
+
+    const row = (testScriptId: string, name: string) => ({
+      testCaseId: null,
+      testScriptId,
+      name,
+      status: "GRADED" as const,
+      passed: false,
+      weight: 1,
+      executionTimeMs: 4,
+      memoryUsedKb: null,
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+      failureDetail: "Your code threw AttributeError.",
+    });
+    await ingestExecutionResult({
+      contractVersion: EXECUTION_CONTRACT_VERSION,
+      jobId,
+      submissionId: null,
+      status: "GRADED",
+      compilerOutput: null,
+      systemError: null,
+      executionTimeMs: 8,
+      memoryUsedKb: null,
+      testResults: [
+        row(named.id, "test_named_one"),
+        row(withheld.id, "test_WITHHELD_NAME"),
+        row(withheld.id, "test_WITHHELD_OTHER"),
+      ],
+    });
+
+    const message = await received;
+    await subscriber.quit();
+    await getRedis().del(runOwnerKey(jobId));
+
+    expect(message).toContain("test_named_one");
+    expect(message).not.toContain("WITHHELD");
+    // Numbered rather than dropped: the count is what makes "2 of 3 passed"
+    // honest, and the reason is what the Coder is here for.
+    expect(message).toContain("Hidden test 1");
+    expect(message).toContain("Hidden test 2");
+    expect(message).toContain("Your code threw AttributeError.");
+  });
+
+  it("still runs when the assessment has no public case", async () => {
+    const attempt = await startAttempt(coderA, session.id);
+    await prisma.assessmentTestCase.updateMany({
+      where: { assessmentId: assessment.id, kind: "PUBLIC" },
+      data: { kind: "HIDDEN" },
+    });
+    try {
+      const { jobId } = await runAttempt(coderA, attempt.id, {
+        language: "python",
+        sourceCode: "print(4)",
+      });
+      createdJobIds.push(jobId);
+
+      const job = await getRunQueue().getJob(jobId);
+      expect(job?.data.testCases).toEqual([]);
+      expect(JSON.stringify(job?.data)).not.toContain("HIDDEN_SECRET");
+    } finally {
+      await prisma.assessmentTestCase.updateMany({
+        where: { assessmentId: assessment.id, name: "Sample" },
+        data: { kind: "PUBLIC" },
+      });
+    }
   });
 
   it("grades the source in the request, never the stored draft", async () => {
@@ -723,6 +1220,7 @@ describe("grading ingestion", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "4",
           stderrExcerpt: "",
+          failureDetail: null,
         },
         {
           testCaseId: hiddenCase.id,
@@ -735,6 +1233,7 @@ describe("grading ingestion", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "HIDDEN_SECRET_OUTPUT_ECHO",
           stderrExcerpt: "",
+          failureDetail: null,
         },
         {
           testCaseId: null,
@@ -747,6 +1246,7 @@ describe("grading ingestion", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "SCRIPT_SECRET",
           stderrExcerpt: "",
+          failureDetail: null,
         },
       ],
     };
@@ -846,6 +1346,7 @@ describe("test script validation", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "",
           stderrExcerpt: "",
+          failureDetail: null,
         },
       ],
     });
@@ -904,6 +1405,7 @@ describe("test script validation", () => {
           memoryUsedKb: null,
           stdoutExcerpt: "",
           stderrExcerpt: "",
+          failureDetail: null,
         },
       ],
     });
@@ -978,6 +1480,7 @@ describe("test names shown to Coders", () => {
       memoryUsedKb: null,
       stdoutExcerpt: "ASSERTION_OUTPUT",
       stderrExcerpt: "ASSERTION_OUTPUT",
+      failureDetail: null,
     });
     await ingestExecutionResult({
       contractVersion: EXECUTION_CONTRACT_VERSION,

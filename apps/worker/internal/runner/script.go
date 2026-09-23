@@ -33,6 +33,22 @@ const (
 	scriptCrashReason   = "crashed before reporting its tests"
 )
 
+// The same four failures said to the Coder instead of to the Architect.
+//
+// They are carried separately from the name because the name may be withheld:
+// a script's tests are only named to a Coder when the Architect opted in, and
+// a Coder whose code does not compile against the tests still has to be told
+// that, whatever the script is called.
+//
+// None of them quotes the compiler. Its diagnostics are printed against the
+// script's own lines, which hold the values the tests expect.
+const (
+	scriptNotRunDetail  = "The submission ran out of time before these tests could start."
+	scriptCompileDetail = "These tests could not be built against your code. Check that every class, method and constructor the task asks for exists, spelled the same way and taking the same parameters."
+	scriptLimitDetail   = "These tests hit a time or memory limit before they finished."
+	scriptCrashDetail   = "Your code brought the test process down before it could report anything."
+)
+
 // errScriptPlatform marks a script failure the platform owns — a framework
 // that crashed without a report — which becomes SYSTEM_ERROR for the job.
 var errScriptPlatform = errors.New("test script failed inside the platform")
@@ -62,14 +78,14 @@ func (r *Runner) runScript(
 	spec language.Spec,
 	deadline time.Time,
 ) ([]contract.TestResult, contract.Status, error) {
-	notRun := func(reason string, status contract.Status) ([]contract.TestResult, contract.Status, error) {
+	notRun := func(reason, detail string, status contract.Status) ([]contract.TestResult, contract.Status, error) {
 		name := script.Path + " (" + reason + ")"
-		return []contract.TestResult{scriptResult(script, name, false, status, 0)}, status, nil
+		return []contract.TestResult{scriptResult(script, name, false, status, 0, detail)}, status, nil
 	}
 
 	remaining := time.Until(deadline)
 	if remaining < minScriptBudget {
-		return notRun(scriptNotRunReason, contract.StatusTimeLimitExceeded)
+		return notRun(scriptNotRunReason, scriptNotRunDetail, contract.StatusTimeLimitExceeded)
 	}
 
 	if err := validateScriptPath(script, spec); err != nil {
@@ -120,7 +136,7 @@ func (r *Runner) runScript(
 			if status == contract.StatusCompileError {
 				return nil, "", fmt.Errorf("%w: the submission compiled for its cases but not for its script", errScriptPlatform)
 			}
-			return notRun(scriptLimitReason, status)
+			return notRun(scriptLimitReason, scriptLimitDetail, status)
 		}
 	}
 
@@ -145,12 +161,12 @@ func (r *Runner) runScript(
 		}
 		switch status := classifyCase(outcome, meter.killedDuring(ctx, outcome), budget); {
 		case status != contract.StatusGraded && status != contract.StatusRuntimeError:
-			return notRun(scriptLimitReason, status)
+			return notRun(scriptLimitReason, scriptLimitDetail, status)
 		case outcome.ExitCode != 0:
 			// Almost always a test calling something the submission does not
 			// define. That is the Coder's shortfall, so the script fails as a
 			// test; its compiler output stays out, since it quotes the script.
-			return notRun(scriptCompileReason, contract.StatusRuntimeError)
+			return notRun(scriptCompileReason, scriptCompileDetail, contract.StatusRuntimeError)
 		}
 	}
 
@@ -168,7 +184,7 @@ func (r *Runner) runScript(
 	// not a verdict on the tests it did not reach.
 	status := classifyCase(outcome, meter.killedDuring(ctx, outcome), budget)
 	if status == contract.StatusTimeLimitExceeded || status == contract.StatusMemoryLimitExceeded {
-		return notRun(scriptLimitReason, status)
+		return notRun(scriptLimitReason, scriptLimitDetail, status)
 	}
 
 	tests, err := readScriptReports(ctx, session, plan)
@@ -178,7 +194,7 @@ func (r *Runner) runScript(
 	// failure, not the platform's. A framework that exits normally without a
 	// report is still the platform's.
 	if errors.Is(err, errNoReport) && outcome.ExitCode > signalExitFloor {
-		return notRun(scriptCrashReason, contract.StatusRuntimeError)
+		return notRun(scriptCrashReason, scriptCrashDetail, contract.StatusRuntimeError)
 	}
 	if err != nil {
 		return nil, "", err
@@ -186,7 +202,7 @@ func (r *Runner) runScript(
 
 	results := make([]contract.TestResult, 0, len(tests))
 	for _, test := range tests {
-		results = append(results, scriptResult(script, test.Name, test.Passed, contract.StatusGraded, test.DurationMs))
+		results = append(results, scriptResult(script, test.Name, test.Passed, contract.StatusGraded, test.DurationMs, test.Detail))
 	}
 	// Failing tests leave the submission GRADED: the tests ran, and their
 	// failures are what the score records.
@@ -224,9 +240,13 @@ func readScriptReports(ctx context.Context, session *sandbox.Session, plan langu
 // Its excerpts are always empty. A framework's output quotes assertions and
 // the values they expected, and a script is Architect-only data — at most a
 // Coder is shown a test's name and whether it passed, never what it printed.
-func scriptResult(script contract.TestScript, name string, passed bool, status contract.Status, durationMs float64) contract.TestResult {
+func scriptResult(script contract.TestScript, name string, passed bool, status contract.Status, durationMs float64, detail string) contract.TestResult {
 	if name == "" {
 		name = script.Path
+	}
+	var failureDetail *string
+	if !passed && detail != "" {
+		failureDetail = stringPtr(detail)
 	}
 	return contract.TestResult{
 		TestCaseID:      nil,
@@ -236,6 +256,7 @@ func scriptResult(script contract.TestScript, name string, passed bool, status c
 		Passed:          passed,
 		Weight:          script.Weight,
 		ExecutionTimeMs: durationMs,
+		FailureDetail:   failureDetail,
 	}
 }
 

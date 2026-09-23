@@ -8,6 +8,7 @@ import { IconButton } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LANGUAGE_LABEL } from "@/components/editor/language-labels";
 import { VALIDATION_BADGE } from "./validation";
+import { pixelSkin } from "@/theme/pixel";
 
 export type ListedTestScript = {
   id: string;
@@ -50,9 +51,7 @@ export function TestScriptList<Script extends ListedTestScript>({
           key={script.id}
           justify="space-between"
           gap="3"
-          borderWidth="1px"
-          borderColor="border.default"
-          borderRadius="md"
+          {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)", 2)}
           padding="3"
         >
           <Stack gap="1" minWidth="0">
@@ -77,7 +76,10 @@ export function TestScriptList<Script extends ListedTestScript>({
               </Text>
             )}
           </Stack>
-          <HStack gap="1">
+          {/* The badges and the path to the left can be arbitrarily long, and
+              a flex item shrinks before it wraps — without this the two icon
+              buttons were squashed out past the row's edge. */}
+          <HStack gap="1" flexShrink="0">
             <IconButton aria-label={`Edit ${script.path}`} size="sm" onClick={() => onEdit(script)}>
               <Pencil aria-hidden />
             </IconButton>

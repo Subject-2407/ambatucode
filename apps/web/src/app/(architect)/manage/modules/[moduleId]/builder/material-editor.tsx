@@ -142,8 +142,8 @@ function MaterialForm({ moduleId, material }: { moduleId: string; material: Mate
       <RichTextEditor value={content} onChange={setContent} allowInteractiveBlocks />
 
       <Stack gap="3">
-        <Flex justify="space-between" align="center">
-          <HStack gap="2">
+        <Flex justify="space-between" align="center" gap="2" wrap="wrap">
+          <HStack gap="2" minWidth="0">
             <Terminal size={16} aria-hidden />
             <Text textStyle="display" fontSize="sm">
               Practice activities

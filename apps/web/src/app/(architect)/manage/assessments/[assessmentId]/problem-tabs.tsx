@@ -7,6 +7,7 @@ import { SourceEditor } from "@/components/editor/code-editor";
 import { LANGUAGE_LABEL, MONACO_LANGUAGE_ID, TAB_SIZE } from "@/components/editor/language-labels";
 import { TextField } from "@/components/ui/input";
 import { TabBar, TabPanel } from "@/components/ui/tabs";
+import { MARKDOWN_LITE_HINT } from "@/lib/markdown-lite";
 import type { AssessmentDraft } from "./draft";
 
 export type TabProps = {
@@ -44,8 +45,8 @@ export function ProblemTab({ draft, onChange }: TabProps) {
           placeholder="Describe the problem, the input, and the expected output."
         />
         <Text fontSize="xs" color="fg.muted">
-          Plain text. Interactive blocks are available in Materials, not in an assessment a Coder
-          reads under time.
+          {MARKDOWN_LITE_HINT} Interactive blocks are available in Materials, not in an assessment a
+          Coder reads under time.
         </Text>
       </Stack>
 

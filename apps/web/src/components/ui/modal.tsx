@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Dialog, Portal } from "@chakra-ui/react";
+import { pixelSkin } from "@/theme/pixel";
 import { CloseButton } from "./close-button";
 
 export type ModalProps = {
@@ -52,10 +53,7 @@ export function Modal({
         <Dialog.Backdrop bg="blackAlpha.600" backdropFilter="blur(2px)" />
         <Dialog.Positioner>
           <Dialog.Content
-            bg="bg.surface"
-            borderWidth="3px"
-            borderColor="border.emphasized"
-            boxShadow="popover"
+            {...pixelSkin("var(--amb-colors-border-emphasized)", "var(--amb-colors-bg-surface)")}
           >
             <Dialog.Header>
               <Dialog.Title textStyle="display" fontSize="md">

@@ -21,7 +21,7 @@ import (
 // payload shape. Without this check a renamed field would surface as a
 // silently mis-graded submission; with it the worker refuses the job and says
 // exactly why.
-const Version = 4
+const Version = 6
 
 type Kind string
 
@@ -140,6 +140,13 @@ type Job struct {
 	CallbackToken   string       `json:"callbackToken"`
 }
 
+// FreeRunResultName names the single row a RUN job with no cases and no
+// scripts returns, so the Coder sees what their program printed. It mirrors
+// FREE_RUN_RESULT_NAME in the shared package: the browser tells that row from
+// a case by name, because a case's pass or fail has no meaning without an
+// expected output.
+const FreeRunResultName = "Program output"
+
 // TestResult is one case or one script test. Status is how that case alone
 // ended, and is only ever GRADED, RUNTIME_ERROR, TIME_LIMIT_EXCEEDED or
 // MEMORY_LIMIT_EXCEEDED: compiling and platform failure describe a whole job.
@@ -155,6 +162,12 @@ type TestResult struct {
 	MemoryUsedKb    *float64 `json:"memoryUsedKb"`
 	StdoutExcerpt   string   `json:"stdoutExcerpt"`
 	StderrExcerpt   string   `json:"stderrExcerpt"`
+	// FailureDetail says why the test failed in words a Coder can act on, and
+	// carries no value from the assertion that failed. The framework's own
+	// message quotes what it expected, which is the one thing that may not
+	// reach a browser; this is the shape of the failure without its contents.
+	// Nil on a passing test and on a stdin/stdout case.
+	FailureDetail *string `json:"failureDetail"`
 }
 
 // Result never carries the source code back — the backend already has it.

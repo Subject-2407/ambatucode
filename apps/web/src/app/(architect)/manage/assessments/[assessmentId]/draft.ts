@@ -2,6 +2,7 @@ import type {
   AntiCheatConfig,
   AssessmentArchitectView,
   ExecutionMode,
+  ExitPolicy,
   GradingStrategy,
   Language,
   StarterCodeMap,
@@ -30,8 +31,10 @@ export type AssessmentDraft = {
   timeLimitMs: number;
   memoryLimitMb: number;
   gradingStrategy: GradingStrategy;
+  exitPolicy: ExitPolicy;
   antiCheat: AntiCheatConfig;
   isPublished: boolean;
+  isOpenAccess: boolean;
 };
 
 export function draftFrom(assessment: AssessmentArchitectView): AssessmentDraft {
@@ -46,8 +49,10 @@ export function draftFrom(assessment: AssessmentArchitectView): AssessmentDraft 
     timeLimitMs: assessment.timeLimitMs,
     memoryLimitMb: assessment.memoryLimitMb,
     gradingStrategy: assessment.gradingStrategy,
+    exitPolicy: assessment.exitPolicy,
     antiCheat: { ...assessment.antiCheat },
     isPublished: assessment.isPublished,
+    isOpenAccess: assessment.isOpenAccess,
   };
 }
 
@@ -77,8 +82,10 @@ export function diffAssessment(
   if (draft.gradingStrategy !== saved.gradingStrategy) {
     patch.gradingStrategy = draft.gradingStrategy;
   }
+  if (draft.exitPolicy !== saved.exitPolicy) patch.exitPolicy = draft.exitPolicy;
   if (!sameAntiCheat(draft.antiCheat, saved.antiCheat)) patch.antiCheat = draft.antiCheat;
   if (draft.isPublished !== saved.isPublished) patch.isPublished = draft.isPublished;
+  if (draft.isOpenAccess !== saved.isOpenAccess) patch.isOpenAccess = draft.isOpenAccess;
 
   return patch;
 }

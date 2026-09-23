@@ -257,7 +257,7 @@ function TestCaseDialog({
             value={input}
             onChange={(event) => setInput(event.currentTarget.value)}
             rows={5}
-            fontFamily="mono"
+            textStyle="data"
             fontSize="sm"
           />
         </Stack>
@@ -270,7 +270,7 @@ function TestCaseDialog({
             value={expectedOutput}
             onChange={(event) => setExpectedOutput(event.currentTarget.value)}
             rows={5}
-            fontFamily="mono"
+            textStyle="data"
             fontSize="sm"
           />
         </Stack>

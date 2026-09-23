@@ -264,7 +264,9 @@ test.describe("assessment sessions", () => {
       await confirm.getByRole("button", { name: /Submit/ }).click();
       await expect(coder.getByText(/Queued/).first()).toBeVisible({ timeout: 30_000 });
 
-      await architect.getByRole("link", { name: "Monitor" }).click();
+      // Scoped to the page: the navigation rail now carries a Monitor
+      // destination of its own, and an unscoped role query matches both.
+      await architect.getByRole("main").getByRole("link", { name: "Monitor" }).click();
       await architect.waitForURL(/\/monitor$/);
       const participants = architect.getByRole("list", { name: "Participants" });
       const coderCard = participants.getByRole("listitem").filter({ hasText: "Coder 01" });

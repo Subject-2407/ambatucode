@@ -18,6 +18,7 @@ import { Modal } from "@/components/ui/modal";
 import { toaster } from "@/components/ui/toaster";
 import { useCreatePractice, useUpdatePractice } from "@/hooks/use-practice";
 import { isApiError } from "@/lib/api-client";
+import { MARKDOWN_LITE_HINT } from "@/lib/markdown-lite";
 
 /**
  * Authoring a Practice Activity, inline with the Material it belongs to.
@@ -164,6 +165,9 @@ export function PracticeFormDialog({
             rows={3}
             placeholder="What should the Coder write?"
           />
+          <Text fontSize="xs" color="fg.muted">
+            {MARKDOWN_LITE_HINT}
+          </Text>
         </Stack>
 
         <Stack gap="2">
@@ -291,7 +295,7 @@ export function PracticeFormDialog({
                   <Textarea
                     aria-label={`Input for ${testCase.name}`}
                     rows={3}
-                    fontFamily="mono"
+                    textStyle="data"
                     fontSize="sm"
                     value={testCase.input}
                     onChange={(event) =>
@@ -306,7 +310,7 @@ export function PracticeFormDialog({
                   <Textarea
                     aria-label={`Expected output for ${testCase.name}`}
                     rows={3}
-                    fontFamily="mono"
+                    textStyle="data"
                     fontSize="sm"
                     value={testCase.expectedOutput}
                     onChange={(event) =>

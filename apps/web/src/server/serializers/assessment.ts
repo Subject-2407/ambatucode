@@ -19,10 +19,12 @@ import {
   type AttemptView,
   type ComparisonMode,
   type ExecutionMode,
+  type ExitPolicy,
   type GradingStrategy,
   type Language,
   type MonitorEventPayload,
   type ParticipantView,
+  type SessionAccess,
   type SessionView,
   type StarterCodeMap,
   type SubmissionArchitectView,
@@ -54,7 +56,7 @@ function iso(value: Date | null): string | null {
 }
 
 /** A stored language that is no longer in the vocabulary is corruption, not input. */
-function storedLanguage(value: string): Language {
+export function storedLanguage(value: string): Language {
   if (!isLanguage(value)) {
     throw new AppError("INTERNAL", `Stored language "${value}" is not a known language`);
   }
@@ -117,6 +119,7 @@ type AssessmentSummaryRow = {
   title: string;
   orderIndex: number;
   isPublished: boolean;
+  isOpenAccess: boolean;
   timeMode: TimeMode;
   durationMinutes: number | null;
   executionMode: ExecutionMode | null;
@@ -129,6 +132,7 @@ export function toAssessmentSummary(row: AssessmentSummaryRow): AssessmentSummar
     title: row.title,
     orderIndex: row.orderIndex,
     isPublished: row.isPublished,
+    isOpenAccess: row.isOpenAccess,
     timeMode: row.timeMode,
     durationMinutes: row.durationMinutes,
     executionMode: row.executionMode,
@@ -202,6 +206,7 @@ export type AssessmentRow = AssessmentSummaryRow & {
   timeLimitMs: number;
   memoryLimitMb: number;
   gradingStrategy: GradingStrategy;
+  exitPolicy: ExitPolicy;
   antiCheatConfigJson: unknown;
   createdAt: Date;
   updatedAt: Date;
@@ -213,6 +218,8 @@ export function toAssessmentArchitectView(
     testCases: TestCaseRow[];
     testScripts: TestScriptRow[];
     referenceSolutionsJson: unknown;
+    /** The running open-access session, if the Assessment is open. */
+    sessions: Array<{ id: string }>;
   },
 ): AssessmentArchitectView {
   return {
@@ -224,10 +231,12 @@ export function toAssessmentArchitectView(
     timeLimitMs: row.timeLimitMs,
     memoryLimitMb: row.memoryLimitMb,
     gradingStrategy: row.gradingStrategy,
+    exitPolicy: row.exitPolicy,
     antiCheat: readAntiCheat(row.antiCheatConfigJson),
     testCases: row.testCases.map(toTestCaseView),
     testScripts: row.testScripts.map(toTestScriptView),
     referenceSolutions: readReferenceSolutions(row.referenceSolutionsJson, "Assessment"),
+    openAccessSessionId: row.sessions[0]?.id ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -254,6 +263,7 @@ export function toAssessmentWorkspaceView(
     timeLimitMs: row.timeLimitMs,
     memoryLimitMb: row.memoryLimitMb,
     antiCheat: readAntiCheat(row.antiCheatConfigJson),
+    exitPolicy: row.exitPolicy,
     sampleCases: row.testCases
       .filter((testCase) => testCase.kind === "PUBLIC")
       .map((testCase) => ({
@@ -273,8 +283,12 @@ export type SessionRow = {
   executionMode: ExecutionMode | null;
   durationMinutes: number | null;
   status: AssessmentSessionStatus;
+  access: SessionAccess;
+  isOpenAccess: boolean;
   startedAt: Date | null;
   endsAt: Date | null;
+  closesAt: Date | null;
+  requireAllReady: boolean;
   startedWithMissingParticipants: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -294,9 +308,15 @@ export function toSessionView(
     status: row.status,
     startedAt: iso(row.startedAt),
     endsAt: iso(row.endsAt),
+    closesAt: iso(row.closesAt),
+    requireAllReady: row.requireAllReady,
     startedWithMissingParticipants: row.startedWithMissingParticipants,
+    access: row.access,
+    isOpenAccess: row.isOpenAccess,
     listedParticipantCount: context.listedParticipantCount,
-    isRestricted: context.listedParticipantCount > 0,
+    // A session opened to the whole Module is never restricted, however long
+    // its participant list is — the list is then a roll call, not a gate.
+    isRestricted: row.access === "LISTED" && context.listedParticipantCount > 0,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -460,6 +480,7 @@ export type SubmissionResultRow = {
   memoryUsedKb: number | null;
   stdoutExcerpt: string;
   stderrExcerpt: string;
+  failureDetail: string | null;
   isPublic: boolean;
 };
 
@@ -505,6 +526,7 @@ export function toSubmissionCoderView(row: SubmissionRow): SubmissionCoderView {
         executionTimeMs: result.executionTimeMs,
         stdoutExcerpt: result.stdoutExcerpt,
         stderrExcerpt: result.stderrExcerpt,
+        failureDetail: result.failureDetail,
       })),
   };
 }
@@ -532,6 +554,7 @@ export function toSubmissionArchitectView(row: SubmissionRow): SubmissionArchite
       memoryUsedKb: result.memoryUsedKb,
       stdoutExcerpt: result.stdoutExcerpt,
       stderrExcerpt: result.stderrExcerpt,
+      failureDetail: result.failureDetail,
     })),
   };
 }

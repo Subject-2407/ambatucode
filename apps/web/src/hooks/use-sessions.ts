@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CreateSessionRequest,
+  ModuleSessionOption,
   MonitorSnapshot,
   ReadinessView,
   ReplaceParticipantsRequest,
@@ -28,6 +29,7 @@ const READINESS_POLL_MS = 15_000;
 export const sessionKeys = {
   all: ["sessions"] as const,
   list: (assessmentId: string) => ["sessions", "list", assessmentId] as const,
+  byModule: (moduleId: string) => ["sessions", "module", moduleId] as const,
   detail: (sessionId: string) => ["sessions", "detail", sessionId] as const,
   readiness: (sessionId: string) => ["sessions", "readiness", sessionId] as const,
   monitor: (sessionId: string) => ["sessions", "monitor", sessionId] as const,
@@ -38,6 +40,16 @@ export function useSessions(assessmentId: string) {
     queryKey: sessionKeys.list(assessmentId),
     queryFn: ({ signal }) =>
       apiClient.get<SessionView[]>(`/api/assessments/${assessmentId}/sessions`, { signal }),
+  });
+}
+
+/** Every session in a Module, for the grading records' session filter. */
+export function useModuleSessions(moduleId: string, enabled = true) {
+  return useQuery({
+    queryKey: sessionKeys.byModule(moduleId),
+    queryFn: ({ signal }) =>
+      apiClient.get<ModuleSessionOption[]>(`/api/modules/${moduleId}/sessions`, { signal }),
+    enabled: enabled && moduleId !== "",
   });
 }
 
@@ -95,6 +107,19 @@ export function useUpdateSession(sessionId: string) {
     mutationFn: (changes: UpdateSessionRequest) =>
       apiClient.patch<SessionView>(`/api/sessions/${sessionId}`, changes),
     onSuccess: invalidate,
+  });
+}
+
+export function useDeleteSession(sessionId: string, assessmentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.delete<{ deleted: boolean }>(`/api/sessions/${sessionId}`),
+    onSuccess: async () => {
+      // The detail query is dropped rather than refetched: it would 404.
+      queryClient.removeQueries({ queryKey: sessionKeys.detail(sessionId) });
+      await queryClient.invalidateQueries({ queryKey: sessionKeys.list(assessmentId) });
+      await queryClient.invalidateQueries({ queryKey: assessmentKeys.detail(assessmentId) });
+    },
   });
 }
 

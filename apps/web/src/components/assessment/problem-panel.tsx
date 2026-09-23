@@ -2,14 +2,21 @@
 
 import { Box, Heading, Stack, Text } from "@chakra-ui/react";
 import type { SampleCaseView } from "@ambatucode/shared";
+import { Prose } from "@/components/content/prose";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * The problem statement and its public sample cases.
  *
  * The statement is stored as prose, not as a rich text document — that is what
  * keeps Interactive Blocks out of a timed workspace, where an Architect-authored
- * program would run beside the anti-cheat controls with nothing to gain. So it
- * renders as preserved-whitespace text, with no markup path at all.
+ * program would run beside the anti-cheat controls with nothing to gain.
+ *
+ * It is rendered through `Prose`, which reads a small Markdown subset and emits
+ * React elements. Still no markup path: the parser produces data and the
+ * renderer produces text nodes, so nothing an Architect types becomes HTML in
+ * this document. A statement that uses none of the syntax renders exactly as
+ * the preserved-whitespace text it used to be.
  *
  * Only sample cases reach this component. Hidden cases and expected outputs for
  * grading never leave the server; if one ever appears in this payload it is a
@@ -30,9 +37,7 @@ export function ProblemPanel({
         {title}
       </Heading>
 
-      <Text whiteSpace="pre-wrap" fontSize="sm" lineHeight="tall">
-        {problemStatement}
-      </Text>
+      <Prose source={problemStatement} />
 
       {sampleCases.length === 0 ? null : (
         <Stack gap="3">
@@ -52,10 +57,7 @@ function SampleCase({ sample }: { sample: SampleCaseView }) {
   return (
     <Stack
       gap="2"
-      borderWidth="1px"
-      borderColor="border.default"
-      borderRadius="md"
-      bg="bg.subtle"
+      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-subtle)", 2)}
       padding="3"
     >
       <Text textStyle="display" fontSize="2xs" color="fg.muted">
@@ -75,7 +77,7 @@ function SampleBlock({ label, value }: { label: string; value: string }) {
       </Text>
       <Box
         as="pre"
-        fontFamily="mono"
+        textStyle="data"
         fontSize="xs"
         whiteSpace="pre-wrap"
         overflowX="auto"

@@ -1,5 +1,15 @@
+import { defaultConfig } from "@chakra-ui/react";
 import { describe, expect, it } from "vitest";
-import { PIXEL, PIXEL_PRESS, pixelDrop, pixelEdge, pixelNotch } from "./pixel";
+import {
+  PIXEL,
+  PIXEL_PRESS,
+  UNFILLED_VARIANTS,
+  pixelDrop,
+  pixelEdge,
+  pixelFocusRing,
+  pixelNotch,
+  pixelSkin,
+} from "./pixel";
 
 describe("pixelNotch", () => {
   it("bites a square out of all four corners", () => {
@@ -28,6 +38,37 @@ describe("pixelNotch", () => {
     expect(notch.startsWith("polygon(0 ")).toBe(true);
     expect(notch.endsWith(")")).toBe(true);
     expect(notch).not.toMatch(/\(\s|\s\)/);
+  });
+});
+
+describe("pixelSkin", () => {
+  it("paints the edge as the background and the fill as a layer over it", () => {
+    const skin = pixelSkin("red", "blue", 2);
+    expect(skin.background).toBe("red");
+    expect(skin._before.background).toBe("blue");
+    // Inset by exactly the edge thickness: that inset *is* the border.
+    expect(skin._before.inset).toBe("2px");
+  });
+
+  it("notches both layers, so every step of the corner carries the edge", () => {
+    // The bug this replaces: an inset box-shadow is drawn along the border
+    // box, and the notch then clips away precisely the corners where it turns.
+    const skin = pixelSkin("red", "blue", 2);
+    expect(skin.clipPath).toBe(pixelNotch(2));
+    expect(skin._before.clipPath).toBe(pixelNotch(2));
+  });
+
+  it("isolates, so the fill layer cannot escape behind an ancestor", () => {
+    // `z-index: -1` is relative to the nearest stacking context. Without one of
+    // its own, the fill slides behind whatever ancestor forms it and the
+    // element renders as a solid block of edge colour.
+    const skin = pixelSkin("red", "blue");
+    expect(skin.isolation).toBe("isolate");
+    expect(skin._before.zIndex).toBe(-1);
+  });
+
+  it("defaults to the grid unit", () => {
+    expect(pixelSkin("red", "blue")._before.inset).toBe(`${PIXEL}px`);
   });
 });
 
@@ -61,10 +102,68 @@ describe("pixelDrop", () => {
   });
 });
 
+describe("pixelFocusRing", () => {
+  it("draws inside the box, because a notch clips anything outside it", () => {
+    // This is the whole reason the helper exists. `clip-path` cuts away both
+    // `outline` and an outer `box-shadow`, so a focus indicator drawn the usual
+    // way leaves a keyboard user with nothing at all on every notched control.
+    const ring = pixelFocusRing("red");
+    expect(ring.startsWith("inset ")).toBe(true);
+    expect(ring).toContain("red");
+  });
+
+  it("carries no blur, and sits a step inside the pixel unit", () => {
+    expect(pixelFocusRing("red")).toBe(`inset 0 0 0 ${PIXEL - 1}px red`);
+    expect(pixelFocusRing("red", 2)).toBe("inset 0 0 0 2px red");
+  });
+
+  it("accepts a CSS variable, so it can follow the theme", () => {
+    expect(pixelFocusRing("var(--amb-colors-accent-solid)")).toContain(
+      "var(--amb-colors-accent-solid)",
+    );
+  });
+});
+
 describe("PIXEL_PRESS", () => {
   it("travels exactly as far as the shadow it replaces", () => {
     // The pressed control must land where its shadow was, or the button
     // appears to slide rather than sit down.
     expect(PIXEL_PRESS).toBe(`translate(${PIXEL}px, ${PIXEL}px)`);
+  });
+});
+
+describe("UNFILLED_VARIANTS", () => {
+  // The variants `Button` leaves flat, and so never shadows.
+  const FLAT = new Set(["ghost", "plain"]);
+
+  function recipeVariants(): Record<string, Record<string, unknown>> {
+    const recipes: unknown = defaultConfig.theme?.recipes;
+    const button = (recipes as Record<string, unknown> | undefined)?.button;
+    const variants = (button as { variants?: { variant?: unknown } } | undefined)?.variants;
+    return (variants?.variant ?? {}) as Record<string, Record<string, unknown>>;
+  }
+
+  it("names every shadowed variant the recipe leaves without a fill", () => {
+    // A shadow is cast by whatever the element paints. With no fill that is
+    // the letters, which then read as doubled. If Chakra adds a transparent
+    // variant, or one of ours loses its background, this is where it shows up
+    // rather than on a screen.
+    const unfilled = Object.entries(recipeVariants())
+      .filter(([name]) => !FLAT.has(name))
+      .filter(([, style]) => style.bg === undefined || style.bg === "transparent")
+      .map(([name]) => name);
+
+    expect(unfilled.length).toBeGreaterThan(0);
+    for (const name of unfilled) {
+      expect(UNFILLED_VARIANTS.has(name), `${name} would shadow its own letters`).toBe(true);
+    }
+  });
+
+  it("does not list a variant that is flat or already filled", () => {
+    const variants = recipeVariants();
+    for (const name of UNFILLED_VARIANTS) {
+      expect(FLAT.has(name)).toBe(false);
+      expect(variants[name]?.bg === undefined || variants[name]?.bg === "transparent").toBe(true);
+    }
   });
 });

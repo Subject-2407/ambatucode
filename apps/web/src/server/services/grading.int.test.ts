@@ -15,7 +15,7 @@ import { closeDeadlineQueue, getDeadlineQueue } from "../queue/deadlines";
 import { closeQueueConnection, getRunQueue, getSubmitQueue } from "../queue/producer";
 import { getAchievementShowcase } from "./achievements";
 import { createAssessment, createTestCase } from "./assessments";
-import { startAttempt, submitAttempt } from "./attempts";
+import { saveDraft, startAttempt, submitAttempt } from "./attempts";
 import { ingestExecutionResult } from "./execution-result";
 import { csvRowsFor } from "./grades-export";
 import {
@@ -31,7 +31,7 @@ import {
   getModuleLeaderboard,
   getSectionLeaderboard,
 } from "./leaderboards";
-import { createSession, startSession } from "./sessions";
+import { createSession, endSession, startSession } from "./sessions";
 
 /**
  * Phase 4 against the real database and Redis: grading records, reset and
@@ -101,6 +101,8 @@ function assessmentDefaults(hideLeaderboard = false) {
       hideLeaderboard,
     },
     isPublished: true,
+    isOpenAccess: false,
+    exitPolicy: "RESUME" as const,
   };
 }
 
@@ -169,6 +171,7 @@ async function scoreFor(
         memoryUsedKb: 2_048,
         stdoutExcerpt: "4",
         stderrExcerpt: "",
+        failureDetail: null,
       },
     ],
   };
@@ -356,6 +359,74 @@ describe("reset and official score", () => {
     expect(after?.officialAttemptId).toBe(reset.newAttemptId);
     expect(after?.officialScore).toBe(88);
     expect(after?.attempts).toHaveLength(2);
+  });
+
+  /**
+   * The case the Architect actually performs: they read the grading records
+   * after the lab, by which time the session has ended. The attempt a reset
+   * opens then used to be unstartable by anybody — the record existed and no
+   * Coder could ever act on it.
+   */
+  it("opens a retake a Coder can still sit after the session has ended", async () => {
+    const { session, caseId } = await scoredAssessment("EndedRetake");
+    const first = await scoreFor(coderA, session.id, caseId, 41);
+    await endSession(owner, session.id);
+
+    const reset = await resetAttempt(owner, first.attemptId, { reason: "Marked in error" });
+    createdAttemptIds.push(reset.newAttemptId);
+
+    const granted = await prisma.assessmentAttempt.findUniqueOrThrow({
+      where: { id: reset.newAttemptId },
+      select: { grantedOutsideSession: true, status: true },
+    });
+    expect(granted.grantedOutsideSession).toBe(true);
+    expect(granted.status).toBe("NOT_STARTED");
+
+    // The Coder can open it, work in it, and hand it in, although the session
+    // around them shows as ended for everybody else.
+    const attempt = await startAttempt(coderA, session.id);
+    expect(attempt.id).toBe(reset.newAttemptId);
+    expect(attempt.status).toBe("IN_PROGRESS");
+
+    await saveDraft(coderA, attempt.id, { language: "python", sourceCode: "# retake\n" });
+    const { submission } = await submitAttempt(coderA, attempt.id, {
+      language: "python",
+      sourceCode: "# retake\n",
+    });
+    expect(submission.status).toBe("QUEUED");
+
+    // The grant is one Coder's. Nobody else walks into the ended session.
+    expect(await refusalCode(() => startAttempt(coderB, session.id))).toBe("SESSION_NOT_RUNNING");
+  });
+
+  it("refuses to grant a standalone retake on an ended live session", async () => {
+    const { session, caseId } = await scoredAssessment("EndedLive");
+    const first = await scoreFor(coderA, session.id, caseId, 20);
+    // A live clock is one shared countdown that has already finished, so there
+    // is no such thing as sitting it alone afterwards.
+    await prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: { executionMode: "LIVE", durationMinutes: 30 },
+    });
+    await endSession(owner, session.id);
+
+    expect(await refusalCode(() => resetAttempt(owner, first.attemptId, { reason: "Retake" }))).toBe(
+      "CONFLICT",
+    );
+  });
+
+  it("leaves a reset inside a running session belonging to that session", async () => {
+    const { session, caseId } = await scoredAssessment("RunningReset");
+    const first = await scoreFor(coderA, session.id, caseId, 70);
+
+    const reset = await resetAttempt(owner, first.attemptId, { reason: "Second go" });
+    createdAttemptIds.push(reset.newAttemptId);
+
+    const granted = await prisma.assessmentAttempt.findUniqueOrThrow({
+      where: { id: reset.newAttemptId },
+      select: { grantedOutsideSession: true },
+    });
+    expect(granted.grantedOutsideSession).toBe(false);
   });
 
   it("lets the Architect point the official score back at an earlier attempt", async () => {

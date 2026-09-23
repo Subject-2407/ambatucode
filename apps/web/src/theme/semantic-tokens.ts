@@ -33,7 +33,9 @@ function palette(
 ) {
   return {
     contrast: { value: { _light: "white", _dark: `{colors.${ramp}.950}` } },
-    fg: { value: { _light: `{colors.${ramp}.700}`, _dark: `{colors.${ramp}.300}` } },
+    // The 800 stop rather than 700: the light grounds run from bone.100 down
+    // to bone.400, and a 700 ink misses 4.5:1 on the darker two.
+    fg: { value: { _light: `{colors.${ramp}.800}`, _dark: `{colors.${ramp}.300}` } },
     subtle: { value: { _light: `{colors.${ramp}.100}`, _dark: `{colors.${ramp}.${dark.subtle}}` } },
     muted: { value: { _light: `{colors.${ramp}.200}`, _dark: `{colors.${ramp}.${dark.muted}}` } },
     emphasized: { value: { _light: `{colors.${ramp}.200}`, _dark: `{colors.${ramp}.800}` } },
@@ -47,17 +49,21 @@ export const semanticColors = defineSemanticTokens.colors({
   bg: {
     // Chakra's own recipes read `bg`, `fg`, and `border` with no suffix. The
     // bare token points at ours so built-in components stay on this palette.
-    DEFAULT: { value: { _light: "{colors.bone.300}", _dark: "{colors.brand.950}" } },
-    // The page itself, and the darker of the two light grounds: surfaces sit on
-    // top of it and are *lighter*, which is the paper-and-card relationship
-    // rather than the sheet-of-white-with-a-hairline one.
-    canvas: { value: { _light: "{colors.bone.300}", _dark: "{colors.brand.950}" } },
-    // Cards, panels, dialogs, table bodies — anything raised off the canvas.
-    surface: { value: { _light: "{colors.bone.100}", _dark: "{colors.brand.900}" } },
-    subtle: { value: { _light: "{colors.bone.200}", _dark: "{colors.brand.800}" } },
-    muted: { value: { _light: "{colors.bone.200}", _dark: "{colors.brand.800}" } },
-    emphasized: { value: { _light: "{colors.bone.300}", _dark: "{colors.brand.700}" } },
-    panel: { value: { _light: "{colors.bone.100}", _dark: "{colors.brand.900}" } },
+    DEFAULT: { value: { _light: "{colors.bone.100}", _dark: "{colors.brand.950}" } },
+    // The page is the lightest thing in light mode and the darkest in dark
+    // mode, and surfaces step *away* from it in both: darker on paper, lighter
+    // on a screen. A card is pressed into the page here rather than floating
+    // above it, which is what a hard edge and no blur can actually depict —
+    // there is no light source in this treatment to cast a card's shadow.
+    canvas: { value: { _light: "{colors.bone.100}", _dark: "{colors.brand.950}" } },
+    // Cards, panels, dialogs, table bodies — anything set off from the canvas.
+    surface: { value: { _light: "{colors.bone.200}", _dark: "{colors.brand.900}" } },
+    subtle: { value: { _light: "{colors.bone.300}", _dark: "{colors.brand.850}" } },
+    muted: { value: { _light: "{colors.bone.300}", _dark: "{colors.brand.850}" } },
+    // Not brand.700. A hover fill carries text, and brand.700 leaves muted
+    // text at 3.5:1 — the ladder stops here and gains a rung instead.
+    emphasized: { value: { _light: "{colors.bone.400}", _dark: "{colors.brand.800}" } },
+    panel: { value: { _light: "{colors.bone.200}", _dark: "{colors.brand.900}" } },
     // Chakra's own components read these four for Alert, Field, and friends.
     // The 100 stop rather than 50: a near-white alert on a warm paper ground
     // reads as a hole punched in the page, not as a raised notice.
@@ -77,10 +83,10 @@ export const semanticColors = defineSemanticTokens.colors({
     // look has to come from size or weight, not from contrast nobody can read.
     subtle: { value: { _light: "{colors.brand.800}", _dark: "{colors.brand.300}" } },
     inverted: { value: { _light: "{colors.bone.100}", _dark: "{colors.brand.950}" } },
-    success: { value: { _light: "{colors.moss.700}", _dark: "{colors.moss.300}" } },
-    warning: { value: { _light: "{colors.amber.700}", _dark: "{colors.amber.300}" } },
-    error: { value: { _light: "{colors.crimson.700}", _dark: "{colors.crimson.300}" } },
-    info: { value: { _light: "{colors.lagoon.700}", _dark: "{colors.lagoon.300}" } },
+    success: { value: { _light: "{colors.moss.800}", _dark: "{colors.moss.300}" } },
+    warning: { value: { _light: "{colors.amber.800}", _dark: "{colors.amber.300}" } },
+    error: { value: { _light: "{colors.crimson.800}", _dark: "{colors.crimson.300}" } },
+    info: { value: { _light: "{colors.lagoon.800}", _dark: "{colors.lagoon.300}" } },
   },
 
   border: {
@@ -90,9 +96,15 @@ export const semanticColors = defineSemanticTokens.colors({
     DEFAULT: { value: { _light: "{colors.brand.800}", _dark: "{colors.brand.700}" } },
     default: { value: { _light: "{colors.brand.800}", _dark: "{colors.brand.700}" } },
     muted: { value: { _light: "{colors.bone.400}", _dark: "{colors.brand.800}" } },
-    subtle: { value: { _light: "{colors.bone.300}", _dark: "{colors.brand.900}" } },
+    subtle: { value: { _light: "{colors.bone.400}", _dark: "{colors.brand.900}" } },
     // The selected or focused frame. Maximum edge in each theme.
     emphasized: { value: { _light: "{colors.brand.950}", _dark: "{colors.bone.200}" } },
+    // The navigation rail's own edge. Deliberately lighter than `default` on
+    // paper: the rail carries the active-item marker right against that edge,
+    // and a brand.800 line puts a near-black bar beside a near-black marker, so
+    // the one thing on the rail that has to be read at a glance disappeared
+    // into it. On glass the usual edge already contrasts and is left alone.
+    rail: { value: { _light: "{colors.bone.500}", _dark: "{colors.brand.700}" } },
     success: { value: { _light: "{colors.moss.700}", _dark: "{colors.moss.400}" } },
     warning: { value: { _light: "{colors.amber.700}", _dark: "{colors.amber.400}" } },
     error: { value: { _light: "{colors.crimson.700}", _dark: "{colors.crimson.400}" } },
@@ -131,13 +143,36 @@ export const semanticColors = defineSemanticTokens.colors({
    */
   gold: {
     contrast: { value: { _light: "{colors.brand.950}", _dark: "{colors.brand.950}" } },
-    fg: { value: { _light: "{colors.gold.700}", _dark: "{colors.gold.400}" } },
+    fg: { value: { _light: "{colors.gold.800}", _dark: "{colors.gold.400}" } },
     subtle: { value: { _light: "{colors.gold.100}", _dark: "{colors.gold.950}" } },
     muted: { value: { _light: "{colors.gold.200}", _dark: "{colors.gold.900}" } },
     emphasized: { value: { _light: "{colors.gold.300}", _dark: "{colors.gold.800}" } },
     solid: { value: { _light: "{colors.gold.400}", _dark: "{colors.gold.400}" } },
     focusRing: { value: { _light: "{colors.gold.600}", _dark: "{colors.gold.400}" } },
     border: { value: { _light: "{colors.gold.600}", _dark: "{colors.gold.500}" } },
+  },
+
+  /**
+   * The wordmark, which is neither a surface nor a status and so belongs to
+   * neither vocabulary above.
+   *
+   * Three inks, stacked as hard offsets rather than one flat colour: the face
+   * is a bitmap type at title-screen size, and a single colour at that scale is
+   * a slab. Each layer steps four pixels — the grid unit — down and right.
+   *
+   * Light mode reads white, navy, crimson from front to back; dark mode reads
+   * bone, crimson, lagoon. The front ink is the lightest in both, so the shape
+   * of the letters is carried by the two darker plates behind it rather than by
+   * contrast against the ground.
+   *
+   * Not gold. Gold means an earned Title or Architect-authored content, and a
+   * logo wearing it would weaken that everywhere else.
+   */
+  mark: {
+    ink: { value: { _light: "white", _dark: "{colors.bone.100}" } },
+    shadow: { value: { _light: "{colors.brand.900}", _dark: "{colors.crimson.700}" } },
+    /** The third plate, furthest back. Only the hero wordmark carries it. */
+    glow: { value: { _light: "{colors.crimson.700}", _dark: "{colors.lagoon.300}" } },
   },
 
   secondary: palette("plum"),

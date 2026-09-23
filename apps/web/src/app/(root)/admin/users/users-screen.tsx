@@ -73,7 +73,7 @@ export function UsersScreen({ currentUserId }: { currentUserId: string }) {
   }
 
   return (
-    <PageContainer>
+    <PageContainer backdrop="circuit">
       <PageHeader
         title="Users"
         description="Global accounts. Creating, deactivating, or resetting an account applies system-wide."

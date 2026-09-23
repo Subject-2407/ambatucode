@@ -1,7 +1,7 @@
 "use client";
 
 import { Box, Flex, HStack, RadioGroup, Stack, Text } from "@chakra-ui/react";
-import { RotateCcw } from "lucide-react";
+import { Code2, RotateCcw } from "lucide-react";
 import type { GradeAttemptView, GradeRecordView, SubmissionStatus } from "@ambatucode/shared";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,10 +68,12 @@ function AttemptLine({
   attempt,
   canReset,
   onReset,
+  onViewCode,
 }: {
   attempt: GradeAttemptView;
   canReset: boolean;
   onReset: () => void;
+  onViewCode: () => void;
 }) {
   return (
     <Flex
@@ -118,12 +120,27 @@ function AttemptLine({
         ) : null}
       </HStack>
 
-      {canReset ? (
-        <Button size="xs" variant="ghost" onClick={onReset}>
-          <RotateCcw aria-hidden />
-          Reset
-        </Button>
-      ) : null}
+      {/* `flexShrink` so the actions keep their width when the line above wraps
+          — without it the two buttons were the first thing squeezed, and Reset
+          lost its label before the timestamp beside it lost a character. */}
+      <HStack gap="1" flexShrink="0">
+        {/* The source, where the score is. Reading it used to mean opening the
+            session's monitor, which only exists while the session is running —
+            so the code behind a finished exam was unreachable from the one
+            screen that asks whether the mark is right. */}
+        {attempt.submission === null ? null : (
+          <Button size="xs" variant="ghost" onClick={onViewCode}>
+            <Code2 aria-hidden />
+            Code
+          </Button>
+        )}
+        {canReset ? (
+          <Button size="xs" variant="ghost" onClick={onReset}>
+            <RotateCcw aria-hidden />
+            Reset
+          </Button>
+        ) : null}
+      </HStack>
     </Flex>
   );
 }
@@ -133,11 +150,13 @@ export function GradeRecordRow({
   busy,
   onReset,
   onSetOfficial,
+  onViewCode,
 }: {
   record: GradeRecordView;
   busy: boolean;
   onReset: (attempt: GradeAttemptView) => void;
   onSetOfficial: (attemptId: string) => void;
+  onViewCode: (attempt: GradeAttemptView) => void;
 }) {
   return (
     <Table.Row>
@@ -190,6 +209,7 @@ export function GradeRecordRow({
                 // a thing, and the server refuses it.
                 canReset={attempt.status !== "RESET"}
                 onReset={() => onReset(attempt)}
+                onViewCode={() => onViewCode(attempt)}
               />
             ))}
           </Box>

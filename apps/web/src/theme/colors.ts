@@ -42,6 +42,11 @@ export const colors = defineTokens.colors({
     600: { value: "#6c749a" },
     700: { value: "#575d7e" },
     800: { value: "#424761" },
+    // An extra step, because the dark surface ladder needs four rungs and the
+    // gap from 800 to 900 is the only one wide enough to take one. Without it
+    // `bg.emphasized` had to sit at brand.700, which is too light to carry any
+    // ink at all: muted text landed at 3.5:1 there.
+    850: { value: "#353a58" },
     900: { value: "#282d4f" },
     950: { value: "#1a1c29" },
   },

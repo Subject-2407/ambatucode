@@ -328,3 +328,30 @@ func deref(value *string) string {
 	}
 	return *value
 }
+
+// A Run with no cases still shows the program's output, in a row of its own. A
+// submission with no cases gets no such row, because it would be graded.
+func TestRunWithoutCasesReturnsTheProgramsOutput(t *testing.T) {
+	runner := newDockerRunner(t)
+
+	source := "print('hello from a free run')\n"
+	result := execute(t, runner, job(contract.LanguagePython, source))
+
+	if result.Status != contract.StatusGraded {
+		t.Fatalf("status = %s", result.Status)
+	}
+	if len(result.TestResults) != 1 {
+		t.Fatalf("results = %+v, want exactly the free run row", result.TestResults)
+	}
+	row := result.TestResults[0]
+	if row.Name != contract.FreeRunResultName || !strings.Contains(row.StdoutExcerpt, "hello from a free run") {
+		t.Fatalf("row = %+v", row)
+	}
+
+	submit := job(contract.LanguagePython, source)
+	submit.Kind = contract.KindSubmit
+	graded := execute(t, runner, submit)
+	if len(graded.TestResults) != 0 {
+		t.Fatalf("a submission with no cases got rows: %+v", graded.TestResults)
+	}
+}

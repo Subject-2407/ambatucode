@@ -2,13 +2,12 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Box, Stack, Text } from "@chakra-ui/react";
+import { Alert, Stack } from "@chakra-ui/react";
 import { loginRequestSchema, type LoginResponse } from "@ambatucode/shared";
 import { apiClient, isApiError } from "@/lib/api-client";
 import { homePathForRole } from "@/lib/routes";
 import { BrandMark } from "@/components/layout/brand-mark";
-import { PixelFrame } from "@/components/ui/pixel-frame";
-import { PixelHorizon } from "@/components/ornament/pixel-horizon";
+import { TypedGreeting } from "@/components/ornament/typed-greeting";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/input";
 
@@ -70,104 +69,96 @@ export function LoginForm({ supersededNotice }: { supersededNotice: boolean }) {
   }
 
   return (
-    <PixelFrame
-      tone="emphasized"
-      surface="bg.canvas"
+    <Stack
+      gap="7"
+      align="center"
+      textAlign="center"
       width="full"
-      maxWidth="lg"
-      position="relative"
-      overflow="hidden"
-      boxShadow="overlay"
+      // The form is the only thing here with a width limit. Everything behind
+      // it — gradient, nodes, horizon — runs the full window, which is what
+      // makes this a title screen rather than a card on a blank page.
+      maxWidth="sm"
+      paddingBottom="20"
     >
-      <Stack
-        gap="7"
-        align="center"
-        textAlign="center"
-        paddingX={{ base: "5", sm: "10" }}
-        paddingTop={{ base: "10", sm: "14" }}
-        // Leaves the horizon its band without the form sitting on top of it.
-        paddingBottom="28"
-        position="relative"
-      >
-        <Stack gap="2" align="center">
-          <BrandMark size="hero" />
-          <Text textStyle="display" fontSize="xs" color="accent.fg" letterSpacing="0.2em">
-            Offline
-            <Box as="span" aria-hidden animation="caretBlink 1.1s steps(1, end) infinite">
-              {" – ready_"}
-            </Box>
-          </Text>
-        </Stack>
-
-        {supersededNotice ? (
-          <Alert.Root status="warning" size="sm" borderRadius="0" textAlign="start">
-            <Alert.Indicator />
-            <Alert.Content>
-              <Alert.Description>
-                Your previous session ended because this account signed in elsewhere.
-              </Alert.Description>
-            </Alert.Content>
-          </Alert.Root>
-        ) : null}
-
-        {/* A plain form element: Chakra's polymorphic Box does not carry the
-            form-specific props, and the submit handler is typed against the
-            real element rather than a div wearing its tag. */}
-        <form
-          onSubmit={(event) => void handleSubmit(event)}
-          noValidate
-          style={{ width: "100%", textAlign: "start" }}
-        >
-          <Stack gap="4">
-            <TextField
-              label="Username"
-              name="username"
-              autoComplete="username"
-              autoFocus
-              required
-              value={username}
-              onChange={(event) => setUsername(event.currentTarget.value)}
-              errorText={fieldErrors.username}
-            />
-            <TextField
-              label="Password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.currentTarget.value)}
-              errorText={fieldErrors.password}
-            />
-
-            {formError ? (
-              <Alert.Root status="error" size="sm" role="alert" borderRadius="0">
-                <Alert.Indicator />
-                <Alert.Content>
-                  <Alert.Description>{formError}</Alert.Description>
-                </Alert.Content>
-              </Alert.Root>
-            ) : null}
-
-            <Button
-              type="submit"
-              size="lg"
-              loading={submitting}
-              loadingText="Signing in"
-              width="full"
-              marginTop="2"
-            >
-              Press start
-            </Button>
-          </Stack>
-        </form>
-
-        <Text fontSize="xs" color="fg.subtle" maxWidth="44ch">
-          One account, one active session. Signing in here ends any other session for this account.
-        </Text>
-
-        <PixelHorizon />
+      <Stack gap="3" align="center" width="full">
+        <BrandMark size="hero" />
+        <TypedGreeting />
       </Stack>
-    </PixelFrame>
+
+      {supersededNotice ? (
+        <Alert.Root status="warning" size="sm" borderRadius="0" textAlign="start">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Description>
+              Your previous session ended because this account signed in elsewhere.
+            </Alert.Description>
+          </Alert.Content>
+        </Alert.Root>
+      ) : null}
+
+      {/* A plain form element: Chakra's polymorphic Box does not carry the
+          form-specific props, and the submit handler is typed against the
+          real element rather than a div wearing its tag.
+
+          method="post" is a fallback, not the real path: onSubmit always
+          calls preventDefault() and posts JSON through fetch. But if this
+          form is ever submitted before hydration attaches that handler —
+          a slow connection, a very loaded machine, a password manager
+          racing the page — the browser falls back to its native submit.
+          Without an explicit method, that default is GET, which puts the
+          password in the URL, the browser history, and every access log
+          it touches. POST to nowhere useful is a strictly safer failure
+          than that. */}
+      <form
+        onSubmit={(event) => void handleSubmit(event)}
+        method="post"
+        noValidate
+        style={{ width: "100%", textAlign: "start" }}
+      >
+        <Stack gap="4">
+          <TextField
+            label="Username"
+            name="username"
+            autoComplete="username"
+            autoFocus
+            required
+            value={username}
+            onChange={(event) => setUsername(event.currentTarget.value)}
+            errorText={fieldErrors.username}
+          />
+          <TextField
+            label="Password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(event) => setPassword(event.currentTarget.value)}
+            errorText={fieldErrors.password}
+          />
+
+          {formError ? (
+            <Alert.Root status="error" size="sm" role="alert" borderRadius="0">
+              <Alert.Indicator />
+              <Alert.Content>
+                <Alert.Description>{formError}</Alert.Description>
+              </Alert.Content>
+            </Alert.Root>
+          ) : null}
+
+          <Button
+            type="submit"
+            size="lg"
+            loading={submitting}
+            loadingText="Signing in"
+            width="full"
+            marginTop="2"
+            marginBottom="10"
+          >
+            Sign In
+          </Button>
+        </Stack>
+      </form>
+    </Stack>
   );
 }

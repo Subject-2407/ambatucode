@@ -1,0 +1,20 @@
+[Unit]
+Description=Ambatucode web/realtime/postgres/redis (docker compose)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+# Every container in prod.yml already has restart: unless-stopped, so it
+# survives a reboot on its own once Docker's daemon starts. This unit exists
+# purely so the stack can be started/stopped/inspected the same way as
+# ambatucode-worker.service (systemctl status/start/stop ambatucode-stack),
+# not because compose needs systemd to keep it running.
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=/opt/ambatucode
+ExecStart=/usr/bin/docker compose -f docker/compose/prod.yml --env-file deploy/.env.production up -d
+ExecStop=/usr/bin/docker compose -f docker/compose/prod.yml --env-file deploy/.env.production down
+
+[Install]
+WantedBy=multi-user.target

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import NextLink from "next/link";
-import { HStack, Stack, Text } from "@chakra-ui/react";
+import { Stack, Text } from "@chakra-ui/react";
 import { ChevronLeft } from "lucide-react";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
+import { NextItemLink } from "@/components/content/next-item-link";
 import { PracticeActivity } from "@/components/content/practice-activity";
 import { isEmptyDocument } from "@/components/content/rich-text";
 import { RichTextView } from "@/components/content/rich-text-view";
@@ -11,6 +12,8 @@ import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { routes } from "@/lib/routes";
 import { getMaterial } from "@/server/services/materials";
+import { nextModuleItem } from "@/server/services/module-progression";
+import { scopeForMaterial } from "@/server/services/content-scope";
 
 export const metadata: Metadata = { title: "Material" };
 export const dynamic = "force-dynamic";
@@ -34,6 +37,15 @@ export default async function MaterialPage({ params }: PageProps) {
     handlePageError(error, routes.module(moduleSlug)),
   );
 
+  // Resolved here rather than in `getMaterial`: what comes after a Material is
+  // a property of the Module, not of the Material, and every other caller of
+  // that service would be paying for a walk of the whole tree it never reads.
+  const scope = await scopeForMaterial(materialId);
+  const progression = await nextModuleItem(session.user, scope.moduleId, {
+    kind: "MATERIAL",
+    id: materialId,
+  });
+
   return (
     <PageContainer>
       <Stack gap="2" mb="2">
@@ -56,17 +68,16 @@ export default async function MaterialPage({ params }: PageProps) {
 
         {material.practiceActivities.length > 0 ? (
           <Stack gap="4">
-            <HStack gap="2">
-              <Text textStyle="display">Practice</Text>
-              <Text fontSize="sm" color="fg.muted">
-                Try it out — nothing here is graded.
-              </Text>
-            </HStack>
+            <Text textStyle="display">Practice</Text>
             {material.practiceActivities.map((activity) => (
               <PracticeActivity key={activity.id} activity={activity} />
             ))}
           </Stack>
         ) : null}
+
+        {/* The SRS asks for explanation, example, practice, next material as
+            one progression. This is the last of those four. */}
+        <NextItemLink progression={progression} />
       </Stack>
     </PageContainer>
   );

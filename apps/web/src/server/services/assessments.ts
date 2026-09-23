@@ -13,6 +13,7 @@ import {
   MAX_TEST_CASES_PER_ASSESSMENT,
   MAX_TEST_SCRIPTS_PER_LANGUAGE,
   isExecutableLanguage,
+  openAccessProblem,
   timingProblem,
   type AssessmentArchitectView,
   type AssessmentCoderView,
@@ -43,9 +44,11 @@ import {
   toTestScriptView,
 } from "../serializers/assessment";
 import { scopeForAssessment, scopeForTestCase, scopeForTestScript } from "./assessment-scope";
+import { ASSESSMENT_SELECT } from "./assessment-select";
 import { moduleIdForSection } from "./content-scope";
 import { assertCanRead, assertCanWrite } from "./modules";
 import { sessionEligibility } from "./participation";
+import { closeOpenAccessSessions, ensureOpenAccessSession } from "./sessions";
 import {
   VALIDATION_SELECT,
   enqueueScriptValidation,
@@ -63,26 +66,6 @@ import {
  * running would change the rules under Coders mid-attempt, so that is refused.
  */
 
-export const ASSESSMENT_SELECT = {
-  id: true,
-  sectionId: true,
-  title: true,
-  orderIndex: true,
-  isPublished: true,
-  timeMode: true,
-  durationMinutes: true,
-  executionMode: true,
-  problemStatement: true,
-  allowedLanguages: true,
-  starterCodeJson: true,
-  timeLimitMs: true,
-  memoryLimitMb: true,
-  gradingStrategy: true,
-  antiCheatConfigJson: true,
-  createdAt: true,
-  updatedAt: true,
-  section: { select: { moduleId: true } },
-} satisfies Prisma.AssessmentSelect;
 
 const TEST_CASE_SELECT = {
   id: true,
@@ -137,13 +120,35 @@ function assertStarterCodeMatchesLanguages(
 }
 
 async function assertNoRunningSession(assessmentId: string): Promise<void> {
+  // The implicit open-access session is excluded: it is running from the
+  // moment open access is switched on and has no End button, so counting it
+  // here would make an open assessment permanently uneditable. What actually
+  // has to be protected is a Coder mid-attempt, which is the guard below.
   const running = await prisma.assessmentSession.count({
-    where: { assessmentId, status: "RUNNING" },
+    where: { assessmentId, status: "RUNNING", isOpenAccess: false },
   });
   if (running > 0) {
     throw new AppError(
       "CONFLICT",
       "This assessment has a running session; end it before changing the assessment",
+    );
+  }
+}
+
+/**
+ * The open-access counterpart of the guard above.
+ *
+ * An open-access Assessment can be sat at any moment, so "no running session"
+ * is not the question — "is anyone answering it right now" is.
+ */
+async function assertNoOpenAccessAttemptInProgress(assessmentId: string): Promise<void> {
+  const live = await prisma.assessmentAttempt.count({
+    where: { status: "IN_PROGRESS", session: { assessmentId, isOpenAccess: true } },
+  });
+  if (live > 0) {
+    throw new AppError(
+      "CONFLICT",
+      "A Coder is part-way through this open-access assessment; close open access first",
     );
   }
 }
@@ -158,6 +163,12 @@ async function loadArchitectView(assessmentId: string): Promise<AssessmentArchit
       testScripts: {
         select: TEST_SCRIPT_SELECT,
         orderBy: [{ language: "asc" }, { entrypoint: "asc" }],
+      },
+      // At most one is running at a time; older closed ones are history.
+      sessions: {
+        where: { isOpenAccess: true, status: "RUNNING" },
+        select: { id: true },
+        take: 1,
       },
     },
   });
@@ -181,6 +192,7 @@ export async function listSectionAssessments(
       title: true,
       orderIndex: true,
       isPublished: true,
+      isOpenAccess: true,
       timeMode: true,
       durationMinutes: true,
       executionMode: true,
@@ -217,12 +229,19 @@ export async function createAssessment(
         timeLimitMs: input.timeLimitMs,
         memoryLimitMb: input.memoryLimitMb,
         gradingStrategy: input.gradingStrategy,
+        exitPolicy: input.exitPolicy,
         antiCheatConfigJson: toJsonInput(input.antiCheat),
         isPublished: input.isPublished,
+        isOpenAccess: input.isOpenAccess,
       },
       select: { id: true },
     });
   });
+
+  // The session an open-access Assessment is sat in exists from the moment the
+  // switch is on, not from the moment the first Coder arrives — so a Coder's
+  // read stays a read.
+  if (input.isOpenAccess) await ensureOpenAccessSession(created.id);
 
   return loadArchitectView(created.id);
 }
@@ -245,6 +264,10 @@ export async function getAssessment(
   if (!scope.isPublished) {
     throw new AppError("NOT_FOUND", "Assessment not found");
   }
+  // Normally a no-op: the session is created when open access is switched on.
+  // It is here so an Assessment whose flag was set any other way still answers
+  // with somewhere for the Coder to sit, rather than an empty Sessions list.
+  if (scope.isOpenAccess) await ensureOpenAccessSession(assessmentId);
   return { view: "CODER", assessment: await loadCoderView(actor, assessmentId) };
 }
 
@@ -266,7 +289,10 @@ async function loadCoderView(
       },
       sessions: {
         where: { status: { in: ["READY", "RUNNING", "ENDED"] } },
-        orderBy: { createdAt: "desc" },
+        // The open-access session first, whatever its age: it is the one a
+        // Coder can always walk into, so it should not sit below a scheduled
+        // session they are only waiting for.
+        orderBy: [{ isOpenAccess: "desc" }, { createdAt: "desc" }],
         select: {
           id: true,
           name: true,
@@ -274,11 +300,20 @@ async function loadCoderView(
           executionMode: true,
           durationMinutes: true,
           endsAt: true,
+          closesAt: true,
+          requireAllReady: true,
+          access: true,
+          isOpenAccess: true,
           attempts: {
             where: { userId: actor.id },
             orderBy: { attemptNumber: "desc" },
             take: 1,
-            select: { id: true, attemptNumber: true, status: true },
+            select: {
+              id: true,
+              attemptNumber: true,
+              status: true,
+              grantedOutsideSession: true,
+            },
           },
         },
       },
@@ -288,11 +323,23 @@ async function loadCoderView(
   const sessions: CoderSessionEntry[] = [];
   for (const session of row.sessions) {
     const attempt = session.attempts[0] ?? null;
-    const eligibility = await sessionEligibility(session.id, actor.id, session.executionMode);
+    const eligibility = await sessionEligibility(
+      session.id,
+      actor.id,
+      session.executionMode,
+      session.access,
+    );
     // A Coder sees a session they can take part in, or one they already did.
     if (!eligibility.eligible && attempt === null) continue;
     // A finished session nobody here took part in is noise, not history.
     if (session.status === "ENDED" && attempt === null) continue;
+
+    /**
+     * The retake an Architect granted after this session ended. It is the one
+     * reason a Start button belongs on a session that shows as Ended, and the
+     * server admits exactly this case — see `startAttempt`.
+     */
+    const grantedRetake = attempt?.status === "NOT_STARTED" && attempt.grantedOutsideSession;
 
     sessions.push({
       id: session.id,
@@ -301,11 +348,23 @@ async function loadCoderView(
       executionMode: session.executionMode,
       durationMinutes: session.durationMinutes,
       endsAt: session.endsAt?.toISOString() ?? null,
-      attempt,
+      closesAt: session.closesAt?.toISOString() ?? null,
+      requireAllReady: session.requireAllReady,
+      attempt:
+        attempt === null
+          ? null
+          : { id: attempt.id, attemptNumber: attempt.attemptNumber, status: attempt.status },
       canStart:
-        session.status === "RUNNING" &&
-        eligibility.eligible &&
-        (attempt === null || attempt.status === "IN_PROGRESS" || attempt.status === "NOT_STARTED"),
+        grantedRetake ||
+        (session.status === "RUNNING" &&
+          eligibility.eligible &&
+          (attempt === null ||
+            attempt.status === "IN_PROGRESS" ||
+            attempt.status === "NOT_STARTED")),
+      isOpenAccess: session.isOpenAccess,
+      openToModule: session.access === "MODULE",
+      isGrantedRetake: grantedRetake,
+      isListed: eligibility.listed,
     });
   }
 
@@ -327,6 +386,13 @@ export async function updateAssessment(
   await assertCanWrite(actor, scope.moduleId);
   await assertNoRunningSession(assessmentId);
 
+  // Closing open access is a lifecycle action, not a rule change: it is the
+  // open-access equivalent of pressing End, and End is allowed to finish
+  // attempts that are still open. Every other patch has to wait for them.
+  const onlyClosingOpenAccess =
+    input.isOpenAccess === false && Object.keys(input).length === 1;
+  if (!onlyClosingOpenAccess) await assertNoOpenAccessAttemptInProgress(assessmentId);
+
   const current = await loadArchitectView(assessmentId);
 
   // Checked as the Assessment will be after the patch, so a request that
@@ -339,6 +405,15 @@ export async function updateAssessment(
   };
   const problem = timingProblem(next);
   if (problem) throw new AppError("VALIDATION_FAILED", problem);
+
+  // Checked against the patched shape for the same reason: switching to Live
+  // while open access is already on has to be caught here, not only when the
+  // two arrive in one request.
+  const openAccess = openAccessProblem({
+    isOpenAccess: input.isOpenAccess ?? current.isOpenAccess,
+    executionMode: next.executionMode,
+  });
+  if (openAccess) throw new AppError("VALIDATION_FAILED", openAccess);
 
   const allowedLanguages = input.allowedLanguages ?? current.allowedLanguages;
   const starterCode = input.starterCode ?? current.starterCode;
@@ -371,12 +446,20 @@ export async function updateAssessment(
       ...(input.timeLimitMs === undefined ? {} : { timeLimitMs: input.timeLimitMs }),
       ...(input.memoryLimitMb === undefined ? {} : { memoryLimitMb: input.memoryLimitMb }),
       ...(input.gradingStrategy === undefined ? {} : { gradingStrategy: input.gradingStrategy }),
+      ...(input.exitPolicy === undefined ? {} : { exitPolicy: input.exitPolicy }),
       ...(input.antiCheat === undefined
         ? {}
         : { antiCheatConfigJson: toJsonInput(input.antiCheat) }),
       ...(input.isPublished === undefined ? {} : { isPublished: input.isPublished }),
+      ...(input.isOpenAccess === undefined ? {} : { isOpenAccess: input.isOpenAccess }),
     },
   });
+
+  // Switching open access on brings its session up; switching it off ends that
+  // session the same way an Architect's End would, so any attempt still open in
+  // it is auto-submitted and graded rather than stranded.
+  if (input.isOpenAccess === true) await ensureOpenAccessSession(assessmentId);
+  if (input.isOpenAccess === false) await closeOpenAccessSessions(assessmentId);
 
   return loadArchitectView(assessmentId);
 }
@@ -388,6 +471,7 @@ export async function deleteAssessment(
   const scope = await scopeForAssessment(assessmentId);
   await assertCanWrite(actor, scope.moduleId);
   await assertNoRunningSession(assessmentId);
+  await assertNoOpenAccessAttemptInProgress(assessmentId);
 
   try {
     await prisma.$transaction(async (tx) => {

@@ -2,6 +2,7 @@
 
 import { forwardRef } from "react";
 import { Badge as ChakraBadge, Box, type BadgeProps as ChakraBadgeProps } from "@chakra-ui/react";
+import { pixelSkin } from "@/theme/pixel";
 
 /**
  * `tone` is the vocabulary the rest of the app uses for status. Mapping it here
@@ -49,9 +50,11 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
       ref={ref}
       colorPalette={TONE_PALETTE[tone]}
       textStyle="display"
-      borderRadius="0"
-      borderWidth="2px"
-      borderColor="currentColor"
+      // The edge is painted as the badge's own background with the fill laid
+      // over it. An inset ring — what this used to draw — is painted along the
+      // border box, and the notch clips away exactly the corners where that
+      // ring turns, which left every badge with four bare diagonal steps.
+      {...pixelSkin("currentColor", "var(--amb-colors-color-palette-subtle)", 2)}
       gap="1.5"
       {...props}
     >

@@ -185,7 +185,7 @@ export function InteractiveBlockDialog({
               >
                 {/* A block has no console of its own; without this an Architect
                     debugging one is completely blind. */}
-                <Text fontSize="xs" fontFamily="mono" color="fg.error">
+                <Text fontSize="xs" textStyle="data" color="fg.error">
                   {runtimeError}
                 </Text>
               </Box>

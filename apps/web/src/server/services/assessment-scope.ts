@@ -14,12 +14,18 @@ export type AssessmentScope = {
   sectionId: string;
   moduleId: string;
   isPublished: boolean;
+  isOpenAccess: boolean;
 };
 
 export async function scopeForAssessment(assessmentId: string): Promise<AssessmentScope> {
   const assessment = await prisma.assessment.findUnique({
     where: { id: assessmentId },
-    select: { sectionId: true, isPublished: true, section: { select: { moduleId: true } } },
+    select: {
+      sectionId: true,
+      isPublished: true,
+      isOpenAccess: true,
+      section: { select: { moduleId: true } },
+    },
   });
   if (!assessment) {
     throw new AppError("NOT_FOUND", "Assessment not found");
@@ -29,6 +35,7 @@ export async function scopeForAssessment(assessmentId: string): Promise<Assessme
     sectionId: assessment.sectionId,
     moduleId: assessment.section.moduleId,
     isPublished: assessment.isPublished,
+    isOpenAccess: assessment.isOpenAccess,
   };
 }
 

@@ -220,6 +220,19 @@ enum AssessmentExecutionMode {
   LIVE
 }
 
+// What leaving the attempt workspace does. Set per Assessment, because the
+// right answer differs between a take-home exercise and a supervised exam.
+enum AssessmentExitPolicy {
+  // Leaving saves the draft and keeps the attempt open. The Coder returns to
+  // it with Continue; an Individual timer pauses while they are away, a Live
+  // one does not.
+  RESUME
+  // Leaving submits formally. The Coder is warned first and confirms.
+  SUBMIT
+  // There is no way out but Submit. The workspace offers no exit control.
+  BLOCKED
+}
+
 enum GradingStrategy {
   ALL_OR_NOTHING
   WEIGHTED_AVERAGE
@@ -239,11 +252,18 @@ model Assessment {
   timeLimitMs            Int                      @default(5000)
   memoryLimitMb          Int                      @default(256)
   gradingStrategy        GradingStrategy          @default(WEIGHTED_AVERAGE)
+  exitPolicy             AssessmentExitPolicy     @default(RESUME)
   antiCheatConfigJson    Json                     @default("{}")
   // Architect-only source per language, never sent to a Coder: the program
   // test scripts are validated against.
   referenceSolutionsJson Json                     @default("{}")
   isPublished            Boolean                  @default(false)
+  // Open access: any Coder enrolled in the Module may start this Assessment at
+  // any time, with no session scheduled for them. It is backed by one
+  // long-lived session per Assessment (isOpenAccess below), so attempts,
+  // submissions, grading and monitoring all keep working unchanged. Live mode
+  // cannot be open: a global timer has to be started by somebody.
+  isOpenAccess           Boolean                  @default(false)
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
 
@@ -350,6 +370,16 @@ enum AssessmentSessionStatus {
   CANCELLED
 }
 
+// Who may take part in a session, beyond the Coders the Architect listed.
+enum SessionAccess {
+  // Only listed participants — or, while no list exists, every enrolled Coder,
+  // which is the long-standing behaviour for Individual and Untimed sessions.
+  LISTED
+  // Every Coder enrolled in the Module, whether or not a list exists. This is
+  // what lets an Architect open a session to a whole class without naming it.
+  MODULE
+}
+
 model AssessmentSession {
   id                             String                   @id @default(cuid())
   assessmentId                   String
@@ -357,8 +387,26 @@ model AssessmentSession {
   executionMode                  AssessmentExecutionMode?
   durationMinutes                Int?
   status                         AssessmentSessionStatus  @default(DRAFT)
+  access                         SessionAccess            @default(LISTED)
+  // The one implicit session behind an open-access Assessment. It is created
+  // on demand, never appears in the Architect's session list as something to
+  // start or end, and is the only session a Coder may join without one having
+  // been scheduled.
+  isOpenAccess                   Boolean                  @default(false)
+  // The Architect's own closing time for a scheduled session, set before it
+  // starts. Live mode computes its deadline from the duration instead, so this
+  // is for the Individual and Untimed sessions that otherwise had no way to
+  // stop: past it nobody may join, nobody may submit, and whoever is still
+  // working is auto-submitted. Copied into `endsAt` at start, which is what
+  // every clock and every guard already reads.
+  closesAt                       DateTime?
+  // When true the session refuses to start until every listed participant is
+  // ready. The Architect may still override with an explicit Start anyway.
+  requireAllReady                Boolean                  @default(false)
   startedAt                      DateTime?
-  // Authoritative deadline for Live mode. Set once at start, never moved.
+  // The authoritative deadline once a session is running. Live mode sets it
+  // from the duration at start; every other mode copies `closesAt`, or leaves
+  // it null when the Architect set none.
   endsAt                         DateTime?
   startedById                    String?
   startedWithMissingParticipants Boolean                  @default(false)
@@ -373,6 +421,7 @@ model AssessmentSession {
   events       AssessmentEvent[]
 
   @@index([assessmentId, status])
+  @@index([assessmentId, isOpenAccess])
 }
 
 enum ReadyState {
@@ -431,10 +480,24 @@ model AssessmentAttempt {
   // Submission; this is a counter so gamification can tell a first-try solve
   // from a twentieth, and nothing else reads it.
   runCount             Int           @default(0)
+  // The source as it stood the last time the Coder pressed Run, so an
+  // Architect supervising a session can see what is actually being executed
+  // rather than waiting for a formal Submission. Captured on Run only — not on
+  // autosave — so it is a snapshot of a deliberate act, not a keystroke feed.
+  lastRunLanguage      String?
+  lastRunSourceCode    String?
+  lastRunAt            DateTime?
   // At most one attempt per (sessionId, userId) may be official. The siblings
   // hold false rather than null, so a partial unique index cannot express it —
   // the official-score transaction enforces it instead.
   isOfficial           Boolean       @default(false)
+  // Set when a reset opened this attempt in a session that was no longer
+  // running. The Architect granted a retake to one named Coder after the exam
+  // was over, so this attempt answers to itself: the session's status and its
+  // closing time do not apply to it, and it carries its own Individual clock.
+  // Without it the attempt existed but could never be started, which made
+  // resetting from the grading records produce a record nobody could act on.
+  grantedOutsideSession Boolean      @default(false)
   resetById            String?
   resetAt              DateTime?
   resetReason          String?
@@ -526,6 +589,11 @@ model SubmissionTestResult {
   memoryUsedKb    Int?
   stdoutExcerpt   String            @default("")
   stderrExcerpt   String            @default("")
+  // Why a failing test failed, in words and with no value from the assertion
+  // in them. Null on a passing test and on rows graded before it existed; a
+  // script row keeps it even though its excerpts are blanked, because this is
+  // the platform's sentence rather than the framework's output.
+  failureDetail   String?
   // Rows with isPublic = false are stripped before any Coder-facing response.
   isPublic        Boolean           @default(false)
   createdAt       DateTime          @default(now())
