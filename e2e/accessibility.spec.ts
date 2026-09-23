@@ -75,6 +75,7 @@ const SCREENS: Screen[] = [
     path: (f) => `/manage/sessions/${f.sessionId}`,
     ready: "Readiness",
   },
+  { name: "monitor index", role: "architect", path: () => "/manage/monitor", ready: "Monitor" },
   {
     name: "live monitor",
     role: "architect",
