@@ -156,18 +156,23 @@ export const semanticColors = defineSemanticTokens.colors({
    * The wordmark, which is neither a surface nor a status and so belongs to
    * neither vocabulary above.
    *
-   * It used to be drawn in `fg.default`, so on paper the title screen showed a
-   * near-black name — correct for body text, far too heavy for a logo that
-   * fills the window. Light mode hands it the crimson seed with the navy one
-   * behind it, which is a pairing the palette already contains; dark mode keeps
-   * the bone ink and moves crimson into the offset.
+   * Three inks, stacked as hard offsets rather than one flat colour: the face
+   * is a bitmap type at title-screen size, and a single colour at that scale is
+   * a slab. Each layer steps four pixels — the grid unit — down and right.
+   *
+   * Light mode reads white, navy, crimson from front to back; dark mode reads
+   * bone, crimson, lagoon. The front ink is the lightest in both, so the shape
+   * of the letters is carried by the two darker plates behind it rather than by
+   * contrast against the ground.
    *
    * Not gold. Gold means an earned Title or Architect-authored content, and a
    * logo wearing it would weaken that everywhere else.
    */
   mark: {
-    ink: { value: { _light: "{colors.crimson.700}", _dark: "{colors.bone.100}" } },
+    ink: { value: { _light: "white", _dark: "{colors.bone.100}" } },
     shadow: { value: { _light: "{colors.brand.900}", _dark: "{colors.crimson.700}" } },
+    /** The third plate, furthest back. Only the hero wordmark carries it. */
+    glow: { value: { _light: "{colors.crimson.700}", _dark: "{colors.lagoon.300}" } },
   },
 
   secondary: palette("plum"),

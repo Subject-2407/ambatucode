@@ -67,6 +67,15 @@ export function TestResultRow({ result }: { result: RunTestResultView }) {
         </Text>
       </HStack>
 
+      {/* Why it failed, when the failure came from a test script. A case says
+          it with both streams above; a script test has none to show, and
+          without this it said only "Failed" beside a method name. */}
+      {result.failureDetail === null ? null : (
+        <Text fontSize="xs" color="fg.error">
+          {result.failureDetail}
+        </Text>
+      )}
+
       {isFreeRunResult(result) && stdout.trim() === "" && stderr.trim() === "" ? (
         <Text fontSize="xs" color="fg.muted">
           The program printed nothing.

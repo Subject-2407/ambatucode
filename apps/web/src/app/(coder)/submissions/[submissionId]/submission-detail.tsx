@@ -141,16 +141,14 @@ export function SubmissionDetail({
                 {submission.testResults.map((result, index) => {
                   const outcome = describeCaseOutcome(result);
                   return (
-                    <Flex
+                    <Stack
                       key={`${result.name}-${String(index)}`}
-                      gap="3"
-                      align="center"
-                      justify="space-between"
+                      gap="1"
                       paddingY="2"
                       borderTopWidth={index === 0 ? "0" : "1px"}
                       borderColor="border.default"
-                      wrap="wrap"
                     >
+                      <Flex gap="3" align="center" justify="space-between" wrap="wrap">
                       <HStack gap="2" minWidth="0">
                         {/* An icon and a word, never colour alone. */}
                         <Box color={result.passed ? "success.fg" : "danger.fg"}>
@@ -174,7 +172,17 @@ export function SubmissionDetail({
                           </Text>
                         )}
                       </HStack>
-                    </Flex>
+                      </Flex>
+
+                      {/* Why it failed. A script test has no output to show —
+                          a framework's output quotes what it expected — so
+                          without this the row said "Failed" and no more. */}
+                      {result.failureDetail === null ? null : (
+                        <Text fontSize="xs" color="fg.error">
+                          {result.failureDetail}
+                        </Text>
+                      )}
+                    </Stack>
                   );
                 })}
               </Stack>

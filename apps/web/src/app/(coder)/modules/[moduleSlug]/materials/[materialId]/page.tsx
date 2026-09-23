@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import NextLink from "next/link";
-import { HStack, Stack, Text } from "@chakra-ui/react";
+import { Stack, Text } from "@chakra-ui/react";
 import { ChevronLeft } from "lucide-react";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
@@ -68,12 +68,7 @@ export default async function MaterialPage({ params }: PageProps) {
 
         {material.practiceActivities.length > 0 ? (
           <Stack gap="4">
-            <HStack gap="2">
-              <Text textStyle="display">Practice</Text>
-              <Text fontSize="sm" color="fg.muted">
-                Try it out — nothing here is graded.
-              </Text>
-            </HStack>
+            <Text textStyle="display">Practice</Text>
             {material.practiceActivities.map((activity) => (
               <PracticeActivity key={activity.id} activity={activity} />
             ))}

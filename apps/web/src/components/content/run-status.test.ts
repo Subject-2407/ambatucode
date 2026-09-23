@@ -3,7 +3,15 @@ import type { RunTestResultView } from "@ambatucode/shared";
 import { describeCaseOutcome, describeRun, withoutRuntimeNotice } from "./run-status";
 
 function row(passed: boolean, status: RunTestResultView["status"] = "GRADED"): RunTestResultView {
-  return { name: "case", status, passed, executionTimeMs: 1, stdoutExcerpt: "", stderrExcerpt: "" };
+  return {
+    name: "case",
+    status,
+    passed,
+    executionTimeMs: 1,
+    stdoutExcerpt: "",
+    stderrExcerpt: "",
+    failureDetail: null,
+  };
 }
 
 describe("describeRun", () => {

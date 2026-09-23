@@ -32,7 +32,12 @@ import { useAttemptSubmission } from "@/hooks/use-attempt-submission";
 import { useRunJob } from "@/hooks/use-run-job";
 import { apiClient, isApiError } from "@/lib/api-client";
 import { describeAntiCheat } from "@/lib/anti-cheat";
-import { chooseDraft, clearLocalDraft, readLocalDraft } from "@/lib/local-draft";
+import {
+  chooseDraft,
+  clearLocalDraft,
+  readLocalDraft,
+  type LocalDraft,
+} from "@/lib/local-draft";
 import { routes } from "@/lib/routes";
 import { useEnterAssessmentMode } from "@/providers/assessment-mode";
 
@@ -72,6 +77,28 @@ export function AttemptWorkspace({
   const [source, setSource] = useState(
     () => attempt.draft?.sourceCode ?? assessment.starterCode[language] ?? "",
   );
+  /**
+   * The buffer as it stands, and the moment it was last typed into.
+   *
+   * Reconciliation compares timestamps, and the newest copy of a Coder's work
+   * is not the one in IndexedDB — that is written on a throttle — but the one
+   * on screen. Comparing against the stored copy instead meant a reconnect
+   * mid-sentence restored a buffer half a second old. Monaco applies an
+   * external value as one whole-document edit, so the characters came back a
+   * keystroke later but the caret did not: it was left at the end of the file.
+   */
+  const buffer = useRef({ language, sourceCode: source });
+  useEffect(() => {
+    buffer.current = { language, sourceCode: source };
+  }, [language, source]);
+  /** Zero until the Coder changes something, which is what makes it comparable. */
+  const editedAtMs = useRef(0);
+
+  const edit = useCallback((next: string) => {
+    editedAtMs.current = Date.now();
+    setSource(next);
+  }, []);
+
   const [pendingLanguage, setPendingLanguage] = useState<Language | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [exitOpen, setExitOpen] = useState(false);
@@ -119,6 +146,22 @@ export function AttemptWorkspace({
     submissionState.phase !== "none" ||
     awaitingDeadline;
 
+  /**
+   * Whether leaving still has anything to decide.
+   *
+   * Once the attempt is over — submitted, auto-submitted, expired — there is no
+   * draft to save and no submission to make, so Leave is just the way out. It
+   * used to share `locked` with Run and Submit, which meant the moment a Coder
+   * finished their one submission the only door on the screen greyed itself out
+   * and left them with the browser's Back button. Closing a finished attempt is
+   * not an action that needs guarding.
+   */
+  const settled =
+    status !== "IN_PROGRESS" ||
+    terminal.kind !== "NONE" ||
+    submissionState.phase === "tracking" ||
+    submissionState.phase === "settled";
+
   const draft = useAttemptDraft({
     attemptId: attempt.id,
     language,
@@ -139,7 +182,15 @@ export function AttemptWorkspace({
    */
   const reconcile = useCallback(
     async (serverDraft: AttemptView["draft"], skewMs: number) => {
-      const local = await readLocalDraft(attempt.id);
+      const stored = await readLocalDraft(attempt.id);
+      // The editor's own buffer is a local draft too, and a newer one than the
+      // store holds whenever the Coder has typed since the last throttled
+      // write. Handing the stale one to chooseDraft is how a reconnect used to
+      // wind the editor back a keystroke and throw the caret to the bottom.
+      const local: LocalDraft | null =
+        editedAtMs.current > (stored?.savedAtMs ?? 0)
+          ? { attemptId: attempt.id, ...buffer.current, savedAtMs: editedAtMs.current }
+          : stored;
       const choice = chooseDraft({
         local,
         server: serverDraft
@@ -290,6 +341,13 @@ export function AttemptWorkspace({
    * RESUME is that the code is there when they come back.
    */
   const confirmExit = useCallback(async () => {
+    // A finished attempt has nothing to save and nothing to hand in. Walk out.
+    if (settled) {
+      setExitOpen(false);
+      router.push(routes.assessment(moduleSlug, assessment.id));
+      return;
+    }
+
     setExiting(true);
     try {
       if (assessment.exitPolicy === "SUBMIT") {
@@ -311,7 +369,17 @@ export function AttemptWorkspace({
         description: isApiError(error) ? error.userMessage : "Please try again.",
       });
     }
-  }, [assessment.exitPolicy, assessment.id, attempt.id, language, moduleSlug, router, source, submit]);
+  }, [
+    assessment.exitPolicy,
+    assessment.id,
+    attempt.id,
+    language,
+    moduleSlug,
+    router,
+    settled,
+    source,
+    submit,
+  ]);
 
   function applyLanguage(next: Language) {
     const result = switchLanguage({
@@ -320,6 +388,7 @@ export function AttemptWorkspace({
       nextLanguage: next,
       starterCode: assessment.starterCode,
     });
+    editedAtMs.current = Date.now();
     setLanguage(next);
     setSource(result.source);
   }
@@ -396,7 +465,7 @@ export function AttemptWorkspace({
         <CodeEditor
           language={language}
           value={source}
-          onChange={setSource}
+          onChange={edit}
           readOnly={locked}
           blockContextMenu={assessment.antiCheat.blockContextMenu}
           ariaLabel={`Code editor for ${assessment.title}`}
@@ -415,8 +484,11 @@ export function AttemptWorkspace({
             state={runState}
             idle={
               <Text fontSize="sm" color="fg.muted">
+                {/* A Run carries this Assessment's test scripts now, so an
+                    Assessment with no sample case is no longer just a program
+                    being executed with nothing to check it against. */}
                 {assessment.sampleCases.length === 0
-                  ? "Run your code to see what it prints."
+                  ? "Run your code to check it."
                   : "Run your code to check it against the sample cases."}{" "}
                 Runs are unlimited and never consume your submission.
               </Text>
@@ -475,13 +547,22 @@ export function AttemptWorkspace({
             {/* There was no way out of this screen at all: the shell hides its
                 navigation during an attempt, so a Coder who opened one had the
                 browser's Back button and nothing else. What this does is the
-                Architect's decision — see `exitPolicy`. */}
+                Architect's decision — see `exitPolicy`.
+
+                Crimson, and solid rather than outlined. Leaving is the one
+                control here that can end an attempt, and it sat in the same
+                quiet grey as Run beside two buttons that cannot. BLOCKED is
+                still the absence of the button, never a dead one.
+
+                Only ever disabled while a submit is actually in flight. See
+                `settled`: after the attempt is over this is the way out, not an
+                action to guard. */}
             {assessment.exitPolicy === "BLOCKED" ? null : (
               <Button
                 size="sm"
-                variant="outline"
+                colorPalette="danger"
                 onClick={() => setExitOpen(true)}
-                disabled={locked}
+                disabled={submissionState.phase === "submitting" || exiting}
               >
                 <DoorOpen aria-hidden />
                 Leave
@@ -567,16 +648,26 @@ export function AttemptWorkspace({
 
       <ConfirmDialog
         open={exitOpen}
-        title={assessment.exitPolicy === "SUBMIT" ? "Leave and submit?" : "Leave this attempt?"}
-        description={
-          assessment.exitPolicy === "SUBMIT"
-            ? "Leaving submits this attempt with the code in the editor. It is your one formal submission, and you cannot come back to it."
-            : attempt.executionMode === "LIVE"
-              ? "Your code is saved and the attempt stays open, so you can continue it from the assessment page. The live timer keeps running while you are away."
-              : "Your code is saved and the attempt stays open, so you can continue it from the assessment page. Your timer pauses while you are away."
+        title={
+          settled
+            ? "Close this attempt?"
+            : assessment.exitPolicy === "SUBMIT"
+              ? "Leave and submit?"
+              : "Leave this attempt?"
         }
-        confirmLabel={assessment.exitPolicy === "SUBMIT" ? "Submit and leave" : "Leave"}
-        destructive={assessment.exitPolicy === "SUBMIT"}
+        description={
+          settled
+            ? "This attempt is finished. Leaving takes you back to the assessment, where its result stays available."
+            : assessment.exitPolicy === "SUBMIT"
+              ? "Leaving submits this attempt with the code in the editor. It is your one formal submission, and you cannot come back to it."
+              : attempt.executionMode === "LIVE"
+                ? "Your code is saved and the attempt stays open, so you can continue it from the assessment page. The live timer keeps running while you are away."
+                : "Your code is saved and the attempt stays open, so you can continue it from the assessment page. Your timer pauses while you are away."
+        }
+        confirmLabel={
+          settled ? "Leave" : assessment.exitPolicy === "SUBMIT" ? "Submit and leave" : "Leave"
+        }
+        destructive={!settled && assessment.exitPolicy === "SUBMIT"}
         loading={exiting}
         onConfirm={() => void confirmExit()}
         onClose={() => setExitOpen(false)}

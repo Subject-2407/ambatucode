@@ -57,8 +57,13 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
 
       {module.viewer.canRead ? (
         <Grid
-          templateColumns={{ base: "1fr", lg: "minmax(0, 1.6fr) minmax(0, 1fr)" }}
-          gap={{ base: "8", lg: "6" }}
+          // Close to even. At 1.6:1 the board was a column of truncated names
+          // beside a column of half-empty rows — a leaderboard that cannot show
+          // a name and a score on one line is not ranking anything legibly.
+          templateColumns={{ base: "1fr", lg: "minmax(0, 1.1fr) minmax(0, 1fr)" }}
+          // And a gutter wide enough to read as two panels rather than as one
+          // list that happens to have a table stuck to its right edge.
+          gap={{ base: "8", lg: "10" }}
           flex={{ md: "1" }}
           minHeight={{ md: "0" }}
         >
@@ -180,7 +185,7 @@ function SectionBlock({
       ) : (
         <Stack gap="2">
           {section.materials.map((material) => (
-            <ItemLink key={material.id} href={routes.material(moduleSlug, material.id)}>
+            <MaterialLink key={material.id} href={routes.material(moduleSlug, material.id)}>
               <HStack gap="3" minWidth="0">
                 <FileText size={16} aria-hidden />
                 <Text truncate>{material.title}</Text>
@@ -190,21 +195,19 @@ function SectionBlock({
                   </Badge>
                 ) : null}
               </HStack>
-            </ItemLink>
+            </MaterialLink>
           ))}
 
-          {section.assessments.map((assessment) => (
-            <ItemLink
-              key={assessment.id}
-              href={routes.assessment(moduleSlug, assessment.id)}
-              tone="assessment"
-            >
-              <HStack gap="3" minWidth="0">
-                <ClipboardCheck size={16} aria-hidden />
-                <Text truncate>{assessment.title}</Text>
-                <AssessmentTimingBadge assessment={assessment} />
-              </HStack>
-            </ItemLink>
+          {/* Set apart from the rows above rather than continuing them. An
+              Assessment is the gate at the end of the Section, and it was
+              reading as the next line in a list of things to click. */}
+          {section.assessments.map((assessment, index) => (
+            <Box key={assessment.id} mt={index === 0 ? "2" : "0"}>
+              <AssessmentCard
+                href={routes.assessment(moduleSlug, assessment.id)}
+                assessment={assessment}
+              />
+            </Box>
           ))}
         </Stack>
       )}
@@ -213,41 +216,10 @@ function SectionBlock({
 }
 
 /**
- * Materials and Assessments sit in one list because that is the order the
- * Architect arranged them in, and a Coder works through a Section top to
- * bottom. The icon and the timing badge are what tell them apart — reading
- * an explanation and sitting an exam should never look identical.
+ * A Material: a quiet row. It is one of many in a Section and a Coder reads
+ * down them, so anything louder would turn a reading list into a wall.
  */
-function ItemLink({
-  href,
-  tone = "material",
-  children,
-}: {
-  href: string;
-  /**
-   * Materials are quiet rows; an Assessment is the gate at the end of the
-   * Section and carries the heavy crimson frame. Crimson means consequence
-   * throughout the product, and this is the one link on the page that spends a
-   * formal attempt.
-   */
-  tone?: "material" | "assessment";
-  children: ReactNode;
-}) {
-  if (tone === "assessment") {
-    return (
-      <PixelFrame tone="danger" _hover={{ bg: "danger.fg" }}>
-        <Box asChild px="4" py="3">
-          <NextLink href={href}>
-            <Flex align="center" justify="space-between" gap="3">
-              {children}
-              <ChevronRight size={16} aria-hidden />
-            </Flex>
-          </NextLink>
-        </Box>
-      </PixelFrame>
-    );
-  }
-
+function MaterialLink({ href, children }: { href: string; children: ReactNode }) {
   return (
     <Box
       asChild
@@ -266,6 +238,60 @@ function ItemLink({
         </Flex>
       </NextLink>
     </Box>
+  );
+}
+
+/**
+ * An Assessment: a card, not a row.
+ *
+ * It used to be the same row with a coloured edge, which made the difference a
+ * colour — and a colour is exactly what a Coder scanning a Section at speed
+ * does not stop for. Four things separate it now: a tinted surface rather than
+ * the page's own, the full-weight frame instead of the rows' 2px one, more
+ * padding on every side, and a kicker naming what it is.
+ *
+ * Lagoon rather than crimson. Crimson is the product's alarm colour — it is
+ * what Leave, a failed case and a destructive dialog wear — and spending it on
+ * every Assessment in a Section made the ordinary next step in a Module read
+ * as a warning.
+ *
+ * The timing badge moves to the right, beside the chevron. Next to the title it
+ * pushed a long name into truncation on the one link in the Section where the
+ * name matters most.
+ */
+function AssessmentCard({ href, assessment }: { href: string; assessment: AssessmentSummary }) {
+  return (
+    <PixelFrame
+      tone="info"
+      surface="bg.info"
+      _hover={{ bg: "info.solid", _dark: { bg: "info.solid" } }}
+    >
+      {/* Wider than it is tall: the notch bites a square out of each corner,
+          and at px="4" the icon on the left and the chevron on the right sat
+          inside the bite. */}
+      <Box asChild px="6" py="4">
+        <NextLink href={href}>
+          <Flex align="center" justify="space-between" gap="4">
+            <HStack gap="3" minWidth="0">
+              <ClipboardCheck size={18} aria-hidden />
+              <Stack gap="0.5" minWidth="0">
+                <Text textStyle="display" fontSize="3xs" color="fg.info">
+                  Assessment
+                </Text>
+                <Text truncate fontWeight="medium">
+                  {assessment.title}
+                </Text>
+              </Stack>
+            </HStack>
+
+            <HStack gap="3" flexShrink="0">
+              <AssessmentTimingBadge assessment={assessment} />
+              <ChevronRight size={16} aria-hidden />
+            </HStack>
+          </Flex>
+        </NextLink>
+      </Box>
+    </PixelFrame>
   );
 }
 

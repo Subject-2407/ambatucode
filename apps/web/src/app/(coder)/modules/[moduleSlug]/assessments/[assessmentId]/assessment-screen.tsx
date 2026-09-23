@@ -2,8 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { HStack, Stack, Text } from "@chakra-ui/react";
-import { DoorOpen, Play, Timer, Users } from "lucide-react";
+import { Grid, HStack, Stack, Text } from "@chakra-ui/react";
+import { CalendarClock, DoorOpen, Play, RotateCcw, Timer, Users } from "lucide-react";
 import type {
   AssessmentCoderView,
   AttemptView,
@@ -26,10 +26,16 @@ import { routes } from "@/lib/routes";
  * The Assessment as a Coder meets it: what it is, how it is timed, and the
  * ways in.
  *
- * There are two of those now. A scheduled session is still a session — it is
- * started by an Architect and a Coder waits for it. An open-access assessment
- * has no schedule at all: it is one button, always there, and the attempt
- * rules behind it are exactly the same as everywhere else.
+ * Two columns, because they answer different questions. The left is what the
+ * problem asks, which is read; the right is how to sit it, which is acted on.
+ * Stacked, the ways in sat below however long the statement happened to be, so
+ * the Start button on a two-page problem was somewhere off the bottom of the
+ * screen.
+ *
+ * There are two kinds of way in. A scheduled session is started by an
+ * Architect and a Coder waits for it. An open-access assessment has no
+ * schedule at all: it is one button, always there, and the attempt rules behind
+ * it are exactly the same as everywhere else.
  *
  * Starting is always an explicit act. For an Individual session the click is
  * what starts that Coder's clock, so nothing here begins an attempt on the
@@ -64,8 +70,12 @@ export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderVi
   const scheduled = assessment.sessions.filter((session) => !session.isOpenAccess);
 
   return (
-    <Stack gap="8">
-      <Stack gap="3">
+    <Grid
+      templateColumns={{ base: "1fr", lg: "minmax(0, 1.4fr) minmax(0, 1fr)" }}
+      gap={{ base: "6", lg: "6" }}
+      alignItems="start"
+    >
+      <Stack gap="3" minWidth="0">
         <HStack gap="2" wrap="wrap">
           <TimingBadge
             timeMode={assessment.timeMode}
@@ -93,38 +103,45 @@ export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderVi
         </PixelFrame>
       </Stack>
 
-      {openAccess ? (
-        <OpenAccessPanel
-          session={openAccess}
-          starting={starting === openAccess.id}
-          onEnter={() => void enterSession(openAccess.id)}
-        />
-      ) : null}
-
-      <Stack gap="3">
-        <Text textStyle="display">Sessions</Text>
-        {scheduled.length === 0 ? (
-          <EmptyState
-            sprite="calendar"
-            title={openAccess ? "No scheduled session" : "No session yet"}
-            description={
-              openAccess
-                ? "This assessment is open, so you do not need one. Start it above whenever you are ready."
-                : "Your Architect has not scheduled a session of this assessment for you."
-            }
+      <Stack gap="6" minWidth="0">
+        {openAccess ? (
+          <OpenAccessPanel
+            session={openAccess}
+            starting={starting === openAccess.id}
+            onEnter={() => void enterSession(openAccess.id)}
           />
-        ) : (
-          scheduled.map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
-              starting={starting === session.id}
-              onEnter={() => void enterSession(session.id)}
+        ) : null}
+
+        <Stack gap="3">
+          <Text textStyle="display" fontSize="sm">
+            Sessions
+          </Text>
+          {scheduled.length === 0 ? (
+            <EmptyState
+              sprite="calendar"
+              title={openAccess ? "No scheduled session" : "No session yet"}
+              // Nothing to say when the assessment is already open above: the
+              // panel there is the instruction, and repeating it here turned an
+              // absence into a second set of directions.
+              description={
+                openAccess
+                  ? undefined
+                  : "Your Architect has not scheduled a session of this assessment for you."
+              }
             />
-          ))
-        )}
+          ) : (
+            scheduled.map((session) => (
+              <SessionCard
+                key={session.id}
+                session={session}
+                starting={starting === session.id}
+                onEnter={() => void enterSession(session.id)}
+              />
+            ))
+          )}
+        </Stack>
       </Stack>
-    </Stack>
+    </Grid>
   );
 }
 
@@ -143,6 +160,22 @@ function TimingBadge({
       <Timer size={12} aria-hidden /> {durationMinutes} min ·{" "}
       {executionMode === "LIVE" ? "Live" : "Individual"}
     </Badge>
+  );
+}
+
+/** "closes 21/09/2026, 17:00", or nothing when the session has no limit. */
+function ClosingLine({ session }: { session: CoderSessionEntry }) {
+  const closing = session.status === "RUNNING" ? session.endsAt : session.closesAt;
+  if (closing === null) return null;
+
+  return (
+    <HStack gap="2" color="fg.warning">
+      <CalendarClock size={14} aria-hidden />
+      <Text fontSize="xs">
+        Closes {new Date(closing).toLocaleString()}. After that you cannot join or submit, and
+        anything still open is handed in for you.
+      </Text>
+    </HStack>
   );
 }
 
@@ -171,29 +204,37 @@ function OpenAccessPanel({
   return (
     <PixelFrame tone="accent" pad="5">
       <Stack gap="3">
-        <HStack justify="space-between" gap="3" wrap="wrap" align="start">
-          <Stack gap="1" minWidth="0">
-            <Text textStyle="display" fontSize="md">
-              Start whenever you are ready
-            </Text>
+        <Stack gap="1" minWidth="0">
+          <Text textStyle="display" fontSize="md">
+            Start whenever you are ready
+          </Text>
+          {/* Only when there is a clock to warn about. An untimed open
+              assessment has nothing here a Coder has to read before pressing
+              Start, and the sentence that used to sit here said so at length. */}
+          {session.durationMinutes === null ? null : (
             <Text fontSize="sm" color="fg.muted">
-              {session.durationMinutes === null
-                ? "No deadline. You get one attempt and one formal submission."
-                : `Your ${String(session.durationMinutes)}-minute timer starts the moment you begin, and pauses while you are disconnected. You get one attempt and one formal submission.`}
+              {`Your ${String(session.durationMinutes)}-minute timer starts the moment you begin, and pauses while you are disconnected. You get one attempt and one formal submission.`}
             </Text>
-          </Stack>
-
-          {session.canStart ? (
-            <Button onClick={onEnter} loading={starting} loadingText="Opening">
-              <Play aria-hidden />
-              {inProgress ? "Continue" : "Start"}
-            </Button>
-          ) : (
-            <SessionStatusBadge session={session} />
           )}
-        </HStack>
+        </Stack>
 
-        {submitted ? (
+        {/* The action on its own row rather than beside the text. In a column
+            this narrow a `justify="space-between"` pair collapsed into a button
+            squeezed against the panel's edge. */}
+        {session.canStart ? (
+          <Button onClick={onEnter} loading={starting} loadingText="Opening" alignSelf="start">
+            <Play aria-hidden />
+            {inProgress ? "Continue" : session.isGrantedRetake ? "Start your new attempt" : "Start"}
+          </Button>
+        ) : (
+          <HStack gap="2">
+            <SessionStatusBadge session={session} />
+          </HStack>
+        )}
+
+        {session.isGrantedRetake ? (
+          <RetakeNote />
+        ) : submitted ? (
           <Text fontSize="sm" color="fg.muted">
             You have submitted this attempt. Your Architect may reset it if a new attempt is needed.
           </Text>
@@ -204,6 +245,25 @@ function OpenAccessPanel({
         ) : null}
       </Stack>
     </PixelFrame>
+  );
+}
+
+/**
+ * Why there is a Start button on an exam that is over.
+ *
+ * Without it the card contradicts itself — "Ended" beside "Start" — and a
+ * Coder who has just been given a second chance is the last person who should
+ * have to guess whether clicking it is allowed.
+ */
+function RetakeNote() {
+  return (
+    <HStack gap="2" align="start" color="fg.success">
+      <RotateCcw size={14} aria-hidden />
+      <Text fontSize="sm">
+        Your Architect opened a new attempt for you. It is yours alone and you can start it now,
+        even though this session has finished.
+      </Text>
+    </HStack>
   );
 }
 
@@ -229,44 +289,50 @@ function SessionCard({
   const waiting = session.status === "DRAFT" || session.status === "READY";
 
   return (
-    <PixelFrame pad="4">
+    <PixelFrame tone={session.isGrantedRetake ? "success" : "default"} pad="4">
       <Stack gap="3">
-        <HStack justify="space-between" gap="3" wrap="wrap">
-          <Stack gap="1" minWidth="0">
-            <HStack gap="2" minWidth="0">
-              <Text fontWeight="medium" truncate>
-                {session.name}
-              </Text>
-              {/* Worth saying out loud: it is the difference between "I may be
-                  able to join this" and "this one is mine to join". */}
-              {session.openToModule ? (
-                <Badge tone="info" size="sm">
-                  <Users size={12} aria-hidden /> Open to the module
-                </Badge>
-              ) : null}
-            </HStack>
-            <Text fontSize="xs" color="fg.muted">
-              {session.executionMode === "LIVE"
-                ? "Live — everyone shares one timer"
-                : session.executionMode === "INDIVIDUAL"
-                  ? "Individual — your own timer, paused while you are disconnected"
-                  : "Untimed"}
-              {session.durationMinutes === null ? "" : ` · ${String(session.durationMinutes)} min`}
+        <Stack gap="1" minWidth="0">
+          <HStack gap="2" minWidth="0" wrap="wrap">
+            <Text fontWeight="medium" truncate>
+              {session.name}
             </Text>
-          </Stack>
-
-          <HStack gap="3">
-            <SessionStatusBadge session={session} />
-            {session.canStart ? (
-              <Button size="sm" onClick={onEnter} loading={starting} loadingText="Opening">
-                <Play aria-hidden />
-                {inProgress ? "Continue" : "Start"}
-              </Button>
+            {/* Worth saying out loud: it is the difference between "I may be
+                able to join this" and "this one is mine to join". */}
+            {session.openToModule ? (
+              <Badge tone="info" size="sm">
+                <Users size={12} aria-hidden /> Open to the module
+              </Badge>
             ) : null}
           </HStack>
+          <Text fontSize="xs" color="fg.muted">
+            {session.executionMode === "LIVE"
+              ? "Live — everyone shares one timer"
+              : session.executionMode === "INDIVIDUAL"
+                ? "Individual — your own timer, paused while you are disconnected"
+                : "Untimed"}
+            {session.durationMinutes === null ? "" : ` · ${String(session.durationMinutes)} min`}
+          </Text>
+        </Stack>
+
+        <ClosingLine session={session} />
+
+        <HStack gap="3" wrap="wrap">
+          <SessionStatusBadge session={session} />
+          {session.canStart ? (
+            <Button size="sm" onClick={onEnter} loading={starting} loadingText="Opening">
+              <Play aria-hidden />
+              {inProgress
+                ? "Continue"
+                : session.isGrantedRetake
+                  ? "Start your new attempt"
+                  : "Start"}
+            </Button>
+          ) : null}
         </HStack>
 
-        {finished ? (
+        {session.isGrantedRetake ? (
+          <RetakeNote />
+        ) : finished ? (
           <Text fontSize="sm" color="fg.muted">
             {attempt?.status === "SUBMITTED"
               ? "You have submitted this attempt. Your Architect may reset it if a new attempt is needed."
@@ -274,8 +340,18 @@ function SessionCard({
           </Text>
         ) : null}
 
-        {waiting && session.executionMode === "LIVE" ? (
-          <SessionLobby sessionId={session.id} />
+        {/* The lobby is for whoever the Architect listed, in any mode. Readiness
+            is counted over that list, so a Coder who walked into an open
+            session would be flipping a switch nothing reads — they get the
+            plain wait instead. */}
+        {waiting && session.isListed ? (
+          <SessionLobby
+            sessionId={session.id}
+            requireAllReady={session.requireAllReady}
+            // Live only. Everywhere else the Coder's click is what starts
+            // their own clock, and the lobby must not spend it for them.
+            autoEnter={session.executionMode === "LIVE"}
+          />
         ) : waiting ? (
           <Text fontSize="sm" color="fg.muted">
             This session has not been started by your Architect yet.
@@ -287,6 +363,9 @@ function SessionCard({
 }
 
 function SessionStatusBadge({ session }: { session: CoderSessionEntry }) {
+  // A granted retake outranks the session's own status: the Coder's answer to
+  // "can I sit this" is yes, whatever the exam around it says.
+  if (session.isGrantedRetake) return <Badge tone="success">New attempt open</Badge>;
   if (session.attempt?.status === "SUBMITTED") return <Badge tone="success">Submitted</Badge>;
   if (session.attempt?.status === "EXPIRED") return <Badge tone="warning">Closed</Badge>;
 

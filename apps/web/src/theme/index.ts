@@ -60,9 +60,60 @@ const config = defineConfig({
       colorPalette: "gray",
       bg: "bg.canvas",
       color: "fg.default",
+      // Firefox. Both properties inherit, so setting them once on the root
+      // covers every scrolling box in the app without a selector per panel.
+      scrollbarWidth: "thin",
+      // The track is the second value, and it is transparent: a scrolling panel
+      // here sits on whatever surface it was placed on, and a painted gutter
+      // drew a grey stripe down the side of every one of them.
+      scrollbarColor: "var(--amb-colors-border-default) transparent",
     },
     body: {
       minHeight: "100dvh",
+    },
+    /**
+     * Scrollbars, drawn like everything else here.
+     *
+     * The platform's own are rounded and translucent — two things this
+     * treatment is not. A page of hard square edges with a rounded grey pill
+     * down the side looked like two products.
+     *
+     * The thumb is all there is. A painted track drew a grey stripe down the
+     * side of every scrolling panel in the app, none of which shares one
+     * background, so there is no longer a track to paint.
+     *
+     * 12px is three grid units. The thumb is inset by a unit rather than given
+     * a margin, because a WebKit thumb cannot take one; a transparent border
+     * with the background clipped out of it is how a gap is drawn there.
+     *
+     * Monaco paints its own scrollbars as ordinary elements and is unaffected,
+     * which is correct — an editor's gutter is its own furniture.
+     */
+    "*::-webkit-scrollbar": {
+      width: `${PIXEL * 3}px`,
+      height: `${PIXEL * 3}px`,
+    },
+    "*::-webkit-scrollbar-track": {
+      background: "transparent",
+    },
+    "*::-webkit-scrollbar-thumb": {
+      background: "var(--amb-colors-border-default)",
+      borderWidth: `${PIXEL - 1}px`,
+      borderStyle: "solid",
+      borderColor: "transparent",
+      // The inset used to be drawn in track colour. With no track left to
+      // borrow a colour from, the gap is a transparent border the background
+      // is clipped out of instead.
+      backgroundClip: "padding-box",
+      borderRadius: "0",
+    },
+    "*::-webkit-scrollbar-thumb:hover": {
+      background: "var(--amb-colors-accent-solid)",
+    },
+    // Where a horizontal and a vertical bar meet. Left alone it is white,
+    // which is the one square of chrome a transparent track cannot hide.
+    "*::-webkit-scrollbar-corner": {
+      background: "transparent",
     },
     // Honoured once, here, rather than per component. Ornaments are the only
     // things in the product that animate on their own, and somebody who has
