@@ -11,9 +11,9 @@ import { Text } from "@chakra-ui/react";
  * `display` uppercases it, so the name is written normally everywhere in the
  * source and rendered as AMBATUCODE here.
  *
- * The two inks come from `mark.*` rather than `fg.default`: a logo the size of
- * a title screen in body-text black is a wall, and on the bone ground it read
- * as one. See the token's note in `theme/semantic-tokens.ts`.
+ * The inks come from `mark.*` rather than `fg.default`: a logo the size of a
+ * title screen in body-text black is a wall, and on the bone ground it read as
+ * one. See the token's note in `theme/semantic-tokens.ts`.
  */
 export function BrandMark({
   size = "md",
@@ -32,12 +32,24 @@ export function BrandMark({
       as="span"
       textStyle="display"
       fontSize={fontSize}
-      color="mark.ink"
+      // The mark inks are a stack, and the front one is the lightest of the
+      // three — legible only with the plates behind it. A wordmark small enough
+      // to sit in a row of controls has no room for plates, so it is drawn in
+      // the page's own ink instead of a pale one with nothing under it.
+      color={size === "hero" ? "mark.ink" : "fg.default"}
       letterSpacing={size === "hero" ? "0.12em" : "0.08em"}
       lineHeight="1"
-      // Hard offset in the companion ink — the only place the two brand colours
-      // meet directly, kept from the mark this one replaces.
-      textShadow={size === "hero" ? "4px 4px 0 var(--amb-colors-mark-shadow)" : undefined}
+      // Two hard plates behind the ink, each one grid unit further down and
+      // right. No blur at any step: this treatment has no light source, so a
+      // soft shadow would be the one thing on the page pretending there is one.
+      //
+      // Only the hero carries them. At `md` the mark sits in a row of controls,
+      // where three plates would be noise at a size too small to read them.
+      textShadow={
+        size === "hero"
+          ? "4px 4px 0 var(--amb-colors-mark-shadow), 8px 8px 0 var(--amb-colors-mark-glow)"
+          : undefined
+      }
     >
       Ambatucode
     </Text>

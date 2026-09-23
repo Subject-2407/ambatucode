@@ -94,7 +94,12 @@ export function PageHeader({
       gap="3"
       mb="6"
     >
-      <Stack gap="1">
+      {/* Without `minWidth: 0` a flex item refuses to shrink below its content,
+          so a long title pushed the actions past the edge of the page instead
+          of wrapping. The action side gets the opposite treatment: it is the
+          one part of a header that must keep its full width, because a button
+          squeezed to half its label is not a control any more. */}
+      <Stack gap="1" minWidth="0">
         <Heading as="h1" textStyle="display" fontSize={{ base: "xl", md: "2xl" }} color="fg.default">
           {title}
         </Heading>
@@ -104,7 +109,11 @@ export function PageHeader({
           </Text>
         ) : null}
       </Stack>
-      {action}
+      {action === undefined ? null : (
+        <Box flexShrink="0" maxWidth="full">
+          {action}
+        </Box>
+      )}
     </Flex>
   );
 }

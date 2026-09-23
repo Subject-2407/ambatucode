@@ -139,7 +139,13 @@ function SlotShell({
         direction="column"
         width={{ base: PHONE_SLOT_WIDTH, md: "full" }}
         height={SLOT_HEIGHT}
-        paddingX={{ md: "3" }}
+        // The rail takes its width from the widest caption plus this gutter, so
+        // this number is the rail's width. It was a roomy `3`, which bought a
+        // column of empty slot on both sides of every label and took the space
+        // from the page. `1.5` still clears the longest caption — the labels
+        // are `nowrap`, so a gutter too small would show as a clipped word
+        // rather than as a narrower rail.
+        paddingX={{ md: "1.5" }}
         gap="1"
         align="center"
         justify="center"
