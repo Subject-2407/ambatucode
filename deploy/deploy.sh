@@ -3,13 +3,14 @@
 #
 #   ./deploy/deploy.sh
 #
-# Assumes: Docker Engine, Go 1.26+, and Node 22 + pnpm (via corepack) are
-# already installed; deploy/.env.production is filled in; the systemd units
-# in deploy/systemd have been installed once (copied to /etc/systemd/system,
-# `systemctl daemon-reload`, `systemctl enable`); the sandbox images have
-# been built at least once. This script does not run the initial seed
-# (pnpm --filter @ambatucode/db exec tsx prisma/seed.ts) — that is a
-# one-time, deliberate step, not something a redeploy should repeat.
+# Assumes: Docker Engine and Go 1.26+ are already installed on this host
+# (Node/pnpm are not — web and realtime install their own dependencies
+# inside their Dockerfiles, self-contained); deploy/.env.production is
+# filled in; the systemd units in deploy/systemd have been installed once
+# (copied to /etc/systemd/system, `systemctl daemon-reload`, `systemctl
+# enable`); the sandbox images have been built at least once. This script
+# does not run the initial seed (prisma/seed.ts) — that is a one-time,
+# deliberate step, not something a redeploy should repeat.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -19,9 +20,6 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Missing $ENV_FILE — copy deploy/.env.production.example and fill it in first." >&2
   exit 1
 fi
-
-echo "==> pnpm install"
-pnpm install --frozen-lockfile
 
 echo "==> building worker binary"
 (cd apps/worker && go build -o bin/worker ./cmd/worker)
