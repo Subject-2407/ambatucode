@@ -19,7 +19,9 @@ RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# tsconfig.base.json: apps/realtime/tsconfig.json `extends` it, and tsx
+# resolves that chain (for compilerOptions like paths) when it starts.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/web/package.json apps/web/package.json
 COPY apps/realtime/package.json apps/realtime/package.json
 COPY packages/db/package.json packages/db/package.json
