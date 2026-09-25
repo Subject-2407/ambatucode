@@ -55,8 +55,12 @@ services:
     container_name: ambatucode-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
+    # Host-side port only — web/realtime always reach this container at
+    # redis:6379 over the compose network regardless of what's published
+    # here. Configurable because 6379 is a common port for something else
+    # to already hold on a shared host.
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
     volumes:
       - redis-data:/data
     healthcheck:

@@ -33,8 +33,10 @@ WORKDIR /app
 # Manifests only, so `pnpm install` is cached across builds that only touch
 # application source. Every workspace member must be present even though
 # this image only runs apps/web: pnpm's frozen-lockfile check validates the
-# whole workspace, not just one filter.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# whole workspace, not just one filter. tsconfig.base.json is here too:
+# apps/web/tsconfig.json (and packages/db's, packages/shared's) all
+# `extends` it, and `next build` resolves that chain at build time.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/web/package.json apps/web/package.json
 COPY apps/realtime/package.json apps/realtime/package.json
 COPY packages/db/package.json packages/db/package.json
