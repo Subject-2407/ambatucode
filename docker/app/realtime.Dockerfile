@@ -15,6 +15,11 @@ FROM node:22-bookworm-slim
 RUN apt-get update -y && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 
+# See docker/app/web.Dockerfile for why this has to be set before corepack
+# runs: without it, the pnpm it downloads here (as root) is invisible to the
+# node user CMD runs as later, so corepack quietly re-downloads it from the
+# registry on every container start instead of reusing the build-time copy.
+ENV COREPACK_HOME=/app/.corepack
 RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 
 WORKDIR /app

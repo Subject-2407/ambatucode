@@ -26,6 +26,11 @@ FROM node:22-bookworm-slim
 RUN apt-get update -y && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 
+# Without this, corepack caches the pnpm it downloads under root's home (this
+# RUN still executes as root), then finds nothing there once CMD runs as the
+# node user later — and silently re-downloads from the registry on every
+# container start, which is both slow and a quiet break of offline-first.
+ENV COREPACK_HOME=/app/.corepack
 RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 
 WORKDIR /app
