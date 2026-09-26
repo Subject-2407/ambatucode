@@ -22,6 +22,7 @@ apps/worker/bin/
 .env.local
 .env.*.local
 deploy/.env.production
+deploy/.env.worker
 
 .DS_Store
 Thumbs.db
