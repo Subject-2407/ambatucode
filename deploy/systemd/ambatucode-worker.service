@@ -1,28 +1,43 @@
 [Unit]
 Description=Ambatucode execution worker
-After=network-online.target docker.service ambatucode-stack.service
+After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
 
+# This is a systemd --user unit, not a system unit — install it under
+# ~/.config/systemd/user/, as the same account that owns the Docker daemon
+# apps/worker talks to (confirm with `docker context ls` / `echo
+# $DOCKER_HOST`; on a host using rootless Docker per user — common on
+# panel-managed hosting like Virtualmin — that is whichever user the panel
+# assigned the domain to, not a dedicated system account: a separate system
+# user has no access to another user's private rootless socket, group
+# membership or not).
+#
+#   mkdir -p ~/.config/systemd/user
+#   sed 's#/opt/ambatucode#/absolute/path/to/this/checkout#g' \
+#     deploy/systemd/ambatucode-worker.service > ~/.config/systemd/user/ambatucode-worker.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ambatucode-worker
+#
+# For it to keep running after you log out, linger must be enabled for this
+# user (`loginctl enable-linger <user>` — needs an admin; already on if your
+# rootless Docker itself survives a logout, which it normally does).
+
 [Service]
 Type=simple
-# Create this user first: sudo useradd --system --create-home ambatucode-worker
-# It must be a member of the docker group to reach the Docker socket — that
-# is root-equivalent access, so nothing else on this host should be in that
-# group. apps/web and apps/realtime must never run as this user or as any
-# member of docker (CLAUDE.md security invariant #1).
-User=ambatucode-worker
-Group=docker
 WorkingDirectory=/opt/ambatucode
 
 EnvironmentFile=/opt/ambatucode/deploy/.env.production
+# %t is this systemd --user instance's runtime directory (i.e.
+# $XDG_RUNTIME_DIR, /run/user/<uid>) — exactly where a rootless Docker
+# install puts its socket, so this needs no hardcoded UID.
+Environment=DOCKER_HOST=unix://%t/docker.sock
 # The file above is written for the web/realtime containers, which reach
 # Postgres/Redis by Docker service name on the compose network. This worker
 # runs natively on the host instead — it holds no database credentials at
 # all by design (see .env.production.example), but it does need Redis and
-# the callback URL translated to the host-published addresses that
-# docker/compose/prod.yml actually publishes them on. Everything else
-# (secrets, WORKER_* tuning) is shared from the file above unchanged.
+# the callback URL translated to the host-published addresses.
+#
 # The Redis port here must match REDIS_HOST_PORT in deploy/.env.production
 # (default 6380, not Redis's usual 6379 — that default collides with
 # whatever else is already listening on 6379 on shared hosts).
@@ -39,4 +54,4 @@ TimeoutStopSec=40
 NoNewPrivileges=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
