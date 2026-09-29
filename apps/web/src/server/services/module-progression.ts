@@ -61,7 +61,8 @@ export async function moduleSequence(
   });
 
   const items: ModuleItemRef[] = [];
-  for (const section of module.sections) {
+  for (const [index, section] of module.sections.entries()) {
+    const sectionNumber = index + 1;
     for (const material of section.materials) {
       items.push({
         kind: "MATERIAL",
@@ -69,6 +70,7 @@ export async function moduleSequence(
         title: material.title,
         sectionId: section.id,
         sectionTitle: section.title,
+        sectionNumber,
       });
     }
     for (const assessment of section.assessments) {
@@ -78,6 +80,7 @@ export async function moduleSequence(
         title: assessment.title,
         sectionId: section.id,
         sectionTitle: section.title,
+        sectionNumber,
       });
     }
   }

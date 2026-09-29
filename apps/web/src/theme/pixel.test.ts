@@ -1,11 +1,13 @@
 import { defaultConfig } from "@chakra-ui/react";
 import { describe, expect, it } from "vitest";
 import {
+  BUTTON_FACES,
   PIXEL,
   PIXEL_PRESS,
-  UNFILLED_VARIANTS,
   pixelDrop,
   pixelEdge,
+  pixelFace,
+  pixelFieldPaint,
   pixelFocusRing,
   pixelNotch,
   pixelSkin,
@@ -91,8 +93,10 @@ describe("pixelEdge", () => {
 
 describe("pixelDrop", () => {
   it("is a filter, not a box-shadow", () => {
-    // clip-path clips a box-shadow away; a filter applies after the clip, so
-    // the shadow follows the notched silhouette instead of vanishing.
+    // A filter follows the shape the element paints, so the shadow gets the
+    // notch's stair-stepped corners. It must sit on an unclipped element:
+    // filters run before clipping, and a notch on the same element cuts the
+    // shadow off with the corners.
     expect(pixelDrop("black")).toBe("drop-shadow(4px 4px 0 black)");
   });
 
@@ -132,8 +136,37 @@ describe("PIXEL_PRESS", () => {
   });
 });
 
-describe("UNFILLED_VARIANTS", () => {
-  // The variants `Button` leaves flat, and so never shadows.
+describe("pixelFace", () => {
+  it("leaves the element itself unclipped, so its drop shadow survives", () => {
+    // The fault this replaces: a filter runs before clipping, so a button
+    // clipped to the notch had its shadow cut away along with the corners.
+    const face = pixelFace("red", "blue");
+    expect(face).not.toHaveProperty("clipPath");
+    expect(face.bg).toBe("transparent");
+  });
+
+  it("paints the edge and the fill as two notched layers", () => {
+    const face = pixelFace("red", "blue", 2);
+    expect(face._before.background).toBe("red");
+    expect(face._after.background).toBe("blue");
+    expect(face._before.clipPath).toBe(pixelNotch());
+    expect(face._after.clipPath).toBe(pixelNotch());
+    // The fill is inset by the edge weight: that inset is the border, the
+    // same thickness on every step of the corner.
+    expect(face._before.inset).toBe("0");
+    expect(face._after.inset).toBe("2px");
+  });
+
+  it("keeps both layers behind the label", () => {
+    const face = pixelFace("red", "blue");
+    expect(face.isolation).toBe("isolate");
+    expect(face._before.zIndex).toBe(-1);
+    expect(face._after.zIndex).toBe(-1);
+  });
+});
+
+describe("BUTTON_FACES", () => {
+  // The variants `Button` leaves flat, and so gives no face and no shadow.
   const FLAT = new Set(["ghost", "plain"]);
 
   function recipeVariants(): Record<string, Record<string, unknown>> {
@@ -143,27 +176,55 @@ describe("UNFILLED_VARIANTS", () => {
     return (variants?.variant ?? {}) as Record<string, Record<string, unknown>>;
   }
 
-  it("names every shadowed variant the recipe leaves without a fill", () => {
-    // A shadow is cast by whatever the element paints. With no fill that is
-    // the letters, which then read as doubled. If Chakra adds a transparent
-    // variant, or one of ours loses its background, this is where it shows up
-    // rather than on a screen.
-    const unfilled = Object.entries(recipeVariants())
-      .filter(([name]) => !FLAT.has(name))
-      .filter(([, style]) => style.bg === undefined || style.bg === "transparent")
-      .map(([name]) => name);
-
-    expect(unfilled.length).toBeGreaterThan(0);
-    for (const name of unfilled) {
-      expect(UNFILLED_VARIANTS.has(name), `${name} would shadow its own letters`).toBe(true);
+  it("has a face for every raised variant the recipe defines", () => {
+    // A variant with no entry would render with no fill at all, and its shadow
+    // would be cast by the letters alone. If Chakra adds a variant, this is
+    // where it shows up rather than on a screen.
+    const raised = Object.keys(recipeVariants()).filter((name) => !FLAT.has(name));
+    expect(raised.length).toBeGreaterThan(0);
+    for (const name of raised) {
+      expect(BUTTON_FACES[name], `${name} has no face`).toBeDefined();
     }
   });
 
-  it("does not list a variant that is flat or already filled", () => {
-    const variants = recipeVariants();
-    for (const name of UNFILLED_VARIANTS) {
-      expect(FLAT.has(name)).toBe(false);
-      expect(variants[name]?.bg === undefined || variants[name]?.bg === "transparent").toBe(true);
+  it("gives no face to a flat variant", () => {
+    for (const name of FLAT) expect(BUTTON_FACES[name]).toBeUndefined();
+  });
+
+  it("gives the outline a visible edge distinct from its fill", () => {
+    const outline = BUTTON_FACES.outline;
+    expect(outline?.weight).toBeGreaterThan(0);
+    expect(outline?.edge).not.toBe(outline?.fill);
+  });
+
+  it("never hovers into a translucent fill the shadow would show through", () => {
+    for (const [name, face] of Object.entries(BUTTON_FACES)) {
+      expect(face.hover, name).not.toMatch(/\/\d/);
     }
+  });
+});
+
+describe("pixelFieldPaint", () => {
+  it("paints the edge as the ground colour and the fill as three bands", () => {
+    const paint = pixelFieldPaint("red", "blue", 2);
+    expect(paint.backgroundColor).toBe("red");
+    expect(paint.backgroundImage.split("linear-gradient(blue, blue)")).toHaveLength(4);
+    expect(paint.backgroundRepeat).toBe("no-repeat");
+  });
+
+  it("insets the bands so their union is the notch, one edge-weight in", () => {
+    // Offsets for a 2px edge on the 4px notch: the long band, the middle step,
+    // and the tall band. Anything else leaves a corner step without ink.
+    const paint = pixelFieldPaint("red", "blue", 2);
+    expect(paint.backgroundPosition).toBe("2px 10px, 6px 6px, 10px 2px");
+    expect(paint.backgroundSize).toBe(
+      "calc(100% - 4px) calc(100% - 20px), calc(100% - 12px) calc(100% - 12px), calc(100% - 20px) calc(100% - 4px)",
+    );
+  });
+
+  it("thickens from the inside when the weight grows", () => {
+    expect(pixelFieldPaint("red", "blue", PIXEL).backgroundPosition).toBe(
+      "4px 12px, 8px 8px, 12px 4px",
+    );
   });
 });

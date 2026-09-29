@@ -10,10 +10,8 @@ export default async function CoderProfilePage() {
   const { user, expiresAt } = await requirePageSession("CODER");
 
   return (
-    <PageContainer backdrop="circuit">
-      <PageHeader
-        title="Profile"
-      />
+    <PageContainer width="content" backdrop="circuit">
+      <PageHeader title="Profile" />
       <ProfileScreen user={user} expiresAt={expiresAt.toISOString()} />
     </PageContainer>
   );

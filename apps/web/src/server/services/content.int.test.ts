@@ -420,12 +420,13 @@ describe("module progression", () => {
       id: readMe.id,
     });
     expect(afterMaterial.next).toMatchObject({ kind: "ASSESSMENT", id: exam.id });
-    // Where the Coder is now, for the breadcrumb above the page.
+    // Where the Coder is now, for the Section label above the page title.
     expect(afterMaterial.moduleTitle).toBe(module.title);
     expect(afterMaterial.current).toMatchObject({
       kind: "MATERIAL",
       id: readMe.id,
       sectionTitle: "One",
+      sectionNumber: 1,
     });
 
     const afterAssessment = await nextModuleItem(enrolledCoder, module.id, {
@@ -436,6 +437,7 @@ describe("module progression", () => {
       kind: "MATERIAL",
       id: last.id,
       sectionTitle: "Two",
+      sectionNumber: 2,
     });
 
     // Nothing after the last item, rather than a wrap back to the start.

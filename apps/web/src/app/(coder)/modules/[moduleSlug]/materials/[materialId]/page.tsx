@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { Box, Stack, Text } from "@chakra-ui/react";
+import { Box, Grid, Stack, Text } from "@chakra-ui/react";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
-import { Breadcrumbs } from "@/components/layout/breadcrumbs";
+import { BackLink } from "@/components/layout/back-link";
+import { ModuleContents } from "@/components/content/module-contents";
 import { NextItemLink } from "@/components/content/next-item-link";
 import { PracticeActivity } from "@/components/content/practice-activity";
 import { isEmptyDocument } from "@/components/content/rich-text";
@@ -9,7 +10,9 @@ import { RichTextView } from "@/components/content/rich-text-view";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { routes } from "@/lib/routes";
+import { sectionLabel } from "@/lib/section-label";
 import { getMaterial } from "@/server/services/materials";
+import { getModule } from "@/server/services/modules";
 import { nextModuleItem } from "@/server/services/module-progression";
 import { scopeForMaterial } from "@/server/services/content-scope";
 
@@ -39,48 +42,57 @@ export default async function MaterialPage({ params }: PageProps) {
   // a property of the Module, not of the Material, and every other caller of
   // that service would be paying for a walk of the whole tree it never reads.
   const scope = await scopeForMaterial(materialId);
-  const progression = await nextModuleItem(session.user, scope.moduleId, {
-    kind: "MATERIAL",
-    id: materialId,
-  });
+  // By id rather than the slug in the URL: the sidebar must list the Module
+  // this Material is actually in, whatever the address says.
+  const [progression, module] = await Promise.all([
+    nextModuleItem(session.user, scope.moduleId, { kind: "MATERIAL", id: materialId }),
+    getModule(session.user, { id: scope.moduleId }),
+  ]);
 
   return (
-    <PageContainer>
-      {/* A reading measure. Prose that runs the full width of a wide monitor
-          is a line the eye cannot find the start of again. */}
-      <Box maxWidth="52rem">
-        <Breadcrumbs
-          items={[
-            { label: progression.moduleTitle, href: routes.module(moduleSlug) },
-            ...(progression.current ? [{ label: progression.current.sectionTitle }] : []),
-          ]}
-        />
+    <PageContainer width="wide">
+      <Grid
+        templateColumns={{ base: "minmax(0, 1fr)", xl: "15rem minmax(0, 52rem)" }}
+        justifyContent="center"
+        columnGap="10"
+        alignItems="start"
+      >
+        <ModuleContents module={module} current={{ kind: "MATERIAL", id: materialId }} />
 
-        <PageHeader title={material.title} />
+        {/* A reading measure, centred. Prose that runs the full width of a
+            wide monitor is a line the eye cannot find the start of again. */}
+        <Box width="full" maxWidth="52rem" marginX="auto" minWidth="0">
+          <BackLink href={routes.module(moduleSlug)} label="Back to module" />
 
-        <Stack gap="8">
-          {isEmptyDocument(material.content) ? (
-            <Text color="fg.muted">This material has no content yet.</Text>
-          ) : (
-            <RichTextView document={material.content} />
-          )}
+          <PageHeader
+            kicker={progression.current ? sectionLabel(progression.current) : undefined}
+            title={material.title}
+          />
 
-          {material.practiceActivities.length > 0 ? (
-            <Stack gap="4">
-              <Text textStyle="display" fontSize="sm" color="accent.fg">
-                Practice
-              </Text>
-              {material.practiceActivities.map((activity) => (
-                <PracticeActivity key={activity.id} activity={activity} />
-              ))}
-            </Stack>
-          ) : null}
+          <Stack gap="8">
+            {isEmptyDocument(material.content) ? (
+              <Text color="fg.muted">This material has no content yet.</Text>
+            ) : (
+              <RichTextView document={material.content} />
+            )}
 
-          {/* The SRS asks for explanation, example, practice, next material as
+            {material.practiceActivities.length > 0 ? (
+              <Stack gap="4">
+                <Text textStyle="display" fontSize="sm" color="accent.fg">
+                  Practice
+                </Text>
+                {material.practiceActivities.map((activity) => (
+                  <PracticeActivity key={activity.id} activity={activity} />
+                ))}
+              </Stack>
+            ) : null}
+
+            {/* The SRS asks for explanation, example, practice, next material as
               one progression. This is the last of those four. */}
-          <NextItemLink progression={progression} />
-        </Stack>
-      </Box>
+            <NextItemLink progression={progression} />
+          </Stack>
+        </Box>
+      </Grid>
     </PageContainer>
   );
 }

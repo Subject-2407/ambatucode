@@ -147,6 +147,14 @@ export function useColorMode() {
 /** The order the toggle walks. "System" is in the cycle, not hidden in a menu. */
 const CYCLE: readonly ColorModePreference[] = ["system", "light", "dark"];
 
+/**
+ * Where one click moves the preference. Exported so the rail's theme slot and
+ * this toggle walk the same cycle, rather than two copies that drift apart.
+ */
+export function nextColorModePreference(preference: ColorModePreference): ColorModePreference {
+  return CYCLE[(CYCLE.indexOf(preference) + 1) % CYCLE.length] ?? "system";
+}
+
 const PREFERENCE_LABEL: Readonly<Record<ColorModePreference, string>> = {
   system: "Follow device",
   light: "Light",
@@ -162,7 +170,7 @@ const PREFERENCE_LABEL: Readonly<Record<ColorModePreference, string>> = {
  */
 export function ColorModeToggle({ size = "sm" }: { size?: "sm" | "md" }) {
   const { preference, colorMode, isReady, setPreference } = useColorMode();
-  const next = CYCLE[(CYCLE.indexOf(preference) + 1) % CYCLE.length] ?? "system";
+  const next = nextColorModePreference(preference);
 
   const icon =
     preference === "system" ? (

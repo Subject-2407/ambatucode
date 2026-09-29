@@ -19,7 +19,7 @@ export default function CoderError({
   reset: () => void;
 }) {
   return (
-    <PageContainer>
+    <PageContainer width="reading">
       <ErrorState error={null} title="This page could not load" onRetry={reset} />
     </PageContainer>
   );

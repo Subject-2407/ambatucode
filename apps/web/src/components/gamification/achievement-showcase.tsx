@@ -1,8 +1,8 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
-import { Box, Flex, Grid, HStack, Stack, Text } from "@chakra-ui/react";
-import { Lock, Trophy } from "lucide-react";
+import { useId } from "react";
+import { Box, Flex, Grid, Heading, HStack, Stack, Text } from "@chakra-ui/react";
+import { Lock } from "lucide-react";
 import {
   ACHIEVEMENT_CATEGORIES,
   ACHIEVEMENT_CATEGORY_LABEL,
@@ -14,10 +14,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { pixelSkin } from "@/theme/pixel";
 import { formatDate } from "@/lib/format-date";
-import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
 import { useAchievements } from "@/hooks/use-achievements";
 import { AchievementIcon } from "./achievement-icon";
 
@@ -28,13 +26,30 @@ import { AchievementIcon } from "./achievement-icon";
  * in one line and "Achievements" in the tab above it, which left a reader
  * wondering whether they were two different things.
  *
+ * Grouped under a heading per category rather than behind a tab per category.
+ * A row of ten tabs overflowed a phone, and even where it fitted it hid nine
+ * tenths of the shelf behind clicks. Headings keep the grouping and let the
+ * whole catalogue be read in one scroll; each carries its own count, so how
+ * far along a category is reads at a glance.
+ *
  * Locked achievements are shown with their full description rather than hidden
  * behind question marks. An achievement nobody can read is not a goal, it is a
- * surprise — and the descriptions say things like "submit without running your
- * code first", which is the sort of thing worth reading beforehand.
+ * surprise, and the descriptions say things like "without running your code
+ * first", which is the sort of thing worth reading beforehand.
+ *
+ * The overall "N of M" line is not drawn here. It belongs to the profile's
+ * identity card, next to the person it describes; `achievementTally` gives it
+ * the same numbers this component groups.
  */
 
-const ALL = "ALL";
+export type AchievementTally = { earned: number; total: number };
+
+export function achievementTally(showcase: AchievementShowcaseView): AchievementTally {
+  return {
+    earned: showcase.earned.length,
+    total: showcase.earned.length + showcase.locked.length,
+  };
+}
 
 function AchievementCard({
   achievement,
@@ -99,37 +114,33 @@ type Entry =
   | { kind: "earned"; achievement: UserAchievementView }
   | { kind: "locked"; achievement: AchievementView };
 
-function entriesFor(showcase: AchievementShowcaseView, category: string): Entry[] {
-  const earned: Entry[] = showcase.earned.map((achievement) => ({ kind: "earned", achievement }));
-  const locked: Entry[] = showcase.locked.map((achievement) => ({ kind: "locked", achievement }));
-  // Earned first: the showcase is a trophy shelf before it is a to-do list.
-  const all = [...earned, ...locked];
-  return category === ALL
-    ? all
-    : all.filter((entry) => entry.achievement.category === (category as AchievementCategory));
+type Shelf = { category: AchievementCategory; entries: Entry[]; earned: number };
+
+function shelvesFor(showcase: AchievementShowcaseView): Shelf[] {
+  // Earned first within each category: the showcase is a trophy shelf before
+  // it is a to-do list.
+  const all: Entry[] = [
+    ...showcase.earned.map((achievement): Entry => ({ kind: "earned", achievement })),
+    ...showcase.locked.map((achievement): Entry => ({ kind: "locked", achievement })),
+  ];
+  return ACHIEVEMENT_CATEGORIES.map((category) => {
+    const entries = all.filter((entry) => entry.achievement.category === category);
+    const earned = entries.filter((entry) => entry.kind === "earned").length;
+    return { category, entries, earned };
+  }).filter((shelf) => shelf.entries.length > 0);
 }
 
-export function AchievementShowcase({ userId }: { userId: string }) {
-  const [category, setCategory] = useState<string>(ALL);
-  const panelId = useId();
-  const { data, isPending, isError, error, refetch } = useAchievements(userId);
+const GRID_COLUMNS = { base: "1fr", md: "repeat(2, 1fr)" } as const;
 
-  const tabs = useMemo<TabItem[]>(
-    () => [
-      { value: ALL, label: "All" },
-      ...ACHIEVEMENT_CATEGORIES.map((value) => ({
-        value,
-        label: ACHIEVEMENT_CATEGORY_LABEL[value],
-      })),
-    ],
-    [],
-  );
+export function AchievementShowcase({ userId }: { userId: string }) {
+  const headingId = useId();
+  const { data, isPending, isError, error, refetch } = useAchievements(userId);
 
   if (isError) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
   if (isPending || data === undefined) {
     return (
-      <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap="3">
+      <Grid templateColumns={GRID_COLUMNS} gap="3">
         {[0, 1, 2, 3].map((key) => (
           <Skeleton key={key} height="6rem" borderRadius="0" />
         ))}
@@ -137,44 +148,43 @@ export function AchievementShowcase({ userId }: { userId: string }) {
     );
   }
 
-  const entries = entriesFor(data, category);
-
   return (
-    <Stack gap="4">
-      <HStack gap="3" wrap="wrap">
-        <Trophy size={18} aria-hidden />
-        <Text fontSize="sm" color="fg.muted">
-          {data.earned.length} of {data.earned.length + data.locked.length} achievements earned
-        </Text>
-      </HStack>
-
-      <TabBar
-        items={tabs}
-        value={category}
-        onValueChange={setCategory}
-        controls={panelId}
-        aria-label="Category"
-      />
-
-      <TabPanel id={panelId} value={category}>
-        {entries.length === 0 ? (
-          <EmptyState sprite="trophy" title="No achievements in this category" />
-        ) : (
-          <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap="3">
-            {entries.map((entry) =>
-              entry.kind === "earned" ? (
-                <AchievementCard
-                  key={entry.achievement.code}
-                  achievement={entry.achievement}
-                  awardedAt={entry.achievement.awardedAt}
-                />
-              ) : (
-                <AchievementCard key={entry.achievement.code} achievement={entry.achievement} />
-              ),
-            )}
-          </Grid>
-        )}
-      </TabPanel>
+    <Stack gap="6">
+      {shelvesFor(data).map((shelf) => {
+        const id = `${headingId}-${shelf.category}`;
+        return (
+          <Stack as="section" key={shelf.category} aria-labelledby={id} gap="3">
+            <Flex justify="space-between" align="baseline" gap="3">
+              <Heading as="h3" id={id} textStyle="display" fontSize="xs">
+                {ACHIEVEMENT_CATEGORY_LABEL[shelf.category]}
+              </Heading>
+              {/* "1/5" reads as a fraction aloud, so it is spelled out for a
+                  screen reader and drawn compact for everyone else. */}
+              <Text textStyle="data" fontSize="xs" color="fg.muted" flexShrink={0}>
+                <span aria-hidden>
+                  {shelf.earned}/{shelf.entries.length}
+                </span>
+                <Text as="span" srOnly>
+                  {shelf.earned} of {shelf.entries.length} earned
+                </Text>
+              </Text>
+            </Flex>
+            <Grid templateColumns={GRID_COLUMNS} gap="3">
+              {shelf.entries.map((entry) =>
+                entry.kind === "earned" ? (
+                  <AchievementCard
+                    key={entry.achievement.code}
+                    achievement={entry.achievement}
+                    awardedAt={entry.achievement.awardedAt}
+                  />
+                ) : (
+                  <AchievementCard key={entry.achievement.code} achievement={entry.achievement} />
+                ),
+              )}
+            </Grid>
+          </Stack>
+        );
+      })}
     </Stack>
   );
 }

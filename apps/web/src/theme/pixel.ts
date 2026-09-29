@@ -100,24 +100,123 @@ export function pixelEdge(color: string, unit: number = PIXEL): string {
 /**
  * The offset block shadow under a raised element.
  *
- * `filter: drop-shadow` rather than `box-shadow` on anything that also carries
- * a notch: `clip-path` clips a box-shadow away, and a filter is applied after
- * the clip, so the shadow follows the notched silhouette instead of vanishing.
+ * `filter: drop-shadow` rather than `box-shadow`, because it follows whatever
+ * shape the element actually paints — which is how a shadow gets stair-stepped
+ * corners at all. It must never share an element with a `clip-path`, though.
+ * A filter is applied *before* clipping, so the notch cuts the shadow off along
+ * with the corners: every button here wore one for months and not a pixel of it
+ * was ever drawn. `pixelFace()` is the construction that leaves the element
+ * unclipped so the shadow survives.
  */
 export function pixelDrop(color: string, unit: number = PIXEL): string {
   return `drop-shadow(${unit}px ${unit}px 0 ${color})`;
 }
 
 /**
- * Button variants that paint no fill of their own.
+ * A raised control's face: edge and fill painted as two notched layers
+ * *behind* an element that is not clipped itself.
  *
- * `pixelDrop()` shadows whatever the element paints, and a button with no fill
- * paints only its border and its glyphs — so the letters each get a shadow and
- * read as doubled, until hover adds a background and the silhouette closes. A
- * shadowed button has to be filled at rest, which is what these variants are
- * given in `components/ui/button.tsx`.
+ * `pixelSkin()` clips the element, which is right for a frame and wrong for a
+ * button, for two reasons. The clip removes the `pixelDrop()` shadow along with
+ * the corners; and a border drawn on a clipped element loses its ink exactly at
+ * the steps, which is why the outline buttons showed a line along each side and
+ * bare stairs at every corner. Here the element paints nothing but its content;
+ * `::before` is the edge, `::after` is the fill inset by `weight`, and both
+ * carry the notch. The shadow then follows the notched face, and the edge is
+ * the same thickness on every step.
+ *
+ * `weight` 0 is a face with no separate edge: a solid button, whose edge is its
+ * fill.
+ *
+ * The caller keeps the element's own background transparent in every state —
+ * a recipe hover that paints it shows through the four corner bites.
  */
-export const UNFILLED_VARIANTS: ReadonlySet<string> = new Set(["outline"]);
+export function pixelFace(edge: string, fill: string, weight: number = 2, unit: number = PIXEL) {
+  const layer = {
+    content: '""',
+    position: "absolute",
+    clipPath: pixelNotch(unit),
+    // Negative within the element's own stacking context: above its (empty)
+    // background, below its text. `::after` comes later, so it covers
+    // `::before` wherever they overlap.
+    zIndex: -1,
+    pointerEvents: "none",
+    transition: "background 120ms ease-out",
+  } as const;
+
+  return {
+    position: "relative",
+    isolation: "isolate",
+    borderWidth: "0",
+    borderRadius: "0",
+    bg: "transparent",
+    _before: { ...layer, inset: "0", background: edge },
+    _after: { ...layer, inset: `${weight}px`, background: fill },
+  } as const;
+}
+
+/**
+ * What each raised button variant paints. Flat variants — `ghost`, `plain` —
+ * have no face and are not listed; every other variant the recipe defines must
+ * be, and `pixel.test.ts` checks that against Chakra's own recipe.
+ *
+ * Colours are the palette's CSS variables, so one table serves every
+ * `colorPalette` a Button is given. Hover on the solid face mixes a little of
+ * the contrast colour in rather than using the recipe's `solid/90`: a
+ * translucent face would let the shadow behind it show through.
+ */
+const palette = (slot: string) => `var(--amb-colors-color-palette-${slot})`;
+const SOLID_HOVER = `color-mix(in srgb, ${palette("solid")} 85%, ${palette("contrast")})`;
+
+export type ButtonFace = { edge: string; fill: string; hover: string; weight: number };
+
+export const BUTTON_FACES: Readonly<Record<string, ButtonFace>> = {
+  solid: { edge: palette("solid"), fill: palette("solid"), hover: SOLID_HOVER, weight: 0 },
+  // The edge is the ink, so the outline and the label read as one object.
+  outline: { edge: palette("fg"), fill: palette("subtle"), hover: palette("muted"), weight: 2 },
+  subtle: { edge: palette("subtle"), fill: palette("subtle"), hover: palette("muted"), weight: 0 },
+  surface: { edge: palette("muted"), fill: palette("subtle"), hover: palette("muted"), weight: 2 },
+};
+
+/**
+ * The notched edge for a form field, painted as background layers.
+ *
+ * A field cannot use `pixelSkin()` or `pixelFace()`: `<input>` and `<select>`
+ * have no `::before`. The inset ring they used instead was clipped at every
+ * corner, the same bare-stairs fault the buttons had. So the edge colour is the
+ * field's background colour and the fill is laid over it as three rectangles
+ * whose union is the notch shape, inset by `weight` — a notched fill drawn
+ * without a second clip. The field itself still wears `pixelNotch(unit)`.
+ *
+ * Returned as the longhand properties rather than one `background`, so a state
+ * can restate them without a recipe's shorthand resetting the images.
+ */
+export function pixelFieldPaint(
+  edge: string,
+  fill: string,
+  weight: number = 2,
+  unit: number = PIXEL,
+) {
+  const w = weight;
+  const u = unit;
+  // [x, y] offsets of the three bands; each is inset by the same on both ends.
+  const bands: ReadonlyArray<readonly [number, number]> = [
+    [w, w + 2 * u],
+    [w + u, w + u],
+    [w + 2 * u, w],
+  ];
+  const layer = `linear-gradient(${fill}, ${fill})`;
+
+  return {
+    backgroundColor: edge,
+    backgroundImage: bands.map(() => layer).join(", "),
+    backgroundPosition: bands.map(([x, y]) => `${x}px ${y}px`).join(", "),
+    backgroundSize: bands
+      .map(([x, y]) => `calc(100% - ${2 * x}px) calc(100% - ${2 * y}px)`)
+      .join(", "),
+    backgroundRepeat: "no-repeat",
+  } as const;
+}
 
 /**
  * How far a pressed control travels. It moves by exactly the shadow offset and

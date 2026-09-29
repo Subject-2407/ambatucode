@@ -1,21 +1,14 @@
-import type { ReactNode } from "react";
 import type { Metadata } from "next";
-import NextLink from "next/link";
-import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { ChevronRight, ClipboardCheck, FileText, Terminal } from "lucide-react";
-import type { AssessmentSummary, ModuleDetail, ModuleSectionView } from "@ambatucode/shared";
+import { cookies } from "next/headers";
+import type { ModuleDetail } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
-import { TimingBadge } from "@/components/assessment/timing-badge";
-import { ModuleLeaderboardDrawer } from "@/components/gamification/module-leaderboards";
-import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PixelFrame } from "@/components/ui/pixel-frame";
-import { pixelSkin } from "@/theme/pixel";
+import { MODULE_VIEW_COOKIE, parseModuleView } from "@/lib/module-view";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
-import { routes } from "@/lib/routes";
 import { getModule } from "@/server/services/modules";
 import { EnrollButton } from "../enroll-button";
+import { ModuleOverview } from "./module-overview";
 
 export const metadata: Metadata = { title: "Module" };
 export const dynamic = "force-dynamic";
@@ -28,6 +21,9 @@ type PageProps = { params: Promise<{ moduleSlug: string }> };
  * Fetched in the Server Component rather than through the API client: this is
  * the first paint of the page, and a loopback HTTP request to our own route
  * handler would only add a round trip and a cookie to forward.
+ *
+ * The layout preference is read here too, from its cookie, so the page arrives
+ * already in the Coder's chosen layout rather than switching to it after load.
  */
 export default async function ModuleOverviewPage({ params }: PageProps) {
   const session = await requirePageSession("CODER");
@@ -37,42 +33,10 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
     handlePageError(error),
   );
 
-  return (
-    <PageContainer backdrop="constellation">
-      {/* No Public or Closed badge. Once a Coder is inside, how they got in no
-          longer matters; before that, the enroll control already says "Enroll"
-          or "Request access", which is the same fact put as the next step. */}
-      <PageHeader
-        title={module.title}
-        description={module.description ?? undefined}
-        action={
-          module.viewer.canRead ? (
-            // Gamification belongs to learning, so it lives on the module page
-            // and never inside the attempt workspace.
-            <ModuleLeaderboardDrawer
-              moduleId={module.id}
-              viewerId={session.user.id}
-              sections={module.sections.map((section) => ({
-                id: section.id,
-                title: section.title,
-              }))}
-            />
-          ) : undefined
-        }
-      />
+  if (!module.viewer.canRead) return <AccessPanel module={module} />;
 
-      {module.viewer.canRead ? (
-        // A reading measure rather than the full window: on a wide screen a
-        // row whose title sits at one edge and its chevron at the other is
-        // two things, not one.
-        <Box maxWidth="56rem">
-          <SectionTree module={module} />
-        </Box>
-      ) : (
-        <AccessPanel module={module} />
-      )}
-    </PageContainer>
-  );
+  const view = parseModuleView((await cookies()).get(MODULE_VIEW_COOKIE)?.value);
+  return <ModuleOverview module={module} viewerId={session.user.id} initialView={view} />;
 }
 
 /**
@@ -83,181 +47,18 @@ function AccessPanel({ module }: { module: ModuleDetail }) {
   const pending = module.viewer.enrollmentStatus === "PENDING";
 
   return (
-    <EmptyState
-      sprite="lock"
-      title={pending ? "Waiting for approval" : "Enroll to read this module"}
-      description={
-        pending
-          ? "The Architect has your request. The materials open as soon as it is approved."
-          : undefined
-      }
-      action={<EnrollButton module={module} />}
-    />
-  );
-}
-
-function SectionTree({ module }: { module: ModuleDetail }) {
-  if (module.sections.length === 0) {
-    return (
+    <PageContainer width="reading" backdrop="constellation">
+      <PageHeader title={module.title} description={module.description ?? undefined} />
       <EmptyState
-        sprite="doc"
-        title="Nothing published yet"
-        description="The Architect has not added any sections to this module."
+        sprite="lock"
+        title={pending ? "Waiting for approval" : "Enroll to read this module"}
+        description={
+          pending
+            ? "The Architect has your request. The materials open as soon as it is approved."
+            : undefined
+        }
+        action={<EnrollButton module={module} />}
       />
-    );
-  }
-
-  return (
-    <Stack gap="6">
-      {module.sections.map((section, index) => (
-        <SectionBlock key={section.id} section={section} index={index} moduleSlug={module.slug} />
-      ))}
-    </Stack>
-  );
-}
-
-function SectionBlock({
-  section,
-  index,
-  moduleSlug,
-}: {
-  section: ModuleSectionView;
-  index: number;
-  moduleSlug: string;
-}) {
-  return (
-    <Stack gap="3">
-      <HStack gap="3" align="baseline">
-        {/* The number is real information here — a Section is an ordered step
-            through the Module, not a card in an unordered grid. */}
-        <Text textStyle="display" fontSize="xs" color="accent.fg">
-          {String(index + 1).padStart(2, "0")}
-        </Text>
-        <Text textStyle="display" fontSize="md">
-          {section.title}
-        </Text>
-      </HStack>
-
-      {section.materials.length === 0 && section.assessments.length === 0 ? (
-        <Text fontSize="sm" color="fg.muted" ps="8">
-          Nothing in this section yet.
-        </Text>
-      ) : (
-        <Stack gap="2">
-          {section.materials.map((material) => (
-            <MaterialLink key={material.id} href={routes.material(moduleSlug, material.id)}>
-              <HStack gap="3" minWidth="0">
-                <FileText size={16} aria-hidden />
-                <Text truncate>{material.title}</Text>
-                {/* Spelled out: a terminal icon beside a bare "2" left the
-                    Coder to guess what was being counted. */}
-                {material.practiceCount > 0 ? (
-                  <Badge tone="accent" plain flexShrink="0">
-                    <Terminal size={12} aria-hidden /> {material.practiceCount} practice
-                  </Badge>
-                ) : null}
-              </HStack>
-            </MaterialLink>
-          ))}
-
-          {/* Set apart from the rows above rather than continuing them. An
-              Assessment is the gate at the end of the Section, and it was
-              reading as the next line in a list of things to click. */}
-          {section.assessments.map((assessment, index) => (
-            <Box key={assessment.id} mt={index === 0 ? "2" : "0"}>
-              <AssessmentCard
-                href={routes.assessment(moduleSlug, assessment.id)}
-                assessment={assessment}
-              />
-            </Box>
-          ))}
-        </Stack>
-      )}
-    </Stack>
-  );
-}
-
-/**
- * A Material: a quiet row. It is one of many in a Section and a Coder reads
- * down them, so anything louder would turn a reading list into a wall.
- */
-function MaterialLink({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <Box
-      asChild
-      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)", 2)}
-      px="4"
-      py="3"
-      _hover={{
-        background: "var(--amb-colors-accent-solid)",
-        _before: { background: "var(--amb-colors-bg-subtle)" },
-      }}
-    >
-      <NextLink href={href}>
-        <Flex align="center" justify="space-between" gap="3">
-          {children}
-          <ChevronRight size={16} aria-hidden />
-        </Flex>
-      </NextLink>
-    </Box>
-  );
-}
-
-/**
- * An Assessment: a card, not a row.
- *
- * It used to be the same row with a coloured edge, which made the difference a
- * colour — and a colour is exactly what a Coder scanning a Section at speed
- * does not stop for. Four things separate it now: a tinted surface rather than
- * the page's own, the full-weight frame instead of the rows' 2px one, more
- * padding on every side, and a kicker naming what it is.
- *
- * Lagoon rather than crimson. Crimson is the product's alarm colour — it is
- * what Leave, a failed case and a destructive dialog wear — and spending it on
- * every Assessment in a Section made the ordinary next step in a Module read
- * as a warning.
- *
- * The timing badge moves to the right, beside the chevron. Next to the title it
- * pushed a long name into truncation on the one link in the Section where the
- * name matters most.
- */
-function AssessmentCard({ href, assessment }: { href: string; assessment: AssessmentSummary }) {
-  return (
-    <PixelFrame
-      tone="info"
-      surface="bg.info"
-      _hover={{ bg: "info.solid", _dark: { bg: "info.solid" } }}
-    >
-      {/* Wider than it is tall: the notch bites a square out of each corner,
-          and at px="4" the icon on the left and the chevron on the right sat
-          inside the bite. */}
-      <Box asChild px="6" py="4">
-        <NextLink href={href}>
-          <Flex align="center" justify="space-between" gap="4">
-            <HStack gap="3" minWidth="0">
-              <ClipboardCheck size={18} aria-hidden />
-              <Stack gap="0.5" minWidth="0">
-                <Text textStyle="display" fontSize="3xs" color="fg.info">
-                  Assessment
-                </Text>
-                <Text truncate fontWeight="medium">
-                  {assessment.title}
-                </Text>
-              </Stack>
-            </HStack>
-
-            <HStack gap="3" flexShrink="0">
-              <TimingBadge
-                durationMinutes={
-                  assessment.timeMode === "UNTIMED" ? null : assessment.durationMinutes
-                }
-                executionMode={assessment.executionMode}
-              />
-              <ChevronRight size={16} aria-hidden />
-            </HStack>
-          </Flex>
-        </NextLink>
-      </Box>
-    </PixelFrame>
+    </PageContainer>
   );
 }

@@ -300,9 +300,8 @@ test.describe("leaderboard and achievements", () => {
       // inventing a rank.
       await expect(coderPage.getByText(/No scores yet|Nothing to rank yet/)).toBeVisible();
 
-      // Achievements live on the Profile screen, behind its second tab.
+      // Achievements live on the Profile screen itself, under the identity card.
       await coderPage.goto("/profile");
-      await coderPage.getByRole("tab", { name: "Achievements" }).click();
       // Locked achievements are readable: they are goals, not surprises.
       await expect(coderPage.getByText("First Light")).toBeVisible({ timeout: 30_000 });
       await expect(coderPage.getByText(/achievements earned/)).toBeVisible();
