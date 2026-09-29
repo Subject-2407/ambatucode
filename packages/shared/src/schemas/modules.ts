@@ -132,6 +132,8 @@ export type ModuleItemRef = {
   /** Named so the control can say when Next crosses into a new Section. */
   sectionId: string;
   sectionTitle: string;
+  /** 1-based position of the Section, as the overview numbers it. */
+  sectionNumber: number;
 };
 
 /** Null at the end of the Module. There is nothing after the last item. */
