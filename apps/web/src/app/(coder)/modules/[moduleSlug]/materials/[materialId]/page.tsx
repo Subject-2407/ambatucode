@@ -54,7 +54,9 @@ export default async function MaterialPage({ params }: PageProps) {
   const contentsShown = parseContentsPanel((await cookies()).get(CONTENTS_PANEL_COOKIE)?.value);
 
   return (
-    <PageContainer width="wide">
+    // Full width: the sidebar lives in the left margin, so the page cannot cap
+    // the margins away. The reading column keeps its own measure.
+    <PageContainer width="full">
       <MaterialLayout
         initialShown={contentsShown}
         contents={<ModuleContents module={module} current={{ kind: "MATERIAL", id: materialId }} />}

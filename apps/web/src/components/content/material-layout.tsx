@@ -17,6 +17,13 @@ const CONTENTS_ID = "module-contents";
  * is remembered for every Material. With it hidden the reading column centres
  * on its own.
  *
+ * The reading column is the page's centre whether the sidebar is shown or not.
+ * The sidebar sits in the left margin, flush with the rail, and the grid does
+ * not change shape when it is toggled, so showing it never pushes the text a
+ * Coder is in the middle of reading off to one side. The two margins are kept
+ * equal and never narrower than the sidebar needs; on a window too tight for
+ * both, the reading column gives up the width rather than the text moving.
+ *
  * The switch exists only where the sidebar does, on wide screens. Below that
  * the sidebar is never drawn and the back link is the way around.
  */
@@ -44,21 +51,28 @@ export function MaterialLayout({
     <Grid
       templateColumns={{
         base: "minmax(0, 1fr)",
-        xl: shown ? "15rem minmax(0, 52rem)" : "minmax(0, 52rem)",
+        xl: "minmax(13rem, 1fr) minmax(0, 52rem) minmax(13rem, 1fr)",
       }}
-      justifyContent="center"
-      columnGap="10"
+      columnGap="8"
       alignItems="start"
     >
       {/* Kept mounted while hidden, so the switch always has the region it
           controls to point at. */}
-      <Box id={CONTENTS_ID} hidden={!shown} display={shown ? "block" : "none"} minWidth="0">
+      <Box
+        id={CONTENTS_ID}
+        hidden={!shown}
+        display={shown ? "block" : "none"}
+        minWidth="0"
+        width="full"
+        maxWidth="16rem"
+        justifySelf="start"
+      >
         {contents}
       </Box>
 
       {/* A reading measure, centred. Prose that runs the full width of a wide
           monitor is a line the eye cannot find the start of again. */}
-      <Box width="full" maxWidth="52rem" marginX="auto" minWidth="0">
+      <Box width="full" maxWidth="52rem" marginX="auto" minWidth="0" gridColumn={{ xl: "2" }}>
         <Flex justify="space-between" align="start" gap="3">
           {back}
           <Button
