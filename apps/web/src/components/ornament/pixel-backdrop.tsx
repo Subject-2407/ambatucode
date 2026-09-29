@@ -158,9 +158,14 @@ export function PixelBackdrop({
   opacity?: number;
 }) {
   return (
+    // Pinned to the window, not to the page. The scene is drawn at one aspect
+    // and scaled to cover its box, and while that box was the page, a long
+    // page blew the scene up to several times the size of a short one and
+    // scrolled it away with the content. Fixed, it is the same size on every
+    // screen of the same window and stays put while the page moves over it.
     <Box
       aria-hidden
-      position="absolute"
+      position="fixed"
       inset="0"
       overflow="hidden"
       pointerEvents="none"

@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
-import { Box, Grid, Stack, Text } from "@chakra-ui/react";
+import { cookies } from "next/headers";
+import { Stack, Text } from "@chakra-ui/react";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { BackLink } from "@/components/layout/back-link";
+import { MaterialLayout } from "@/components/content/material-layout";
 import { ModuleContents } from "@/components/content/module-contents";
 import { NextItemLink } from "@/components/content/next-item-link";
 import { PracticeActivity } from "@/components/content/practice-activity";
 import { isEmptyDocument } from "@/components/content/rich-text";
 import { RichTextView } from "@/components/content/rich-text-view";
+import { CONTENTS_PANEL_COOKIE, parseContentsPanel } from "@/lib/contents-panel";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { routes } from "@/lib/routes";
@@ -48,51 +51,43 @@ export default async function MaterialPage({ params }: PageProps) {
     nextModuleItem(session.user, scope.moduleId, { kind: "MATERIAL", id: materialId }),
     getModule(session.user, { id: scope.moduleId }),
   ]);
+  const contentsShown = parseContentsPanel((await cookies()).get(CONTENTS_PANEL_COOKIE)?.value);
 
   return (
     <PageContainer width="wide">
-      <Grid
-        templateColumns={{ base: "minmax(0, 1fr)", xl: "15rem minmax(0, 52rem)" }}
-        justifyContent="center"
-        columnGap="10"
-        alignItems="start"
+      <MaterialLayout
+        initialShown={contentsShown}
+        contents={<ModuleContents module={module} current={{ kind: "MATERIAL", id: materialId }} />}
+        back={<BackLink href={routes.module(moduleSlug)} label="Back to module" />}
       >
-        <ModuleContents module={module} current={{ kind: "MATERIAL", id: materialId }} />
+        <PageHeader
+          kicker={progression.current ? sectionLabel(progression.current) : undefined}
+          title={material.title}
+        />
 
-        {/* A reading measure, centred. Prose that runs the full width of a
-            wide monitor is a line the eye cannot find the start of again. */}
-        <Box width="full" maxWidth="52rem" marginX="auto" minWidth="0">
-          <BackLink href={routes.module(moduleSlug)} label="Back to module" />
+        <Stack gap="8">
+          {isEmptyDocument(material.content) ? (
+            <Text color="fg.muted">This material has no content yet.</Text>
+          ) : (
+            <RichTextView document={material.content} />
+          )}
 
-          <PageHeader
-            kicker={progression.current ? sectionLabel(progression.current) : undefined}
-            title={material.title}
-          />
+          {material.practiceActivities.length > 0 ? (
+            <Stack gap="4">
+              <Text textStyle="display" fontSize="sm" color="accent.fg">
+                Practice
+              </Text>
+              {material.practiceActivities.map((activity) => (
+                <PracticeActivity key={activity.id} activity={activity} />
+              ))}
+            </Stack>
+          ) : null}
 
-          <Stack gap="8">
-            {isEmptyDocument(material.content) ? (
-              <Text color="fg.muted">This material has no content yet.</Text>
-            ) : (
-              <RichTextView document={material.content} />
-            )}
-
-            {material.practiceActivities.length > 0 ? (
-              <Stack gap="4">
-                <Text textStyle="display" fontSize="sm" color="accent.fg">
-                  Practice
-                </Text>
-                {material.practiceActivities.map((activity) => (
-                  <PracticeActivity key={activity.id} activity={activity} />
-                ))}
-              </Stack>
-            ) : null}
-
-            {/* The SRS asks for explanation, example, practice, next material as
+          {/* The SRS asks for explanation, example, practice, next material as
               one progression. This is the last of those four. */}
-            <NextItemLink progression={progression} />
-          </Stack>
-        </Box>
-      </Grid>
+          <NextItemLink progression={progression} />
+        </Stack>
+      </MaterialLayout>
     </PageContainer>
   );
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BUTTON_FACES,
   PIXEL,
+  buttonShadow,
   PIXEL_PRESS,
   pixelDrop,
   pixelEdge,
@@ -226,5 +227,23 @@ describe("pixelFieldPaint", () => {
     expect(pixelFieldPaint("red", "blue", PIXEL).backgroundPosition).toBe(
       "4px 12px, 8px 8px, 12px 4px",
     );
+  });
+});
+
+describe("buttonShadow", () => {
+  it("is a shade of the button's own colour in both themes", () => {
+    const shadow = buttonShadow("red");
+    expect(shadow.base).toContain("color-mix(in srgb, red");
+    expect(shadow._dark).toContain("color-mix(in srgb, red");
+  });
+
+  it("lightens toward the page on paper and darkens on a screen", () => {
+    const shadow = buttonShadow("red");
+    expect(shadow.base).toContain("var(--amb-colors-bg-canvas)");
+    expect(shadow._dark).toContain("black");
+  });
+
+  it("keeps the grid offset", () => {
+    expect(buttonShadow("red").base.startsWith(`drop-shadow(${PIXEL}px ${PIXEL}px 0 `)).toBe(true);
   });
 });

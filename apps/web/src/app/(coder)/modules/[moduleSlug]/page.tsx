@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import type { ModuleDetail } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { EmptyState } from "@/components/ui/empty-state";
-import { MODULE_VIEW_COOKIE, parseModuleView } from "@/lib/module-view";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { getModule } from "@/server/services/modules";
@@ -21,9 +19,6 @@ type PageProps = { params: Promise<{ moduleSlug: string }> };
  * Fetched in the Server Component rather than through the API client: this is
  * the first paint of the page, and a loopback HTTP request to our own route
  * handler would only add a round trip and a cookie to forward.
- *
- * The layout preference is read here too, from its cookie, so the page arrives
- * already in the Coder's chosen layout rather than switching to it after load.
  */
 export default async function ModuleOverviewPage({ params }: PageProps) {
   const session = await requirePageSession("CODER");
@@ -35,8 +30,7 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
 
   if (!module.viewer.canRead) return <AccessPanel module={module} />;
 
-  const view = parseModuleView((await cookies()).get(MODULE_VIEW_COOKIE)?.value);
-  return <ModuleOverview module={module} viewerId={session.user.id} initialView={view} />;
+  return <ModuleOverview module={module} viewerId={session.user.id} />;
 }
 
 /**

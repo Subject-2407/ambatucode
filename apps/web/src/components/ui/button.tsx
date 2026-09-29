@@ -7,7 +7,7 @@ import {
   type ButtonProps as ChakraButtonProps,
   type IconButtonProps as ChakraIconButtonProps,
 } from "@chakra-ui/react";
-import { BUTTON_FACES, PIXEL, PIXEL_PRESS, pixelDrop, pixelFace } from "@/theme/pixel";
+import { BUTTON_FACES, PIXEL, PIXEL_PRESS, buttonShadow, pixelFace } from "@/theme/pixel";
 
 /**
  * Buttons default to the accent palette so the primary action on a screen is
@@ -27,9 +27,6 @@ import { BUTTON_FACES, PIXEL, PIXEL_PRESS, pixelDrop, pixelFace } from "@/theme/
  * press"; a text link inside a table row is not one, and giving it a shadow
  * would flatten the difference between the two.
  */
-
-/** Semantic tokens resolve to CSS variables, which is how `filter` can read one. */
-const DROP_SHADOW = pixelDrop("var(--amb-colors-border-emphasized)");
 
 const FLAT_VARIANTS = new Set(["ghost", "plain"]);
 
@@ -52,7 +49,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       textStyle="display"
       borderRadius="0"
       {...(face ? pixelFace(face.edge, face.fill, face.weight) : undefined)}
-      filter={face ? DROP_SHADOW : undefined}
+      filter={face ? buttonShadow(face.edge) : undefined}
       _hover={hover}
       _expanded={hover}
       /*
@@ -65,7 +62,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
        * on the same frame as the pointer.
        */
       transition="background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out"
-      _active={face ? { transform: PIXEL_PRESS, filter: "none" } : undefined}
+      // Restated under `_dark`: the shadow is set per theme, and the dark rule
+      // would otherwise outrank a plain `:active` one and keep the shadow on.
+      _active={
+        face ? { transform: PIXEL_PRESS, filter: "none", _dark: { filter: "none" } } : undefined
+      }
       /*
        * A square box around the face, in the strongest ink on the page, like a
        * menu cursor. It works now that the element is not clipped. An inset
@@ -77,7 +78,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         outlineOffset: `${PIXEL}px`,
       }}
       // A disabled control is not pressable, so it should not look raised.
-      _disabled={{ filter: "none", transform: "none", opacity: 0.55, cursor: "not-allowed" }}
+      _disabled={{
+        filter: "none",
+        transform: "none",
+        opacity: 0.55,
+        cursor: "not-allowed",
+        _dark: { filter: "none" },
+      }}
       {...rest}
     />
   );
