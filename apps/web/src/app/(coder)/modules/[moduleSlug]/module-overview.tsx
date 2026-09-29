@@ -1,27 +1,17 @@
 "use client";
 
-import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import NextLink from "next/link";
-import { Box, Flex, Grid, HStack, Stack, Text, chakra } from "@chakra-ui/react";
-import {
-  ChevronDown,
-  ChevronRight,
-  ClipboardCheck,
-  Columns2,
-  FileText,
-  LayoutGrid,
-  Rows3,
-  Terminal,
-} from "lucide-react";
+import { Box, Flex, HStack, Stack, Text, chakra } from "@chakra-ui/react";
+import { ChevronDown, ChevronRight, ClipboardCheck, FileText, Terminal } from "lucide-react";
 import type { AssessmentSummary, ModuleDetail, ModuleSectionView } from "@ambatucode/shared";
-import { PageContainer, PageHeader, type PageWidth } from "@/components/layout/app-shell";
+import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { TimingBadge } from "@/components/assessment/timing-badge";
 import { ModuleLeaderboardDrawer } from "@/components/gamification/module-leaderboards";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PixelFrame } from "@/components/ui/pixel-frame";
-import { moduleViewCookie, type ModuleView } from "@/lib/module-view";
 import { routes } from "@/lib/routes";
 import {
   parseSectionFolds,
@@ -33,30 +23,15 @@ import { sectionNumberLabel } from "@/lib/section-label";
 import { PIXEL, pixelSkin } from "@/theme/pixel";
 
 /**
- * A Module's contents, laid out the way this Coder prefers to read them.
+ * A Module's contents: its Sections in order, one centred column, each one
+ * foldable.
  *
- * Three layouts rather than one, because Modules differ: a short one reads
- * best as a single list, a long one is easier to take in as a grid of Section
- * cards, and on a wide screen the list beside a panel about the Module uses
- * the space a single column leaves empty. The choice is the Coder's, and it is
- * remembered for every Module.
- *
- * Every layout shows the same Sections in the same order with the same
- * folding; only the arrangement changes. On a phone all three collapse into one
- * column, so the switch is not offered there.
+ * One layout. A grid of Section cards and a list beside an "about" panel were
+ * both tried; each made the order through the Module harder to follow, and a
+ * Module is read in order. Folding is what a long Module needs instead: a
+ * Coder can shut the Sections they are done with and keep the page to the
+ * part they are working through.
  */
-
-const VIEW_WIDTH: Readonly<Record<ModuleView, PageWidth>> = {
-  list: "reading",
-  columns: "wide",
-  grid: "wide",
-};
-
-const VIEW_OPTIONS: ReadonlyArray<{ value: ModuleView; label: string; icon: ReactNode }> = [
-  { value: "list", label: "One column", icon: <Rows3 aria-hidden /> },
-  { value: "columns", label: "Two columns", icon: <Columns2 aria-hidden /> },
-  { value: "grid", label: "Grid", icon: <LayoutGrid aria-hidden /> },
-];
 
 function plural(count: number, one: string, many: string): string {
   return `${String(count)} ${count === 1 ? one : many}`;
@@ -74,16 +49,18 @@ function sectionCounts(section: ModuleSectionView): string {
   return parts.length === 0 ? "Empty" : parts.join(" · ");
 }
 
-function moduleTotals(module: ModuleDetail) {
+function moduleSummary(module: ModuleDetail): string {
   let materials = 0;
-  let practice = 0;
   let assessments = 0;
   for (const section of module.sections) {
     materials += section.materials.length;
     assessments += section.assessments.length;
-    for (const material of section.materials) practice += material.practiceCount;
   }
-  return { sections: module.sections.length, materials, practice, assessments };
+  return [
+    plural(module.sections.length, "section", "sections"),
+    plural(materials, "material", "materials"),
+    plural(assessments, "assessment", "assessments"),
+  ].join(" · ");
 }
 
 /**
@@ -105,23 +82,8 @@ function useSectionFolds(moduleId: string) {
   return [folded, setFolded] as const;
 }
 
-export function ModuleOverview({
-  module,
-  viewerId,
-  initialView,
-}: {
-  module: ModuleDetail;
-  viewerId: string;
-  /** From the cookie, so the server already rendered this layout. */
-  initialView: ModuleView;
-}) {
-  const [view, setView] = useState<ModuleView>(initialView);
+export function ModuleOverview({ module, viewerId }: { module: ModuleDetail; viewerId: string }) {
   const [folded, setFolded] = useSectionFolds(module.id);
-
-  const chooseView = useCallback((next: ModuleView) => {
-    setView(next);
-    document.cookie = moduleViewCookie(next);
-  }, []);
 
   const toggle = useCallback(
     (sectionId: string) => {
@@ -139,18 +101,13 @@ export function ModuleOverview({
     setFolded(allFolded ? new Set() : new Set(module.sections.map((section) => section.id)));
   }, [allFolded, module.sections, setFolded]);
 
-  const totals = moduleTotals(module);
-  // Beside the Sections, the description lives in the panel; saying it in the
-  // header as well would print the same paragraph twice on one screen.
-  const description = view === "columns" ? undefined : (module.description ?? undefined);
-
   return (
-    <PageContainer width={VIEW_WIDTH[view]} backdrop="constellation">
+    <PageContainer width="reading" backdrop="constellation">
       {/* No Public or Closed badge. Once a Coder is inside, how they got in no
           longer matters. */}
       <PageHeader
         title={module.title}
-        description={description}
+        description={module.description ?? undefined}
         action={
           // Gamification belongs to learning, so it lives on the module page
           // and never inside the attempt workspace.
@@ -170,135 +127,20 @@ export function ModuleOverview({
         />
       ) : (
         <Stack gap="5">
-          <Toolbar
-            summary={[
-              plural(totals.sections, "section", "sections"),
-              plural(totals.materials, "material", "materials"),
-              plural(totals.assessments, "assessment", "assessments"),
-            ].join(" · ")}
-            view={view}
-            onViewChange={chooseView}
-            allFolded={allFolded}
-            onToggleAll={toggleAll}
-          />
+          <Flex align="center" justify="space-between" gap="3" wrap="wrap">
+            <Text fontSize="sm" color="fg.muted">
+              {moduleSummary(module)}
+            </Text>
+            {/* Words only: at this size the two-chevron icon read as a close cross. */}
+            <Button variant="ghost" size="sm" onClick={toggleAll} color="fg.muted">
+              {allFolded ? "Expand all" : "Collapse all"}
+            </Button>
+          </Flex>
 
-          {view === "grid" ? (
-            <Grid
-              templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
-              gap="4"
-              alignItems="start"
-            >
-              {module.sections.map((section, index) => (
-                <SectionCard
-                  key={section.id}
-                  section={section}
-                  number={index + 1}
-                  moduleSlug={module.slug}
-                  open={!folded.has(section.id)}
-                  onToggle={() => toggle(section.id)}
-                />
-              ))}
-            </Grid>
-          ) : view === "columns" ? (
-            <Grid
-              templateColumns={{ base: "minmax(0, 1fr)", lg: "minmax(0, 1fr) 20rem" }}
-              gap="8"
-              alignItems="start"
-            >
-              <SectionList module={module} folded={folded} onToggle={toggle} />
-              <ModuleAside module={module} totals={totals} />
-            </Grid>
-          ) : (
-            <SectionList module={module} folded={folded} onToggle={toggle} />
-          )}
+          <SectionList module={module} folded={folded} onToggle={toggle} />
         </Stack>
       )}
     </PageContainer>
-  );
-}
-
-function Toolbar({
-  summary,
-  view,
-  onViewChange,
-  allFolded,
-  onToggleAll,
-}: {
-  summary: string;
-  view: ModuleView;
-  onViewChange: (view: ModuleView) => void;
-  allFolded: boolean;
-  onToggleAll: () => void;
-}) {
-  return (
-    <Flex align="center" justify="space-between" gap="3" wrap="wrap">
-      <Text fontSize="sm" color="fg.muted">
-        {summary}
-      </Text>
-
-      <HStack gap="3">
-        {/* Words only: at this size the two-chevron icon read as a close cross. */}
-        <Button variant="ghost" size="sm" onClick={onToggleAll} color="fg.muted">
-          {allFolded ? "Expand all" : "Collapse all"}
-        </Button>
-        {/* Not on a phone: every layout is one column there, so the switch
-            would change nothing a Coder could see. */}
-        <Box display={{ base: "none", md: "block" }}>
-          <ViewSwitch value={view} onChange={onViewChange} />
-        </Box>
-      </HStack>
-    </Flex>
-  );
-}
-
-/**
- * Three toggle buttons in one notched strip, the chosen one filled.
- *
- * Pressed buttons rather than a radio group, because each is an immediate
- * action with a visible result, and `aria-pressed` says which is on in a way
- * every screen reader announces.
- */
-function ViewSwitch({
-  value,
-  onChange,
-}: {
-  value: ModuleView;
-  onChange: (view: ModuleView) => void;
-}) {
-  return (
-    <HStack
-      role="group"
-      aria-label="Layout"
-      gap="0.5"
-      padding="1"
-      {...pixelSkin("var(--amb-colors-border-muted)", "var(--amb-colors-bg-surface)", 2)}
-    >
-      {VIEW_OPTIONS.map((option) => {
-        const active = option.value === value;
-        return (
-          <chakra.button
-            key={option.value}
-            type="button"
-            aria-pressed={active}
-            aria-label={option.label}
-            title={option.label}
-            onClick={() => onChange(option.value)}
-            display="inline-flex"
-            alignItems="center"
-            justifyContent="center"
-            width="8"
-            height="8"
-            cursor="pointer"
-            color={active ? "accent.contrast" : "fg.muted"}
-            bg={active ? "accent.solid" : "transparent"}
-            _hover={active ? undefined : { color: "fg.default", bg: "bg.subtle" }}
-            _icon={{ width: "4", height: "4" }}
-          >
-            {option.icon}
-          </chakra.button>
-        );
-      })}
-    </HStack>
   );
 }
 
@@ -324,7 +166,6 @@ function SectionList({
               open={open}
               onToggle={() => onToggle(section.id)}
               controls={bodyId}
-              ruled
             />
             {/* `hidden` for assistive technology, `display` because a styled
                 element's own display rule would otherwise override it. */}
@@ -351,15 +192,12 @@ function SectionHeader({
   open,
   onToggle,
   controls,
-  ruled = false,
 }: {
   section: ModuleSectionView;
   number: number;
   open: boolean;
   onToggle: () => void;
   controls: string;
-  /** A hard line under the header, for the list layouts where nothing frames the Section. */
-  ruled?: boolean;
 }) {
   return (
     <Box as="h2" margin="0">
@@ -376,13 +214,20 @@ function SectionHeader({
         paddingY="2"
         cursor="pointer"
         color="fg.default"
-        borderBottomWidth={ruled ? `${PIXEL / 2}px` : "0"}
+        borderBottomWidth={`${PIXEL / 2}px`}
         borderColor="border.muted"
         _hover={{ color: "accent.fg", borderColor: "accent.solid" }}
       >
         {/* The number is real information: a Section is an ordered step
             through the Module, not a card in an unordered pile. */}
-        <Text as="span" textStyle="display" fontSize="xs" color="accent.fg" flexShrink="0">
+        <Text
+          as="span"
+          textStyle="display"
+          fontSize="sm"
+          color="accent.fg"
+          flexShrink="0"
+          minWidth="7"
+        >
           {sectionNumberLabel(number)}
         </Text>
         <Text as="span" textStyle="display" fontSize="md" flex="1" minWidth="0">
@@ -533,160 +378,5 @@ function AssessmentCard({ href, assessment }: { href: string; assessment: Assess
         </NextLink>
       </Box>
     </PixelFrame>
-  );
-}
-
-/**
- * A Section as a card in the grid.
- *
- * Its items are plain rows rather than the list's framed ones: a frame inside
- * a frame inside a grid is three edges deep, and at a third of the width the
- * edges would take more room than the titles. An Assessment keeps its colour
- * and its kicker, so it is still the gate at the end.
- */
-function SectionCard({
-  section,
-  number,
-  moduleSlug,
-  open,
-  onToggle,
-}: {
-  section: ModuleSectionView;
-  number: number;
-  moduleSlug: string;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  const bodyId = `section-${section.id}`;
-  const empty = section.materials.length === 0 && section.assessments.length === 0;
-
-  return (
-    <PixelFrame as="section" tone="muted" pad="4">
-      <Stack gap="2">
-        <SectionHeader
-          section={section}
-          number={number}
-          open={open}
-          onToggle={onToggle}
-          controls={bodyId}
-        />
-        <Stack id={bodyId} hidden={!open} display={open ? "flex" : "none"} gap="1">
-          {empty ? (
-            <Text fontSize="sm" color="fg.muted">
-              Nothing in this section yet.
-            </Text>
-          ) : null}
-          {section.materials.map((material) => (
-            <CompactItem
-              key={material.id}
-              href={routes.material(moduleSlug, material.id)}
-              icon={<FileText size={14} aria-hidden />}
-              title={material.title}
-            />
-          ))}
-          {section.assessments.map((assessment) => (
-            <CompactItem
-              key={assessment.id}
-              href={routes.assessment(moduleSlug, assessment.id)}
-              icon={<ClipboardCheck size={14} aria-hidden />}
-              title={assessment.title}
-              assessment
-            />
-          ))}
-        </Stack>
-      </Stack>
-    </PixelFrame>
-  );
-}
-
-function CompactItem({
-  href,
-  icon,
-  title,
-  assessment = false,
-}: {
-  href: string;
-  icon: ReactNode;
-  title: string;
-  assessment?: boolean;
-}) {
-  return (
-    <Box
-      asChild
-      display="block"
-      paddingX="2"
-      paddingY="2"
-      bg={assessment ? "bg.info" : undefined}
-      color={assessment ? "fg.info" : "fg.default"}
-      _hover={{ bg: assessment ? "info.subtle" : "bg.subtle", color: "fg.default" }}
-    >
-      <NextLink href={href}>
-        <HStack gap="2.5" minWidth="0">
-          <Box flexShrink="0">{icon}</Box>
-          <Text fontSize="sm" truncate flex="1" minWidth="0">
-            {title}
-          </Text>
-          {assessment ? (
-            <Badge tone="info" size="sm" flexShrink="0">
-              Assessment
-            </Badge>
-          ) : null}
-          <Box flexShrink="0" color="fg.muted">
-            <ChevronRight size={14} aria-hidden />
-          </Box>
-        </HStack>
-      </NextLink>
-    </Box>
-  );
-}
-
-/**
- * What the Module is, beside what is in it. Sticky, so it stays in view while a
- * long list of Sections scrolls past.
- */
-function ModuleAside({
-  module,
-  totals,
-}: {
-  module: ModuleDetail;
-  totals: ReturnType<typeof moduleTotals>;
-}) {
-  const facts: ReadonlyArray<readonly [string, string]> = [
-    ["Architect", module.owner.displayName],
-    ["Sections", String(totals.sections)],
-    ["Materials", String(totals.materials)],
-    ["Practice activities", String(totals.practice)],
-    ["Assessments", String(totals.assessments)],
-  ];
-
-  return (
-    // First on a phone, where the two columns stack: what the Module is comes
-    // before the list of what is in it.
-    <Box position={{ lg: "sticky" }} top={{ lg: "8" }} order={{ base: -1, lg: 0 }}>
-      <PixelFrame pad="5">
-        <Stack gap="4">
-          <Text textStyle="display" fontSize="xs">
-            About this module
-          </Text>
-          {module.description ? (
-            <Text fontSize="sm" color="fg.muted" lineHeight="tall">
-              {module.description}
-            </Text>
-          ) : null}
-          <Stack as="dl" gap="2" fontSize="sm">
-            {facts.map(([label, value]) => (
-              <Flex key={label} justify="space-between" gap="3">
-                <Text as="dt" color="fg.muted">
-                  {label}
-                </Text>
-                <Text as="dd" textStyle="data" textAlign="end">
-                  {value}
-                </Text>
-              </Flex>
-            ))}
-          </Stack>
-        </Stack>
-      </PixelFrame>
-    </Box>
   );
 }
