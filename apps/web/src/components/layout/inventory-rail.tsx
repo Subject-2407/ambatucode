@@ -7,6 +7,11 @@ import { Box, Flex, Text, chakra } from "@chakra-ui/react";
 import { PixelIcon } from "@/components/ui/pixel-icon";
 import type { SpriteName } from "@/components/ui/pixel-sprites";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  nextColorModePreference,
+  useColorMode,
+  type ColorModePreference,
+} from "@/providers/color-mode";
 import { useSession } from "@/providers/session-provider";
 import { PIXEL, pixelSkin } from "@/theme/pixel";
 import type { NavItem } from "./navigation";
@@ -29,9 +34,29 @@ import type { NavItem } from "./navigation";
  * already fit across the narrowest screen the product supports.
  */
 
-/** The slot's height, and its width on a phone where slots sit side by side. */
 const SLOT_HEIGHT = "56px";
-const PHONE_SLOT_WIDTH = "64px";
+
+/**
+ * On a phone the slots sit side by side, and each takes its width from its own
+ * caption rather than from a fixed number.
+ *
+ * A fixed 64px was already too narrow for "Submissions": the word ran past the
+ * edge and the notch cut off its first and last letters. It was also too wide
+ * for the row. Once the theme became a slot, a Coder had six of them, and six
+ * at 64px do not fit a 360px phone. Sized to their captions, with 4px between
+ * slots and 8px at each end, the Coder's row comes to 358px.
+ *
+ * On a phone the caption is 8px, which is the face's own size. It is drawn on a
+ * grid of eighths of an em, so at 8px every cell is exactly one pixel (three
+ * device pixels on a typical phone), where 9px puts each cell at 1.125 pixels
+ * and the letters come out uneven. Letter spacing goes to zero for the same
+ * reason: every glyph already ends in a blank column.
+ *
+ * 44px is the floor. It is a comfortable touch target, and it is wider than any
+ * of the theme slot's three captions, so that slot keeps one width as it cycles
+ * instead of shifting Log out under the reader's thumb.
+ */
+const PHONE_SLOT_MIN_WIDTH = "44px";
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -90,7 +115,12 @@ export function InventoryRail({
         ))}
       </Flex>
 
-      <Flex direction={{ base: "row", md: "column" }} gap="2" align="center" width={{ md: "full" }}>
+      <Flex
+        direction={{ base: "row", md: "column" }}
+        gap={{ base: "1", md: "2" }}
+        align="center"
+        width={{ md: "full" }}
+      >
         {footer}
         <SignOutSlot />
       </Flex>
@@ -122,9 +152,11 @@ function SlotShell({
       <PixelIcon name={icon} size={20} />
       <Text
         textStyle="display"
-        fontSize="3xs"
+        // 8px on a phone, the face's native size; the note on the phone slot
+        // width explains why. No token is that small, so it is written out.
+        fontSize={{ base: "0.5rem", md: "3xs" }}
         lineHeight="1"
-        letterSpacing="0.02em"
+        letterSpacing={{ base: "0", md: "0.02em" }}
         whiteSpace="nowrap"
       >
         {label}
@@ -137,15 +169,17 @@ function SlotShell({
       <Flex
         asChild
         direction="column"
-        width={{ base: PHONE_SLOT_WIDTH, md: "full" }}
+        width={{ base: "auto", md: "full" }}
+        minWidth={{ base: PHONE_SLOT_MIN_WIDTH, md: "0" }}
         height={SLOT_HEIGHT}
         // The rail takes its width from the widest caption plus this gutter, so
         // this number is the rail's width. It was a roomy `3`, which bought a
         // column of empty slot on both sides of every label and took the space
         // from the page. `1.5` still clears the longest caption — the labels
         // are `nowrap`, so a gutter too small would show as a clipped word
-        // rather than as a narrower rail.
-        paddingX={{ md: "1.5" }}
+        // rather than as a narrower rail. On a phone the same rule sizes each
+        // slot on its own, and `1` is the 3px edge plus a pixel of air.
+        paddingX={{ base: "1", md: "1.5" }}
         gap="1"
         align="center"
         justify="center"
@@ -193,6 +227,63 @@ function RailSlot({ item, active }: { item: NavItem; active: boolean }) {
         <NextLink href={item.href} aria-current={active ? "page" : undefined}>
           {content}
         </NextLink>
+      )}
+    </SlotShell>
+  );
+}
+
+/**
+ * What the theme slot shows for each preference. `label` is the one word under
+ * the sprite; `name` is how the accessible name says it, and it begins with the
+ * same word so the name contains what the slot visibly reads.
+ */
+const THEME_SLOT: Readonly<
+  Record<ColorModePreference, { icon: SpriteName; label: string; name: string }>
+> = {
+  system: { icon: "contrast", label: "Auto", name: "Auto (follow device)" },
+  light: { icon: "sun", label: "Light", name: "Light" },
+  dark: { icon: "moon", label: "Dark", name: "Dark" },
+};
+
+/**
+ * The theme, as a slot like every other control on the rail.
+ *
+ * It was a small unframed icon button above Log out, the one control on the
+ * rail with no notch and no word, so it read as decoration rather than as a
+ * setting. It walks the same cycle as `ColorModeToggle`, system to light to
+ * dark and back, because a plain light and dark switch has no way to hand the
+ * choice back to the device once it has been taken.
+ *
+ * Sprite and word follow the *preference*, not the mode it resolves to. The
+ * slot reports what the reader chose, and "Auto" is a choice: showing a sun
+ * under it would say the theme is pinned to light when it is not.
+ *
+ * That is also why nothing here waits for hydration. The preference comes
+ * from the cookie, which the root layout reads on the server and hands to the
+ * provider, so the server and the first client render agree on it exactly.
+ * Only the resolved mode is unknown until the device has been asked, and this
+ * slot never reads it. A click before then is still right, because
+ * `setPreference` asks the device itself when the next preference is system.
+ */
+export function ThemeSlot() {
+  const { preference, setPreference } = useColorMode();
+  const current = THEME_SLOT[preference];
+  const next = nextColorModePreference(preference);
+  // What it is and what a click does, spoken and on hover alike. The title is
+  // how a mouse reader learns that "Auto" means following the device.
+  const description = `Theme: ${current.name}. Switch to ${THEME_SLOT[next].name}`;
+
+  return (
+    <SlotShell icon={current.icon} label={current.label}>
+      {(content) => (
+        <chakra.button
+          type="button"
+          aria-label={description}
+          title={description}
+          onClick={() => setPreference(next)}
+        >
+          {content}
+        </chakra.button>
       )}
     </SlotShell>
   );

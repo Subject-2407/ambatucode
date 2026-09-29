@@ -112,6 +112,39 @@ export const SPRITES = {
     ".#....#.",
     "..####..",
   ],
+  /** A disc with rays. The light theme. */
+  sun: [
+    "...##...",
+    ".#....#.",
+    "..####..",
+    "#.####.#",
+    "#.####.#",
+    "..####..",
+    ".#....#.",
+    "...##...",
+  ],
+  /** A crescent, horns to the upper right. The dark theme. */
+  moon: [
+    "..###...",
+    ".##.....",
+    "##......",
+    "##.....#",
+    "##.....#",
+    "###...##",
+    ".######.",
+    "..####..",
+  ],
+  /** A circle, half filled. The theme that follows the device. */
+  contrast: [
+    "..####..",
+    ".#..###.",
+    "#...####",
+    "#...####",
+    "#...####",
+    "#...####",
+    ".#..###.",
+    "..####..",
+  ],
   /** A wall calendar. Assessment Sessions. */
   calendar: [
     ".#....#.",
