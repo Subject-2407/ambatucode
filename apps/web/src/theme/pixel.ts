@@ -179,6 +179,25 @@ export const BUTTON_FACES: Readonly<Record<string, ButtonFace>> = {
 };
 
 /**
+ * The shadow under a raised button, cut from the button's own colour.
+ *
+ * It used to be one ink for everything: the page's strongest, near white in
+ * dark mode and near black in light. Under a teal or crimson face that read as
+ * a sticker on a card, not as the side of a key. A shade of the face reads as
+ * the same object seen from an angle: darker on a dark screen, where depth is
+ * shadow, and a lighter tint on paper, where near black under a navy face was
+ * two dark shapes fighting.
+ *
+ * Returned per theme, for Chakra's `_dark` condition.
+ */
+export function buttonShadow(edge: string) {
+  return {
+    base: pixelDrop(`color-mix(in srgb, ${edge} 55%, var(--amb-colors-bg-canvas))`),
+    _dark: pixelDrop(`color-mix(in srgb, ${edge} 60%, black)`),
+  } as const;
+}
+
+/**
  * The notched edge for a form field, painted as background layers.
  *
  * A field cannot use `pixelSkin()` or `pixelFace()`: `<input>` and `<select>`
