@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Box } from "@chakra-ui/react";
+import { Box, Text } from "@chakra-ui/react";
 import { PageContainer } from "@/components/layout/app-shell";
-import { Breadcrumbs } from "@/components/layout/breadcrumbs";
+import { BackLink } from "@/components/layout/back-link";
 import { NextItemLink } from "@/components/content/next-item-link";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
 import { routes } from "@/lib/routes";
+import { sectionLabel } from "@/lib/section-label";
 import { getAssessment } from "@/server/services/assessments";
 import { nextModuleItem } from "@/server/services/module-progression";
 import { AssessmentScreen } from "./assessment-screen";
@@ -42,13 +43,15 @@ export default async function AssessmentPage({ params }: PageProps) {
   });
 
   return (
-    <PageContainer>
-      <Breadcrumbs
-        items={[
-          { label: progression.moduleTitle, href: routes.module(moduleSlug) },
-          ...(progression.current ? [{ label: progression.current.sectionTitle }] : []),
-        ]}
-      />
+    <PageContainer width="wide">
+      <BackLink href={routes.module(moduleSlug)} label="Back to module" />
+      {/* The title is the problem panel's own heading, so where the page sits
+          is said here, above both columns, rather than in a page header. */}
+      {progression.current ? (
+        <Text textStyle="display" fontSize="2xs" color="accent.fg" mb="3">
+          {sectionLabel(progression.current)}
+        </Text>
+      ) : null}
 
       <AssessmentScreen assessment={response.assessment} />
 

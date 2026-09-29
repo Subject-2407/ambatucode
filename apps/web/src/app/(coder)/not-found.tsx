@@ -13,7 +13,7 @@ import { routes } from "@/lib/routes";
  */
 export default function CoderNotFound() {
   return (
-    <PageContainer>
+    <PageContainer width="reading">
       <EmptyState
         sprite="doc"
         title="Nothing here"

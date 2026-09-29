@@ -7,9 +7,8 @@ import { AchievementAnnouncer } from "@/components/gamification/achievement-anno
 import { PixelBackdrop, type BackdropVariant } from "@/components/ornament/pixel-backdrop";
 import { AssessmentModeProvider, useAssessmentMode } from "@/providers/assessment-mode";
 import { SessionProvider } from "@/providers/session-provider";
-import { ColorModeToggle } from "@/providers/color-mode";
 import { navItemsForRole } from "./navigation";
-import { InventoryRail } from "./inventory-rail";
+import { InventoryRail, ThemeSlot } from "./inventory-rail";
 
 /**
  * The one shell all three roles share. What differs between Root, Architect,
@@ -62,8 +61,10 @@ function ShellFrame({ user, children }: { user: AuthenticatedUser; children: Rea
       {/* The footer is the theme switch and nothing else. The account tile
           that used to sit above it opened a panel repeating the name, username,
           and role that the Profile screen already shows in full — a control
-          whose only job was to restate what one click away states better. */}
-      <InventoryRail items={navItemsForRole(user.role)} footer={<ColorModeToggle />} />
+          whose only job was to restate what one click away states better.
+          The switch is a full slot like every destination: as a small icon
+          button it was the one control on the rail that looked optional. */}
+      <InventoryRail items={navItemsForRole(user.role)} footer={<ThemeSlot />} />
 
       <Box as="main" flex="1" minWidth="0">
         {announcer}
@@ -76,13 +77,19 @@ function ShellFrame({ user, children }: { user: AuthenticatedUser; children: Rea
 /**
  * The standard page frame inside the shell: one title, optional supporting
  * line, and at most one primary action to its right.
+ *
+ * `kicker` is the small line above the title that says where the page sits —
+ * "02 · Loops" over a Material. It took over from a breadcrumb trail, which at
+ * one level deep was a second way of writing the back button.
  */
 export function PageHeader({
   title,
+  kicker,
   description,
   action,
 }: {
   title: string;
+  kicker?: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
 }) {
@@ -100,6 +107,11 @@ export function PageHeader({
           one part of a header that must keep its full width, because a button
           squeezed to half its label is not a control any more. */}
       <Stack gap="1" minWidth="0">
+        {kicker ? (
+          <Text textStyle="display" fontSize="2xs" color="accent.fg">
+            {kicker}
+          </Text>
+        ) : null}
         <Heading
           as="h1"
           textStyle="display"
@@ -123,8 +135,31 @@ export function PageHeader({
   );
 }
 
+/**
+ * How wide a page's column runs, centred in the window.
+ *
+ * Pages used to run the full width, which suited a grading table and nothing a
+ * Coder reads: a Module's Sections and a Material's prose hugged the left edge
+ * of a wide monitor with half the window empty beside them. A measure is now a
+ * choice each page makes for its content, and the column sits in the middle.
+ *
+ * - `reading` — prose and a single list: a Material, a submission.
+ * - `content` — a page with a little structure: the profile.
+ * - `wide` — grids and tables: the dashboard, the catalog, submissions.
+ * - `full` — dense Architect and Root screens, which want every column.
+ */
+export type PageWidth = "reading" | "content" | "wide" | "full";
+
+const PAGE_WIDTH: Readonly<Record<PageWidth, string>> = {
+  reading: "52rem",
+  content: "64rem",
+  wide: "80rem",
+  full: "full",
+};
+
 export function PageContainer({
   children,
+  width = "full",
   /**
    * The ornament layer behind the page.
    *
@@ -139,6 +174,7 @@ export function PageContainer({
   backdrop,
 }: {
   children: ReactNode;
+  width?: PageWidth;
   backdrop?: BackdropVariant;
 }) {
   return (
@@ -147,10 +183,10 @@ export function PageContainer({
       <Container
         position="relative"
         zIndex="1"
-        // Full width, no cap. A page that stops at 72rem leaves the rest of a
-        // wide window as dead margin and squeezes two-column screens until their
-        // headers wrap; the gutters below are the only edge a page needs.
-        maxWidth="full"
+        // `Container` centres itself, so the gutters stay equal on both sides
+        // whatever the measure. The padding is outside the measure, not
+        // subtracted from it.
+        maxWidth={width === "full" ? "full" : `calc(${PAGE_WIDTH[width]} + 4rem)`}
         px={{ base: "4", md: "8" }}
         py={{ base: "6", md: "8" }}
       >

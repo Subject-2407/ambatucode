@@ -54,7 +54,7 @@ export function SubmissionsScreen() {
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <PageContainer backdrop="waveform">
+    <PageContainer width="wide" backdrop="waveform">
       <PageHeader title="Submissions" />
 
       <Stack gap="4">

@@ -1,14 +1,16 @@
 "use client";
 
+import NextLink from "next/link";
 import { Box, Grid, HStack, Stack, Text } from "@chakra-ui/react";
 import type { SubmissionCoderView } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
-import { Breadcrumbs, type Crumb } from "@/components/layout/breadcrumbs";
+import { BackLink } from "@/components/layout/back-link";
 import { describeSubmission } from "@/components/assessment/submission-status";
 import { CodeEditor } from "@/components/editor/code-editor";
 import { LANGUAGE_LABEL } from "@/components/editor/language-labels";
 import { TestResultRow } from "@/components/editor/run-results";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { PixelFrame } from "@/components/ui/pixel-frame";
 import { formatDateTime } from "@/lib/format-date";
 import { routes } from "@/lib/routes";
@@ -65,26 +67,21 @@ export function SubmissionDetail({
 }) {
   const summary = describeSubmission(submission.status, submission.score);
 
-  // The trail runs Submissions › Module › Assessment, so the way back to the
-  // list and the way to the exam itself are both one click.
-  const crumbs: Crumb[] = [{ label: "Submissions", href: routes.submissions }];
-  if (context.moduleSlug && context.moduleTitle) {
-    crumbs.push({ label: context.moduleTitle, href: routes.module(context.moduleSlug) });
-    if (context.assessmentId) {
-      crumbs.push({
-        label: context.assessmentTitle,
-        href: routes.assessment(context.moduleSlug, context.assessmentId),
-      });
-    }
-  }
+  // Back goes to the list this was opened from; the exam itself is the
+  // header's action, so both stay one click away.
+  const assessmentHref =
+    context.moduleSlug && context.assessmentId
+      ? routes.assessment(context.moduleSlug, context.assessmentId)
+      : null;
 
   const lineCount = submission.sourceCode.split("\n").length;
 
   return (
-    <PageContainer>
-      <Breadcrumbs items={crumbs} />
+    <PageContainer width="content">
+      <BackLink href={routes.submissions} label="Back to submissions" />
 
       <PageHeader
+        kicker={context.moduleTitle ?? undefined}
         title={context.assessmentTitle}
         description={[
           context.sessionName,
@@ -92,6 +89,13 @@ export function SubmissionDetail({
         ]
           .filter(Boolean)
           .join(" · ")}
+        action={
+          assessmentHref ? (
+            <Button asChild variant="outline" size="sm">
+              <NextLink href={assessmentHref}>Open assessment</NextLink>
+            </Button>
+          ) : undefined
+        }
       />
 
       <Stack gap="4">

@@ -33,13 +33,17 @@ export default async function CoderDashboardPage() {
   ]);
 
   return (
-    <PageContainer backdrop="circuit">
+    <PageContainer width="wide" backdrop="circuit">
       <PageHeader
         title={`Welcome back, ${session.user.displayName}`}
         action={
-          <Button asChild variant="outline">
-            <NextLink href={routes.modules}>Browse modules</NextLink>
-          </Button>
+          // With no modules yet, the empty state below offers the same link,
+          // and two identical buttons on an otherwise empty page is one too many.
+          enrolled.items.length === 0 ? undefined : (
+            <Button asChild variant="outline">
+              <NextLink href={routes.modules}>Browse modules</NextLink>
+            </Button>
+          )
         }
       />
 
