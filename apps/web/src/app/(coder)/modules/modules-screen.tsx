@@ -2,11 +2,10 @@
 
 import { useId, useMemo, useState } from "react";
 import NextLink from "next/link";
-import { Flex, Grid, HStack, InputGroup, Stack, Text } from "@chakra-ui/react";
-import { Lock, Search } from "lucide-react";
+import { Flex, Grid, InputGroup, Stack, Text } from "@chakra-ui/react";
+import { Search } from "lucide-react";
 import type { ModuleSummary } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
@@ -118,34 +117,27 @@ export function ModulesScreen() {
 }
 
 function ModuleCard({ module }: { module: ModuleSummary }) {
-  const isClosed = module.visibility === "CLOSED";
-
   return (
     // A notched frame rather than a 1px rectangle. Every other surface in the
     // product wears the pixel edge, and the catalog — the screen a Coder spends
     // the most time in before they are enrolled anywhere — was the one place
     // still drawing plain boxes.
+    //
+    // No Public or Closed badge: the button at the foot of the card already
+    // says "Enroll" or "Request access", which is the same fact phrased as what
+    // to do about it.
     <PixelFrame as="article" aria-label={module.title} height="full" pad="5">
       <Stack gap="3" justify="space-between" height="full">
         <Stack gap="2">
-          <HStack justify="space-between" align="start" gap="3">
-            <Text textStyle="display" fontSize="md" lineClamp={2}>
-              {module.title}
-            </Text>
-            <Badge tone={isClosed ? "warning" : "neutral"} flexShrink="0">
-              {isClosed ? (
-                <>
-                  <Lock size={12} aria-hidden /> Closed
-                </>
-              ) : (
-                "Public"
-              )}
-            </Badge>
-          </HStack>
-
-          <Text color="fg.muted" fontSize="sm" lineClamp={3}>
-            {module.description ?? "No description yet."}
+          <Text textStyle="display" fontSize="md" lineClamp={2}>
+            {module.title}
           </Text>
+
+          {module.description ? (
+            <Text color="fg.muted" fontSize="sm" lineClamp={3}>
+              {module.description}
+            </Text>
+          ) : null}
 
           <Text color="fg.muted" fontSize="xs">
             {module.owner.displayName} · {module.sectionCount}{" "}

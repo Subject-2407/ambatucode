@@ -6,7 +6,7 @@ import { useAchievementAwards, type AwardedAchievement } from "@/hooks/use-achie
 import { useAssessmentMode } from "@/providers/assessment-mode";
 
 /**
- * Says so when a Coder earns a title.
+ * Says so when a Coder earns an achievement.
  *
  * Renders nothing. It is mounted once in the Coder shell so an award announces
  * itself wherever the Coder happens to be, rather than only on the page that
@@ -18,7 +18,7 @@ import { useAssessmentMode } from "@/providers/assessment-mode";
  *   while a formal attempt is running, and a badge popping up over a timer is
  *   exactly the distraction that rule exists to prevent. Awards earned then are
  *   held and announced when the attempt ends.
- * - **Never twice.** A reconnect can redeliver, and a title earned once should
+ * - **Never twice.** A reconnect can redeliver, and an achievement earned once should
  *   feel like it was earned once.
  */
 export function AchievementAnnouncer() {
@@ -32,7 +32,7 @@ export function AchievementAnnouncer() {
     if (announced.current.has(award.code)) return;
     announced.current.add(award.code);
     toaster.success({
-      title: `Title earned: ${award.name}`,
+      title: `Achievement earned: ${award.name}`,
       description: award.description,
       duration: 8_000,
     });

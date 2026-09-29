@@ -2,24 +2,22 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Grid, HStack, Stack, Text } from "@chakra-ui/react";
-import { CalendarClock, DoorOpen, Play, RotateCcw, Timer, Users } from "lucide-react";
-import type {
-  AssessmentCoderView,
-  AttemptView,
-  CoderSessionEntry,
-  ExecutionMode,
-  TimeMode,
-} from "@ambatucode/shared";
+import { Box, Grid, HStack, List, Stack, Text } from "@chakra-ui/react";
+import { CalendarClock, DoorOpen, Play, RotateCcw, ShieldCheck, Users } from "lucide-react";
+import type { AssessmentCoderView, AttemptView, CoderSessionEntry } from "@ambatucode/shared";
 import { LANGUAGE_LABEL } from "@/components/editor/language-labels";
 import { ProblemPanel } from "@/components/assessment/problem-panel";
 import { SessionLobby } from "@/components/assessment/session-lobby";
+import { TimingBadge } from "@/components/assessment/timing-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PixelFrame } from "@/components/ui/pixel-frame";
 import { toaster } from "@/components/ui/toaster";
 import { apiClient, isApiError } from "@/lib/api-client";
+import { describeAttemptRules } from "@/lib/attempt-rules";
+import { formatDateTime } from "@/lib/format-date";
 import { routes } from "@/lib/routes";
 
 /**
@@ -46,6 +44,8 @@ import { routes } from "@/lib/routes";
 export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderView }) {
   const router = useRouter();
   const [starting, setStarting] = useState<string | null>(null);
+  /** A timed start waiting on the Coder's confirmation. */
+  const [confirming, setConfirming] = useState<CoderSessionEntry | null>(null);
 
   const enterSession = useCallback(
     async (sessionId: string) => {
@@ -66,20 +66,43 @@ export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderVi
     [router],
   );
 
+  /**
+   * Starting an Individual clock is the one click here that cannot be taken
+   * back, so it is asked about. Continuing is not — that clock is already
+   * running — and neither is a Live session, whose clock started when the
+   * Architect pressed Start: a dialog there would only cost the Coder time.
+   */
+  const requestEnter = useCallback(
+    (session: CoderSessionEntry) => {
+      const resuming = session.attempt?.status === "IN_PROGRESS";
+      const startsOwnClock = session.durationMinutes !== null && session.executionMode !== "LIVE";
+      if (!resuming && startsOwnClock) {
+        setConfirming(session);
+        return;
+      }
+      void enterSession(session.id);
+    },
+    [enterSession],
+  );
+
   const openAccess = assessment.sessions.find((session) => session.isOpenAccess) ?? null;
   const scheduled = assessment.sessions.filter((session) => !session.isOpenAccess);
+  const rules = describeAttemptRules({
+    executionMode: assessment.executionMode,
+    exitPolicy: assessment.exitPolicy,
+    antiCheat: assessment.antiCheat,
+  });
 
   return (
     <Grid
       templateColumns={{ base: "1fr", lg: "minmax(0, 1.4fr) minmax(0, 1fr)" }}
-      gap={{ base: "6", lg: "6" }}
+      gap="6"
       alignItems="start"
     >
       <Stack gap="3" minWidth="0">
         <HStack gap="2" wrap="wrap">
           <TimingBadge
-            timeMode={assessment.timeMode}
-            durationMinutes={assessment.durationMinutes}
+            durationMinutes={assessment.timeMode === "UNTIMED" ? null : assessment.durationMinutes}
             executionMode={assessment.executionMode}
           />
           {openAccess ? (
@@ -87,11 +110,11 @@ export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderVi
               <DoorOpen size={12} aria-hidden /> Open access
             </Badge>
           ) : null}
-          {assessment.allowedLanguages.map((language) => (
-            <Badge key={language} tone="neutral">
-              {LANGUAGE_LABEL[language]}
-            </Badge>
-          ))}
+          {/* One muted line rather than a badge per language: they are a
+              fact to note, not four statuses to read. */}
+          <Text fontSize="xs" color="fg.muted">
+            {assessment.allowedLanguages.map((language) => LANGUAGE_LABEL[language]).join(" · ")}
+          </Text>
         </HStack>
 
         <PixelFrame>
@@ -108,62 +131,83 @@ export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderVi
           <OpenAccessPanel
             session={openAccess}
             starting={starting === openAccess.id}
-            onEnter={() => void enterSession(openAccess.id)}
+            onEnter={() => requestEnter(openAccess)}
           />
         ) : null}
 
-        <Stack gap="3">
-          <Text textStyle="display" fontSize="sm">
-            Sessions
-          </Text>
-          {scheduled.length === 0 ? (
-            <EmptyState
-              sprite="calendar"
-              title={openAccess ? "No scheduled session" : "No session yet"}
-              // Nothing to say when the assessment is already open above: the
-              // panel there is the instruction, and repeating it here turned an
-              // absence into a second set of directions.
-              description={
-                openAccess
-                  ? undefined
-                  : "Your Architect has not scheduled a session of this assessment for you."
-              }
-            />
-          ) : (
-            scheduled.map((session) => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                starting={starting === session.id}
-                onEnter={() => void enterSession(session.id)}
+        {/* Said before Start, not after. The workspace names these too, but
+            by then a timed clock is already running. */}
+        <RulesPanel rules={rules} />
+
+        {/* An open-access Assessment with nothing scheduled has one way in,
+            and it is the panel above. A "Sessions" heading over an empty
+            state only announced an absence. */}
+        {openAccess && scheduled.length === 0 ? null : (
+          <Stack gap="3">
+            <Text textStyle="display" fontSize="sm">
+              Sessions
+            </Text>
+            {scheduled.length === 0 ? (
+              <EmptyState
+                sprite="calendar"
+                title="No session yet"
+                description="Your Architect has not scheduled a session of this assessment for you."
               />
-            ))
-          )}
-        </Stack>
+            ) : (
+              scheduled.map((session) => (
+                <SessionCard
+                  key={session.id}
+                  session={session}
+                  starting={starting === session.id}
+                  onEnter={() => requestEnter(session)}
+                />
+              ))
+            )}
+          </Stack>
+        )}
       </Stack>
+
+      <ConfirmDialog
+        open={confirming !== null}
+        title="Start the timer?"
+        description={
+          confirming?.durationMinutes == null
+            ? null
+            : `Your ${String(confirming.durationMinutes)}-minute timer starts as soon as the workspace opens. It pauses only if you disconnect.`
+        }
+        confirmLabel="Start"
+        onConfirm={() => {
+          const session = confirming;
+          setConfirming(null);
+          if (session) void enterSession(session.id);
+        }}
+        onClose={() => setConfirming(null)}
+      />
     </Grid>
   );
 }
 
-function TimingBadge({
-  timeMode,
-  durationMinutes,
-  executionMode,
-}: {
-  timeMode: TimeMode;
-  durationMinutes: number | null;
-  executionMode: ExecutionMode | null;
-}) {
-  if (timeMode === "UNTIMED") return <Badge tone="neutral">Untimed</Badge>;
+function RulesPanel({ rules }: { rules: readonly string[] }) {
   return (
-    <Badge tone="accent">
-      <Timer size={12} aria-hidden /> {durationMinutes} min ·{" "}
-      {executionMode === "LIVE" ? "Live" : "Individual"}
-    </Badge>
+    <PixelFrame tone="muted" pad="4">
+      <Stack gap="2">
+        <HStack gap="2">
+          <ShieldCheck size={16} aria-hidden />
+          <Text textStyle="display" fontSize="xs">
+            Before you start
+          </Text>
+        </HStack>
+        <List.Root gap="1" ps="5" fontSize="sm" color="fg.muted">
+          {rules.map((rule) => (
+            <List.Item key={rule}>{rule}</List.Item>
+          ))}
+        </List.Root>
+      </Stack>
+    </PixelFrame>
   );
 }
 
-/** "closes 21/09/2026, 17:00", or nothing when the session has no limit. */
+/** "Closes 21 Sept 2026, 17:00", or nothing when the session has no limit. */
 function ClosingLine({ session }: { session: CoderSessionEntry }) {
   const closing = session.status === "RUNNING" ? session.endsAt : session.closesAt;
   if (closing === null) return null;
@@ -172,8 +216,7 @@ function ClosingLine({ session }: { session: CoderSessionEntry }) {
     <HStack gap="2" color="fg.warning">
       <CalendarClock size={14} aria-hidden />
       <Text fontSize="xs">
-        Closes {new Date(closing).toLocaleString()}. After that you cannot join or submit, and
-        open work is submitted automatically.
+        Closes {formatDateTime(closing)}. Open work is submitted automatically then.
       </Text>
     </HStack>
   );
@@ -213,7 +256,7 @@ function OpenAccessPanel({
               Start, and the sentence that used to sit here said so at length. */}
           {session.durationMinutes === null ? null : (
             <Text fontSize="sm" color="fg.muted">
-              {`Your ${String(session.durationMinutes)}-minute timer starts the moment you begin, and pauses while you are disconnected.`}
+              {`Your ${String(session.durationMinutes)}-minute timer starts the moment you begin.`}
             </Text>
           )}
         </Stack>
@@ -259,9 +302,7 @@ function RetakeNote() {
   return (
     <HStack gap="2" align="start" color="fg.success">
       <RotateCcw size={14} aria-hidden />
-      <Text fontSize="sm">
-        Your Architect opened a new attempt for you.
-      </Text>
+      <Text fontSize="sm">Your Architect opened a new attempt for you.</Text>
     </HStack>
   );
 }
@@ -303,14 +344,13 @@ function SessionCard({
               </Badge>
             ) : null}
           </HStack>
-          <Text fontSize="xs" color="fg.muted">
-            {session.executionMode === "LIVE"
-              ? "Live"
-              : session.executionMode === "INDIVIDUAL"
-                ? "Individual"
-                : "Untimed"}
-            {session.durationMinutes === null ? "" : ` · ${String(session.durationMinutes)} min`}
-          </Text>
+          <Box>
+            <TimingBadge
+              durationMinutes={session.durationMinutes}
+              executionMode={session.executionMode}
+              size="sm"
+            />
+          </Box>
         </Stack>
 
         <ClosingLine session={session} />
@@ -366,7 +406,9 @@ function SessionStatusBadge({ session }: { session: CoderSessionEntry }) {
   // "can I sit this" is yes, whatever the exam around it says.
   if (session.isGrantedRetake) return <Badge tone="success">New attempt open</Badge>;
   if (session.attempt?.status === "SUBMITTED") return <Badge tone="success">Submitted</Badge>;
-  if (session.attempt?.status === "EXPIRED") return <Badge tone="warning">Closed</Badge>;
+  // "Expired", not "Closed": Closed already names a Module you have to ask to
+  // join, and one word for two things made both harder to read.
+  if (session.attempt?.status === "EXPIRED") return <Badge tone="warning">Expired</Badge>;
 
   switch (session.status) {
     case "RUNNING":

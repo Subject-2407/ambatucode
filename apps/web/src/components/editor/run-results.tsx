@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { Box, HStack, Stack, Text } from "@chakra-ui/react";
 import { Check, X } from "lucide-react";
-import type { RunTestResultView } from "@ambatucode/shared";
+import type { RunTestResultView, SubmissionTestResultCoderView } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import {
   describeCaseOutcome,
@@ -35,8 +35,21 @@ export function ConsoleFrame({ children }: { children: ReactNode }) {
   );
 }
 
-/** Pass and fail carry an icon and a word, never colour alone. */
-export function TestResultRow({ result }: { result: RunTestResultView }) {
+/**
+ * One case's outcome, wherever a Coder reads one: a Run, the Submission panel in
+ * the workspace, and the submission page. It used to be written three times,
+ * with three different colour tokens for the same tick.
+ *
+ * Pass and fail carry an icon and a word, never colour alone.
+ */
+export function TestResultRow({
+  result,
+  showOutput = true,
+}: {
+  result: RunTestResultView | SubmissionTestResultCoderView;
+  /** Off where only the verdict fits, such as the workspace's status panel. */
+  showOutput?: boolean;
+}) {
   // Both streams are shown: a wrong answer is judged on stdout, so hiding it
   // behind stderr leaves the Coder nothing to compare against what was expected.
   const stdout = result.stdoutExcerpt;
@@ -62,9 +75,11 @@ export function TestResultRow({ result }: { result: RunTestResultView }) {
             {describeCaseOutcome(result)}
           </Text>
         </HStack>
-        <Text fontSize="xs" color="fg.muted" flexShrink="0">
-          {result.executionTimeMs} ms
-        </Text>
+        {result.executionTimeMs === null ? null : (
+          <Text fontSize="xs" color="fg.muted" flexShrink="0" fontVariantNumeric="tabular-nums">
+            {result.executionTimeMs} ms
+          </Text>
+        )}
       </HStack>
 
       {/* Why it failed, when the failure came from a test script. A case says
@@ -76,13 +91,13 @@ export function TestResultRow({ result }: { result: RunTestResultView }) {
         </Text>
       )}
 
-      {isFreeRunResult(result) && stdout.trim() === "" && stderr.trim() === "" ? (
+      {showOutput && isFreeRunResult(result) && stdout.trim() === "" && stderr.trim() === "" ? (
         <Text fontSize="xs" color="fg.muted">
           The program printed nothing.
         </Text>
       ) : null}
 
-      {[stdout, stderr].map((output, index) =>
+      {(showOutput ? [stdout, stderr] : []).map((output, index) =>
         output.trim() === "" ? null : (
           <Box
             key={index === 0 ? "stdout" : "stderr"}

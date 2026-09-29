@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import NextLink from "next/link";
-import { Flex, HStack, Stack, Text } from "@chakra-ui/react";
+import { Box, Flex, HStack, LinkOverlay, Stack, Text } from "@chakra-ui/react";
 import { ChevronRight } from "lucide-react";
 import type { SubmissionHistoryItem } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
 import { describeSubmission } from "@/components/assessment/submission-status";
+import { LANGUAGE_LABEL } from "@/components/editor/language-labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -16,21 +17,12 @@ import { DataTable, Table } from "@/components/ui/table";
 import { TableRowsSkeleton } from "@/components/ui/skeleton";
 import { useOwnSubmissions } from "@/hooks/use-grades";
 import { useModules } from "@/hooks/use-modules";
+import { formatDateTime } from "@/lib/format-date";
 import { routes } from "@/lib/routes";
 
 const PAGE_SIZE = 25;
 const COLUMN_COUNT = 5;
 const ALL = "";
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 /**
  * Everything this Coder has formally submitted.
@@ -63,10 +55,7 @@ export function SubmissionsScreen() {
 
   return (
     <PageContainer backdrop="waveform">
-      <PageHeader
-        title="Submissions"
-        description="Your formal submissions."
-      />
+      <PageHeader title="Submissions" />
 
       <Stack gap="4">
         <Flex gap="3" wrap="wrap">
@@ -115,9 +104,12 @@ export function SubmissionsScreen() {
 
             <Flex justify="space-between" align="center" gap="3" wrap="wrap">
               <Text fontSize="sm" color="fg.muted" aria-live="polite">
-                {total} submission{total === 1 ? "" : "s"} · page {page} of {lastPage}
+                {total} submission{total === 1 ? "" : "s"}
+                {lastPage > 1 ? ` · page ${String(page)} of ${String(lastPage)}` : ""}
               </Text>
-              <HStack gap="2">
+              {/* Two dead buttons under a list that fits on one page were
+                  controls for nothing. */}
+              <HStack gap="2" display={lastPage > 1 ? "flex" : "none"}>
                 <Button
                   size="sm"
                   variant="outline"
@@ -143,13 +135,22 @@ export function SubmissionsScreen() {
   );
 }
 
+/**
+ * The whole row is the link. A small "View" at the far edge was the only
+ * target on a row whose every cell described the same submission.
+ *
+ * The overlay rides on the assessment title, so the link's accessible name is
+ * the thing a Coder is looking for rather than a column of identical "View"s.
+ */
 function SubmissionRow({ item }: { item: SubmissionHistoryItem }) {
   const summary = describeSubmission(item.status, item.score);
   return (
-    <Table.Row>
+    <Table.Row position="relative" cursor="pointer" _hover={{ bg: "bg.subtle" }}>
       <Table.Cell>
         <Stack gap="0.5">
-          <Text fontWeight="medium">{item.assessmentTitle}</Text>
+          <LinkOverlay asChild fontWeight="medium">
+            <NextLink href={routes.submission(item.id)}>{item.assessmentTitle}</NextLink>
+          </LinkOverlay>
           <Text fontSize="xs" color="fg.muted">
             {item.moduleTitle} · {item.sessionName}
           </Text>
@@ -178,16 +179,13 @@ function SubmissionRow({ item }: { item: SubmissionHistoryItem }) {
       <Table.Cell>
         <Text fontSize="sm">{formatDateTime(item.submittedAt)}</Text>
         <Text fontSize="xs" color="fg.muted">
-          {item.language}
+          {LANGUAGE_LABEL[item.language]}
         </Text>
       </Table.Cell>
-      <Table.Cell textAlign="end">
-        <Button asChild size="xs" variant="ghost">
-          <NextLink href={routes.submission(item.id)}>
-            View
-            <ChevronRight aria-hidden />
-          </NextLink>
-        </Button>
+      <Table.Cell textAlign="end" color="fg.muted">
+        <Box display="inline-flex" aria-hidden>
+          <ChevronRight size={16} />
+        </Box>
       </Table.Cell>
     </Table.Row>
   );

@@ -37,12 +37,26 @@ function ordinal(rank: number): string {
   }
 }
 
+/**
+ * The podium's medal inks. It used to pick a tone per rank and then never apply
+ * it, so first, second, and third all wore the same grey medal.
+ */
+const MEDAL_COLOR: Readonly<Record<number, string>> = {
+  1: "warning.fg",
+  2: "fg.muted",
+  3: "accent.fg",
+};
+
 /** Colour is never the only signal — the rank number sits beside it. */
 function RankMark({ rank }: { rank: number }) {
-  const tone = rank === 1 ? "warning" : rank === 2 ? "neutral" : rank === 3 ? "accent" : null;
+  const medal = MEDAL_COLOR[rank];
   return (
     <HStack gap="1.5">
-      {tone === null ? null : <Medal size={14} aria-hidden />}
+      {medal === undefined ? null : (
+        <Box as="span" color={medal} display="inline-flex">
+          <Medal size={14} aria-hidden />
+        </Box>
+      )}
       <Text fontVariantNumeric="tabular-nums" fontWeight={rank <= 3 ? "semibold" : "normal"}>
         {rank}
       </Text>
@@ -121,7 +135,7 @@ export function LeaderboardPanel({
     return (
       <Stack gap="2">
         {[0, 1, 2, 3, 4].map((key) => (
-          <Skeleton key={key} height="2.5rem" borderRadius="md" />
+          <Skeleton key={key} height="2.5rem" borderRadius="0" />
         ))}
       </Stack>
     );

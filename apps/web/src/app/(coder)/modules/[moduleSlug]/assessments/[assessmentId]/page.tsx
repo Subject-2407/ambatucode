@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
-import NextLink from "next/link";
 import { notFound } from "next/navigation";
 import { Box } from "@chakra-ui/react";
-import { ChevronLeft } from "lucide-react";
 import { PageContainer } from "@/components/layout/app-shell";
-import { Button } from "@/components/ui/button";
+import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { NextItemLink } from "@/components/content/next-item-link";
 import { handlePageError } from "@/lib/page-errors";
 import { requirePageSession } from "@/lib/require-page-session";
@@ -45,12 +43,12 @@ export default async function AssessmentPage({ params }: PageProps) {
 
   return (
     <PageContainer>
-      <Button asChild variant="ghost" size="sm" alignSelf="start" mb="4">
-        <NextLink href={routes.module(moduleSlug)}>
-          <ChevronLeft aria-hidden />
-          Back to module
-        </NextLink>
-      </Button>
+      <Breadcrumbs
+        items={[
+          { label: progression.moduleTitle, href: routes.module(moduleSlug) },
+          ...(progression.current ? [{ label: progression.current.sectionTitle }] : []),
+        ]}
+      />
 
       <AssessmentScreen assessment={response.assessment} />
 

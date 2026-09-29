@@ -2,8 +2,7 @@
 
 import { Box, HStack, Spinner, Stack, Text } from "@chakra-ui/react";
 import { Badge } from "@/components/ui/badge";
-import { describeCaseOutcome } from "@/components/content/run-status";
-import { ConsoleFrame } from "@/components/editor/run-results";
+import { ConsoleFrame, TestResultRow } from "@/components/editor/run-results";
 import type { AttemptSubmissionState } from "@/hooks/use-attempt-submission";
 import { describeSubmission } from "./submission-status";
 
@@ -64,19 +63,16 @@ export function SubmissionPanel({ state }: { state: AttemptSubmissionState }) {
         ) : null}
 
         {detail && detail.testResults.length > 0 ? (
-          <Stack gap="1">
+          <Stack gap="3">
             <Text fontSize="xs" color="fg.subtle">
               Public cases
             </Text>
             {detail.testResults.map((result, index) => (
-              <HStack key={`${result.name}-${String(index)}`} gap="2" justify="space-between">
-                <Text fontSize="sm" truncate>
-                  {result.name}
-                </Text>
-                <Badge tone={result.passed ? "success" : "danger"}>
-                  {describeCaseOutcome(result)}
-                </Badge>
-              </HStack>
+              <TestResultRow
+                key={`${result.name}-${String(index)}`}
+                result={result}
+                showOutput={false}
+              />
             ))}
           </Stack>
         ) : null}

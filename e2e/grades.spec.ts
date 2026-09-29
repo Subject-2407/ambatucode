@@ -31,11 +31,22 @@ type Fixture = {
   sessionId: string;
 };
 
-async function json<T>(request: APIRequestContext, method: "get" | "post", path: string, body?: unknown): Promise<T> {
+async function json<T>(
+  request: APIRequestContext,
+  method: "get" | "post",
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const response = await request[method](path, body === undefined ? undefined : { data: body });
-  const envelope = (await response.json()) as { ok: boolean; data?: T; error?: { message: string } };
+  const envelope = (await response.json()) as {
+    ok: boolean;
+    data?: T;
+    error?: { message: string };
+  };
   if (!envelope.ok || envelope.data === undefined) {
-    throw new Error(`${method.toUpperCase()} ${path} failed: ${envelope.error?.message ?? "unknown"}`);
+    throw new Error(
+      `${method.toUpperCase()} ${path} failed: ${envelope.error?.message ?? "unknown"}`,
+    );
   }
   return envelope.data;
 }
@@ -134,6 +145,8 @@ test.describe("grading records and gamification", () => {
 
       await coderPage.goto(`/modules/${fixture.moduleSlug}`);
       await coderPage.getByRole("link", { name: new RegExp(fixture.assessmentTitle) }).click();
+      // Untimed, so Start goes straight in: only a clock of the Coder's own
+      // asks for confirmation first.
       await coderPage.getByRole("button", { name: /Start/ }).click();
       await coderPage.waitForURL(/\/attempt\//);
 
@@ -210,10 +223,7 @@ test.describe("grading records and gamification", () => {
       // Chakra renders a radio as a label wrapping a visually hidden input
       // plus a styled control, so the input is never the thing under the
       // pointer. Click the control, the way a person does.
-      await afterReset
-        .locator('[data-scope="radio-group"][data-part="item"]')
-        .first()
-        .click();
+      await afterReset.locator('[data-scope="radio-group"][data-part="item"]').first().click();
       await expect(architectPage.getByText("Official score updated")).toBeVisible({
         timeout: 30_000,
       });
@@ -232,7 +242,7 @@ test.describe("grading records and gamification", () => {
       await expect(historyRow).toBeVisible({ timeout: 30_000 });
       await expect(historyRow).toContainText("Official");
 
-      await historyRow.getByRole("link", { name: "View" }).click();
+      await historyRow.getByRole("link", { name: fixture.assessmentTitle }).click();
       await coderPage.waitForURL(/\/submissions\//);
       // The detail page shows the exact source that was submitted.
       await expect(coderPage.getByText(SOURCE)).toBeVisible({ timeout: 30_000 });
@@ -267,7 +277,9 @@ test.describe("leaderboard and achievements", () => {
   test.slow();
   test.setTimeout(180_000);
 
-  test("a Coder sees a leaderboard on the module and a showcase of titles", async ({ page }) => {
+  test("a Coder sees a leaderboard on the module and a showcase of achievements", async ({
+    page,
+  }) => {
     const suffix = stamp();
     await signIn(page, "architect");
     const fixture = await buildFixture(page, suffix);
@@ -281,17 +293,19 @@ test.describe("leaderboard and achievements", () => {
       await json(coderPage.request, "post", `/api/modules/${fixture.moduleId}/enroll`);
 
       await coderPage.goto(`/modules/${fixture.moduleSlug}`);
-      await expect(coderPage.getByText("Leaderboard")).toBeVisible();
+      // The board waits in a drawer rather than taking half the page.
+      await coderPage.getByRole("button", { name: "Leaderboard" }).click();
+      await expect(coderPage.getByRole("dialog", { name: "Leaderboard" })).toBeVisible();
       // Nobody has an official score yet, and the board says so rather than
       // inventing a rank.
       await expect(coderPage.getByText(/No scores yet|Nothing to rank yet/)).toBeVisible();
 
-      // Titles live on the Profile screen now, behind its second tab.
+      // Achievements live on the Profile screen, behind its second tab.
       await coderPage.goto("/profile");
       await coderPage.getByRole("tab", { name: "Achievements" }).click();
-      // Locked titles are readable: they are goals, not surprises.
+      // Locked achievements are readable: they are goals, not surprises.
       await expect(coderPage.getByText("First Light")).toBeVisible({ timeout: 30_000 });
-      await expect(coderPage.getByText(/titles earned/)).toBeVisible();
+      await expect(coderPage.getByText(/achievements earned/)).toBeVisible();
     } finally {
       await deleteModule(page, fixture.moduleId);
       await coderContext.close();
