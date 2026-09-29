@@ -2,34 +2,44 @@
 
 import { forwardRef, type ReactNode } from "react";
 import { Field, Input as ChakraInput, type InputProps as ChakraInputProps } from "@chakra-ui/react";
-import { PIXEL, pixelFocusRing, pixelNotch } from "@/theme/pixel";
+import { PIXEL, pixelFieldPaint, pixelNotch } from "@/theme/pixel";
 
-export { Input } from "@chakra-ui/react";
 export type { InputProps } from "@chakra-ui/react";
 
 /**
  * A field wearing the same notch as everything else on the page.
  *
- * The border is drawn inside the box with an inset shadow rather than as a
- * `border`, because the notch clips anything painted outside the border box —
- * and an inset ring also means focus and invalid states can thicken the edge
- * without the control changing size and nudging the layout.
+ * The edge is painted as background layers (see `pixelFieldPaint`) rather than
+ * drawn as a `border` or an inset ring. A border is cut away by the notch, and
+ * so was the ring this replaces — at exactly the corner steps, which were left
+ * with no edge colour at all. Focus and invalid states thicken the edge from
+ * the inside, so the control never changes size and nudges the layout.
  */
-const FIELD_EDGE = pixelFocusRing("var(--amb-colors-border-default)", 2);
-const FIELD_EDGE_FOCUS = pixelFocusRing("var(--amb-colors-accent-solid)", PIXEL);
-const FIELD_EDGE_INVALID = pixelFocusRing("var(--amb-colors-danger-solid)", PIXEL);
+const FILL = "var(--amb-colors-bg-canvas)";
 
 export const pixelFieldStyles = {
   borderRadius: "0",
   borderWidth: "0",
   clipPath: pixelNotch(),
-  bg: "bg.canvas",
-  boxShadow: FIELD_EDGE,
-  transition: "box-shadow 120ms ease-out",
-  _hover: { boxShadow: pixelFocusRing("var(--amb-colors-border-emphasized)", 2) },
-  _focusVisible: { outline: "none", boxShadow: FIELD_EDGE_FOCUS },
-  "&[aria-invalid='true']": { boxShadow: FIELD_EDGE_INVALID },
+  boxShadow: "none",
+  ...pixelFieldPaint("var(--amb-colors-border-default)", FILL, 2),
+  _hover: pixelFieldPaint("var(--amb-colors-border-emphasized)", FILL, 2),
+  _focusVisible: {
+    outline: "none",
+    ...pixelFieldPaint("var(--amb-colors-accent-solid)", FILL, PIXEL),
+  },
+  "&[aria-invalid='true']": pixelFieldPaint("var(--amb-colors-danger-solid)", FILL, PIXEL),
 } as const;
+
+/**
+ * The bare field, for a search box or a filter that needs no label row.
+ *
+ * It re-exported Chakra's own until now, so every search box in the product
+ * was the one plain square rectangle on a page of notched edges.
+ */
+export const Input = forwardRef<HTMLInputElement, ChakraInputProps>(function Input(props, ref) {
+  return <ChakraInput ref={ref} {...pixelFieldStyles} {...props} />;
+});
 
 export type TextFieldProps = ChakraInputProps & {
   label: string;

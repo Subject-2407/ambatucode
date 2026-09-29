@@ -2,6 +2,7 @@
 
 import { forwardRef, type ReactNode } from "react";
 import { Field, NativeSelect } from "@chakra-ui/react";
+import { pixelFieldStyles } from "./input";
 
 export type SelectOption = { value: string; label: string };
 
@@ -27,6 +28,10 @@ export type SelectFieldProps = {
  * behaviour, and assistive-technology support with zero JavaScript. The richer
  * Select earns its cost only where an option needs custom rendering, which no
  * current screen does.
+ *
+ * It wears the text field's edge and label. It was the one control still drawn
+ * as a plain square box with a sans label, so a filter row of a search box and
+ * a select looked like parts of two different products.
  */
 export const SelectField = forwardRef<HTMLSelectElement, SelectFieldProps>(function SelectField(
   {
@@ -46,13 +51,14 @@ export const SelectField = forwardRef<HTMLSelectElement, SelectFieldProps>(funct
 ) {
   return (
     <Field.Root invalid={Boolean(errorText)} required={required} disabled={disabled}>
-      <Field.Label>
+      <Field.Label textStyle="display" fontSize="2xs" color="fg.muted">
         {label}
         <Field.RequiredIndicator />
       </Field.Label>
       <NativeSelect.Root disabled={disabled} invalid={Boolean(errorText)}>
         <NativeSelect.Field
           ref={ref}
+          {...pixelFieldStyles}
           name={name}
           value={value}
           defaultValue={defaultValue}
