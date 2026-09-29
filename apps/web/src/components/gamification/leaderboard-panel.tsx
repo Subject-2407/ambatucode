@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DataTable, Table } from "@/components/ui/table";
 import { useLeaderboard } from "@/hooks/use-leaderboard";
 import { isApiError } from "@/lib/api-client";
+import { boardExtent, scoringNote, viewerNote } from "./leaderboard-copy";
 
 /**
  * A ranking, live.
@@ -21,21 +22,6 @@ import { isApiError } from "@/lib/api-client";
  * attempt: gamification belongs to learning, and the workspace does not mount
  * this at all.
  */
-
-function ordinal(rank: number): string {
-  const mod100 = rank % 100;
-  if (mod100 >= 11 && mod100 <= 13) return `${rank}th`;
-  switch (rank % 10) {
-    case 1:
-      return `${rank}st`;
-    case 2:
-      return `${rank}nd`;
-    case 3:
-      return `${rank}rd`;
-    default:
-      return `${rank}th`;
-  }
-}
 
 /**
  * The podium's medal inks. It used to pick a tone per rank and then never apply
@@ -64,7 +50,15 @@ function RankMark({ rank }: { rank: number }) {
   );
 }
 
-function Rows({ rows, viewerId }: { rows: LeaderboardRow[]; viewerId: string }) {
+function Rows({
+  rows,
+  viewerId,
+  assessmentCount,
+}: {
+  rows: LeaderboardRow[];
+  viewerId: string;
+  assessmentCount: number;
+}) {
   return (
     <Table.Body>
       {rows.map((row) => {
@@ -87,8 +81,10 @@ function Rows({ rows, viewerId }: { rows: LeaderboardRow[]; viewerId: string }) 
             <Table.Cell textAlign="end" fontVariantNumeric="tabular-nums">
               {row.score}
             </Table.Cell>
+            {/* Out of how many, so a low total reads as "has not sat them all"
+                rather than as a poor score. */}
             <Table.Cell textAlign="end" color="fg.muted" fontVariantNumeric="tabular-nums">
-              {row.assessmentsCounted}
+              {row.assessmentsCounted}/{assessmentCount}
             </Table.Cell>
           </Table.Row>
         );
@@ -165,32 +161,40 @@ export function LeaderboardPanel({
     );
   }
 
+  const viewerShown = data.rows.some((row) => row.userId === viewerId);
+  const standing = viewerNote(data.viewerRank, data.rankedCount, viewerShown);
+
   return (
     <Stack gap="3">
+      <Stack gap="1">
+        <Text textStyle="display" fontSize="xs">
+          {boardExtent(data.rows.length, data.rankedCount)}
+        </Text>
+        <Text fontSize="xs" color="fg.muted">
+          {scoringNote(data.scope, data.assessmentCount)}
+        </Text>
+      </Stack>
+
       <DataTable caption={`Leaderboard for ${data.title}`}>
         <Table.Header>
           <Table.Row>
-            <Table.ColumnHeader>#</Table.ColumnHeader>
+            <Table.ColumnHeader>Rank</Table.ColumnHeader>
             <Table.ColumnHeader>Coder</Table.ColumnHeader>
             <Table.ColumnHeader textAlign="end">Points</Table.ColumnHeader>
             <Table.ColumnHeader textAlign="end">Assessments</Table.ColumnHeader>
           </Table.Row>
         </Table.Header>
-        <Rows rows={data.rows} viewerId={viewerId} />
+        <Rows rows={data.rows} viewerId={viewerId} assessmentCount={data.assessmentCount} />
       </DataTable>
 
       <Flex justify="space-between" gap="3" wrap="wrap">
-        <Box>
-          {data.viewerRank === null ? (
-            <Text fontSize="xs" color="fg.muted">
-              You are not on this board yet.
-            </Text>
-          ) : data.rows.some((row) => row.userId === viewerId) ? null : (
-            <Text fontSize="xs" color="fg.muted">
-              You are {ordinal(data.viewerRank)} overall.
-            </Text>
-          )}
-        </Box>
+        {standing === null ? (
+          <Box />
+        ) : (
+          <Text fontSize="xs" color="fg.muted">
+            {standing}
+          </Text>
+        )}
         {data.hiddenAssessmentCount > 0 ? (
           <Text fontSize="xs" color="fg.muted">
             {data.hiddenAssessmentCount} assessment

@@ -80,7 +80,13 @@ export function useLeaderboard(
       queryClient.setQueryData<LeaderboardView>(queryKey, (previous) =>
         previous === undefined
           ? previous
-          : { ...previous, rows: parsed.data.rows.slice(0, limit), generatedAtMs: Date.now() },
+          : {
+              ...previous,
+              rows: parsed.data.rows.slice(0, limit),
+              // The broadcast carries the whole board, so the total stays true.
+              rankedCount: parsed.data.rows.length,
+              generatedAtMs: Date.now(),
+            },
       );
     }
 

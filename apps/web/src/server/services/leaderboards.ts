@@ -211,6 +211,7 @@ function toView(input: {
     assessmentCount: input.counted.ids.length,
     hiddenAssessmentCount: input.counted.hiddenCount,
     rows: input.rows.slice(0, input.limit),
+    rankedCount: input.rows.length,
     // Reported separately so a Coder outside the visible page still learns
     // where they stand, without the board having to be unbounded.
     viewerRank: input.rows.find((row) => row.userId === input.viewerId)?.rank ?? null,
