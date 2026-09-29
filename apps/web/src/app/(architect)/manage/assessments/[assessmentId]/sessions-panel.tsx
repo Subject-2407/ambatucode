@@ -46,8 +46,7 @@ export function SessionsPanel({ assessment }: { assessment: AssessmentArchitectV
         <Stack gap="0">
           <Text textStyle="display">Sessions</Text>
           <Text fontSize="xs" color="fg.muted">
-            Each session runs this assessment for one group. Creating a new one never touches the
-            results of an old one.
+            Each session runs this assessment for one group.
           </Text>
         </Stack>
         <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
@@ -268,7 +267,7 @@ function CreateSessionDialog({
           label="Name"
           value={name}
           onChange={(event) => setName(event.currentTarget.value)}
-          placeholder="Class A — Tuesday lab"
+          placeholder="Class A, Tuesday lab"
           autoFocus
         />
 
@@ -282,8 +281,8 @@ function CreateSessionDialog({
           ]}
           helperText={
             access === "MODULE"
-              ? "You pick nobody. Every approved Coder in the module sees this session and walks in the moment you start it. A list, if you write one, only decides whose readiness the start rule counts."
-              : "Private to the Coders you name on the Participants list. Nobody else sees the session, and an empty list means every enrolled Coder until you write one."
+              ? "Every approved Coder in the module can join once you start it. A participant list only sets whose readiness is counted."
+              : "Only Coders on the participant list can see this session. An empty list allows every enrolled Coder."
           }
         />
 
@@ -340,9 +339,8 @@ function CreateSessionDialog({
               <Checkbox.Label>Wait until every listed participant is ready</Checkbox.Label>
             </Checkbox.Root>
             <Text fontSize="xs" color="fg.muted" mt="-2">
-              Coders mark themselves ready on the assessment page. You can still start anyway, with
-              the names of whoever is missing in front of you. With no participant list there is
-              nobody to wait for, so the rule stands aside.
+              Coders mark themselves ready on the assessment page. This has no effect without a
+              participant list.
             </Text>
           </>
         )}

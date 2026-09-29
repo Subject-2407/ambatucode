@@ -64,8 +64,7 @@ export function TestScriptsTab({ assessment }: { assessment: AssessmentArchitect
     <Stack gap="4">
       <HStack justify="space-between" gap="3" wrap="wrap">
         <Text fontSize="sm" color="fg.muted" flex="1" minWidth="16rem">
-          Each script is one file, run in its own sandbox against the Coder&apos;s code after the
-          test cases. A language can hold several; every one runs on each submission.
+          Each script runs against every submission, after the test cases.
         </Text>
         <Button size="sm" onClick={() => setEditing("new")}>
           <Plus aria-hidden />
@@ -84,7 +83,7 @@ export function TestScriptsTab({ assessment }: { assessment: AssessmentArchitect
 
       <TestScriptList
         scripts={assessment.testScripts}
-        emptyDescription="Test cases alone are enough for input and output problems. Add a script when the structure of the code is what you are grading."
+        emptyDescription="Add a script to grade how the code is structured."
         onEdit={setEditing}
         onDelete={setDeleting}
       />

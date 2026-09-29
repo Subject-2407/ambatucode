@@ -45,8 +45,7 @@ export function ProblemTab({ draft, onChange }: TabProps) {
           placeholder="Describe the problem, the input, and the expected output."
         />
         <Text fontSize="xs" color="fg.muted">
-          {MARKDOWN_LITE_HINT} Interactive blocks are available in Materials, not in an assessment a
-          Coder reads under time.
+          {MARKDOWN_LITE_HINT} Interactive blocks are only available in Materials.
         </Text>
       </Stack>
 
@@ -74,8 +73,7 @@ export function ProblemTab({ draft, onChange }: TabProps) {
           })}
         </HStack>
         <Text fontSize="xs" color="fg.muted">
-          Only languages with a sandbox image are offered. A language nothing can execute would fail
-          as a system error at the worst possible moment.
+          Only languages with a sandbox image are offered.
         </Text>
       </Stack>
     </Stack>

@@ -252,8 +252,7 @@ export function PracticeFormDialog({
           </Flex>
 
           <Text fontSize="xs" color="fg.muted">
-            Every practice case is visible to the Coder. An exercise that needs a hidden case
-            belongs in an Assessment. An activity checked only by test scripts needs no case.
+            Every practice case is visible to the Coder.
           </Text>
 
           {cases.map((testCase) => (

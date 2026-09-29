@@ -40,7 +40,7 @@ export function validationWarning(scripts: readonly WithValidation[]): string | 
 
   const plural = (count: number) => (count === 1 ? "script" : "scripts");
   if (failed > 0) {
-    return `${String(failed)} test ${plural(failed)} failed against the reference solution. Coders' code will likely fail them too.`;
+    return `${String(failed)} test ${plural(failed)} failed against the reference solution.`;
   }
   if (unchecked > 0) {
     return `${String(unchecked)} test ${plural(unchecked)} ${unchecked === 1 ? "has" : "have"} not been validated against a reference solution.`;

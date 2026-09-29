@@ -51,8 +51,7 @@ export function SubmitDialog({
     >
       <Stack gap="3">
         <Text>
-          This is the only submission you get for this attempt. Once it is sent, the editor closes
-          and you cannot submit again.
+          This is the only submission you get for this attempt. You cannot submit again.
         </Text>
         <Text fontSize="sm" color="fg.muted">
           {LANGUAGE_LABEL[language]} · {lineCount} {lineCount === 1 ? "line" : "lines"} · exactly

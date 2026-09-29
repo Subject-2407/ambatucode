@@ -27,7 +27,7 @@ export default async function CoderDashboardPage() {
     <PageContainer backdrop="circuit">
       <PageHeader
         title={`Welcome back, ${session.user.displayName}`}
-        description="Your modules, and the practice waiting inside them."
+        description="Your modules."
         action={
           <Button asChild variant="outline">
             <NextLink href={routes.modules}>Browse modules</NextLink>

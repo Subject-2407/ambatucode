@@ -165,7 +165,7 @@ export function AchievementShowcase({ userId }: { userId: string }) {
           <EmptyState
             sprite="trophy"
             title="Nothing here yet"
-            description="Titles in this category appear once there is work to earn them on."
+            description="No Titles here yet."
           />
         ) : (
           <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap="3">

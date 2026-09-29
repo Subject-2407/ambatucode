@@ -37,7 +37,7 @@ export function AutoSubmittedModal({
       open={open}
       onOpenChange={() => undefined}
       blocking
-      title="Time is up — your work was submitted"
+      title="Time is up"
       footer={
         <Button onClick={onView} autoFocus>
           See the result
@@ -46,12 +46,11 @@ export function AutoSubmittedModal({
     >
       <Stack gap="3">
         <Text>
-          The assessment reached its deadline, so the server submitted the most recent code it had
-          saved for you. You do not need to do anything else.
+          The assessment reached its deadline, so your most recent saved code was submitted.
         </Text>
         {submissionId === null ? null : (
           <Text fontSize="sm" color="fg.muted">
-            Grading runs in the background; the result appears as soon as it finishes.
+            The result appears once grading finishes.
           </Text>
         )}
       </Stack>
@@ -80,11 +79,8 @@ export function SupersededModal({ open, moduleHref }: { open: boolean; moduleHre
     >
       <Stack gap="3">
         <Text>
-          The same account joined this assessment from another browser or device, and only one
-          connection may take part at a time. Continue there — your saved code went with it.
-        </Text>
-        <Text fontSize="sm" color="fg.muted">
-          This window has stopped counting time and no longer accepts changes.
+          This account joined the assessment from another browser or device. Continue there. Your
+          saved code is available.
         </Text>
       </Stack>
     </Modal>
@@ -120,8 +116,7 @@ export function FocusWarningModal({
       <Stack gap="3">
         <Text>{warning?.message}</Text>
         <Text fontSize="sm" color="fg.muted">
-          Switching tabs or applications during this assessment is recorded and visible to your
-          Architect. Your time is still running.
+          Switching tabs or applications is recorded and visible to your Architect.
         </Text>
       </Stack>
     </Modal>

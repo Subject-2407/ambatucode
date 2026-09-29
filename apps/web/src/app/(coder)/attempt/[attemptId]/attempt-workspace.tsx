@@ -489,8 +489,7 @@ export function AttemptWorkspace({
                     being executed with nothing to check it against. */}
                 {assessment.sampleCases.length === 0
                   ? "Run your code to check it."
-                  : "Run your code to check it against the sample cases."}{" "}
-                Runs are unlimited and never consume your submission.
+                  : "Run your code to check it against the sample cases."}
               </Text>
             }
           />
@@ -575,7 +574,7 @@ export function AttemptWorkspace({
       {awaitingDeadline && terminal.kind === "NONE" ? (
         <Box bg="bg.warning" px={{ base: "4", md: "6" }} py="2" role="status" aria-live="polite">
           <Text fontSize="sm" color="fg.warning">
-            Finishing… the server is closing this attempt and submitting your saved work.
+            Submitting…
           </Text>
         </Box>
       ) : null}
@@ -657,12 +656,12 @@ export function AttemptWorkspace({
         }
         description={
           settled
-            ? "This attempt is finished. Leaving takes you back to the assessment, where its result stays available."
+            ? "This attempt is finished. Its result stays on the assessment page."
             : assessment.exitPolicy === "SUBMIT"
-              ? "Leaving submits this attempt with the code in the editor. It is your one formal submission, and you cannot come back to it."
+              ? "Leaving submits the code in the editor. You cannot come back to this attempt."
               : attempt.executionMode === "LIVE"
-                ? "Your code is saved and the attempt stays open, so you can continue it from the assessment page. The live timer keeps running while you are away."
-                : "Your code is saved and the attempt stays open, so you can continue it from the assessment page. Your timer pauses while you are away."
+                ? "Your code is saved and you can continue later. The live timer keeps running."
+                : "Your code is saved and you can continue later. Your timer pauses while you are away."
         }
         confirmLabel={
           settled ? "Leave" : assessment.exitPolicy === "SUBMIT" ? "Submit and leave" : "Leave"

@@ -99,16 +99,16 @@ export function SessionLobby({
 
       <Text fontSize="sm" color="fg.muted" aria-live="polite">
         {entering
-          ? "The session has started — opening your workspace…"
+          ? "Opening your workspace…"
           : lobby.problem !== null
             ? lobby.problem
             : requireAllReady
               ? autoEnter
-                ? "This session waits until everyone is ready. Once it starts you go straight in, so mark yourself ready and stay on this page."
-                : "This session waits until everyone is ready before it starts. Mark yourself ready, and a Start button appears here when it does."
+                ? "Mark yourself ready and stay on this page."
+                : "Mark yourself ready. A Start button appears when the session opens."
               : autoEnter
-                ? "Your Architect starts this session for everyone at once. Stay on this page."
-                : "Your Architect opens this session when the group is settled. A Start button appears here when it does, and your own timer begins only when you press it."}
+                ? "Stay on this page until your Architect starts the session."
+                : "A Start button appears when the session opens. Your timer begins when you press it."}
       </Text>
 
       {/*

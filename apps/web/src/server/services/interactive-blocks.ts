@@ -42,7 +42,7 @@ export function assertInteractiveBlocksValid(
     throw new AppError("INTERNAL", `Stored Material.contentJson has invalid blocks: ${detail}`);
   }
 
-  throw new AppError("VALIDATION_FAILED", `Interactive block rejected — ${detail}`, {
+  throw new AppError("VALIDATION_FAILED", `Interactive block rejected: ${detail}`, {
     blocks: result.problems,
   });
 }

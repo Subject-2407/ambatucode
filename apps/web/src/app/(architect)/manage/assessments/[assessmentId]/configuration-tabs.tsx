@@ -26,7 +26,6 @@ export function LimitsTab({ draft, onChange }: TabProps) {
         onChange={(event) =>
           onChange({ timeLimitMs: toInt(event.currentTarget.value, 100, 60_000) })
         }
-        helperText="Wall-clock time a single case may take before it is cut off."
       />
 
       <TextField
@@ -38,7 +37,6 @@ export function LimitsTab({ draft, onChange }: TabProps) {
         onChange={(event) =>
           onChange({ memoryLimitMb: toInt(event.currentTarget.value, 16, 2_048) })
         }
-        helperText="Applied to the sandbox container, not only to the program."
       />
 
       <SelectField
@@ -107,16 +105,15 @@ export function TimingTab({ draft, onChange }: TabProps) {
               })
             }
             options={[
-              { value: "INDIVIDUAL", label: "Individual — each Coder has their own timer" },
-              { value: "LIVE", label: "Live — everyone shares one timer" },
+              { value: "INDIVIDUAL", label: "Individual" },
+              { value: "LIVE", label: "Live" },
             ]}
             helperText="An individual timer pauses while a Coder is disconnected. A live timer never pauses."
           />
         </>
       ) : (
         <Text fontSize="sm" color="fg.muted">
-          An untimed assessment has no deadline. Every other rule — one formal submission per
-          attempt, grading, anti-cheat — still applies.
+          An untimed assessment has no deadline.
         </Text>
       )}
 
@@ -128,9 +125,9 @@ export function TimingTab({ draft, onChange }: TabProps) {
         value={draft.exitPolicy}
         onChange={(value) => onChange({ exitPolicy: value as ExitPolicy })}
         options={[
-          { value: "RESUME", label: "Keeps the attempt open — the Coder can come back" },
+          { value: "RESUME", label: "Keep the attempt open" },
           { value: "SUBMIT", label: "Submits the attempt, after a warning" },
-          { value: "BLOCKED", label: "No way out — the Coder must submit" },
+          { value: "BLOCKED", label: "Block leaving" },
         ]}
         helperText="Coming back resumes the saved draft. An individual timer pauses while the Coder is away; a live one does not."
       />
@@ -140,7 +137,7 @@ export function TimingTab({ draft, onChange }: TabProps) {
           starts its timer the moment the Coder does. */}
       <Toggle
         label="Open access"
-        description="Any Coder enrolled in the module can start this assessment whenever they like, without a session being scheduled for them. They still get one attempt and one formal submission."
+        description="Any Coder enrolled in the module can start this assessment whenever they like, without a session being scheduled for them."
         checked={draft.isOpenAccess}
         onChange={(checked) => onChange({ isOpenAccess: checked })}
         disabled={draft.executionMode === "LIVE"}
@@ -148,14 +145,12 @@ export function TimingTab({ draft, onChange }: TabProps) {
 
       {draft.executionMode === "LIVE" ? (
         <Text fontSize="sm" color="fg.muted">
-          A live assessment cannot be open access: its timer is one clock that an Architect starts,
-          so there is nothing for a Coder to walk into.
+          A live assessment cannot be open access.
         </Text>
       ) : null}
 
       <Text fontSize="xs" color="fg.muted">
-        A session can override the duration and execution mode when it is created, so the same
-        assessment can run 30 minutes live for one class and 45 minutes individual for another.
+        A session can override the duration and execution mode when it is created.
       </Text>
     </Stack>
   );
@@ -196,7 +191,6 @@ export function AntiCheatTab({ draft, onChange }: TabProps) {
 
       <Toggle
         label="Disable the right-click menu"
-        description="Suppresses the browser context menu inside the workspace."
         checked={antiCheat.blockContextMenu}
         onChange={(checked) => set({ blockContextMenu: checked })}
       />
@@ -219,7 +213,6 @@ export function AntiCheatTab({ draft, onChange }: TabProps) {
               { value: "WARN", label: "Warn the Coder" },
               { value: "AUTO_SUBMIT", label: "Submit the attempt automatically" },
             ]}
-            helperText="Every focus loss is logged whichever of these is chosen."
           />
 
           <TextField
@@ -238,15 +231,9 @@ export function AntiCheatTab({ draft, onChange }: TabProps) {
 
       <Toggle
         label="Hide leaderboards during this assessment"
-        description="Keeps competitive displays out of the way while an attempt is in progress."
         checked={antiCheat.hideLeaderboard}
         onChange={(checked) => set({ hideLeaderboard: checked })}
       />
-
-      <Text fontSize="xs" color="fg.muted">
-        These controls deter and record. They are not a security boundary, and a disconnect is never
-        treated as cheating.
-      </Text>
     </Stack>
   );
 }
@@ -259,7 +246,7 @@ function Toggle({
   disabled = false,
 }: {
   label: string;
-  description: string;
+  description?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   /** The reason is always spelled out beside it; a dead control on its own is a puzzle. */
@@ -277,9 +264,11 @@ function Toggle({
         <Checkbox.Control />
         <Checkbox.Label>{label}</Checkbox.Label>
       </Checkbox.Root>
-      <Text fontSize="xs" color="fg.muted" ps="6">
-        {description}
-      </Text>
+      {description ? (
+        <Text fontSize="xs" color="fg.muted" ps="6">
+          {description}
+        </Text>
+      ) : null}
     </Stack>
   );
 }

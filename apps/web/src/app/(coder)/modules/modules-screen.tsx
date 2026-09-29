@@ -90,7 +90,7 @@ export function ModulesScreen() {
               title={scope === "enrolled" ? "You have not joined a module yet" : "No modules found"}
               description={
                 scope === "enrolled"
-                  ? "Browse all modules and enroll in one to get started."
+                  ? "Browse all modules and enroll in one."
                   : "Nothing matches that search. Try a different word."
               }
               action={

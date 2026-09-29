@@ -30,7 +30,7 @@ const STATUS_DETAIL: Readonly<Record<SubmissionStatus, string>> = {
   RUNTIME_ERROR: "Your program stopped with an error on at least one case.",
   TIME_LIMIT_EXCEEDED: "Your program ran past the time limit on at least one case.",
   MEMORY_LIMIT_EXCEEDED: "Your program used more memory than allowed on at least one case.",
-  SYSTEM_ERROR: "Something went wrong on the platform's side, not in your code.",
+  SYSTEM_ERROR: "A platform error, not caused by your code.",
 };
 
 export type SubmissionSummaryView = {
@@ -69,5 +69,5 @@ export function describeSubmission(
   // A case over its limit fails that case alone, so these statuses can still
   // carry a partial score — and it has to be shown next to what went wrong.
   const tone: BadgeTone = score >= 100 ? "success" : score > 0 ? "warning" : "danger";
-  return { label: `${base.label} — ${String(score)}/100`, detail: base.detail, tone, settled };
+  return { label: `${base.label} · ${String(score)}/100`, detail: base.detail, tone, settled };
 }

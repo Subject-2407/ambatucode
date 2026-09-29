@@ -106,7 +106,7 @@ export function EnrollmentsScreen({ moduleId }: { moduleId: string }) {
 
       <PageHeader
         title="Enrollments"
-        description="Coders who asked to join this module. A Public module approves itself; a Closed one waits for you."
+        description="Coders who asked to join this module."
       />
 
       <Stack gap="4">

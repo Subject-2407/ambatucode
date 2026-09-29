@@ -57,12 +57,12 @@ export function ResetAttemptDialog({
       description={
         <Stack gap="2">
           <Text>
-            This opens a new attempt at <strong>{assessmentTitle}</strong>. Every submission
-            already made stays in the history exactly as it is — nothing is deleted.
+            This opens a new attempt at <strong>{assessmentTitle}</strong>. Earlier submissions are
+            kept.
           </Text>
           <Text>
-            The official score is cleared while you decide. It settles on the new attempt once it
-            is submitted, and you can point it back at an earlier attempt at any time.
+            The official score moves to the new attempt once it is submitted. You can change it back
+            at any time.
           </Text>
         </Stack>
       }

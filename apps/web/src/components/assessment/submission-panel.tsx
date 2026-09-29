@@ -83,7 +83,7 @@ export function SubmissionPanel({ state }: { state: AttemptSubmissionState }) {
 
         {summary.settled ? (
           <Text fontSize="xs" color="fg.subtle">
-            Hidden grading cases are not shown. Your score already includes them.
+            Hidden grading cases are not shown.
           </Text>
         ) : null}
       </Stack>

@@ -65,7 +65,7 @@ export function SubmissionsScreen() {
     <PageContainer backdrop="waveform">
       <PageHeader
         title="Submissions"
-        description="Every formal submission you have made, kept exactly as you sent it."
+        description="Your formal submissions."
       />
 
       <Stack gap="4">

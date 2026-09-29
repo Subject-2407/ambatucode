@@ -18,7 +18,7 @@ import { useCreateModule, useUpdateModule } from "@/hooks/use-modules";
 
 const VISIBILITY_OPTIONS = MODULE_VISIBILITIES.map((visibility) => ({
   value: visibility,
-  label: visibility === "PUBLIC" ? "Public — anyone may enroll" : "Closed — you approve requests",
+  label: visibility === "PUBLIC" ? "Public" : "Closed (approval required)",
 }));
 
 type FieldErrors = Partial<Record<"title" | "slug", string>>;
@@ -142,7 +142,7 @@ export function ModuleFormDialog({
           helperText={
             editing
               ? "Part of the module's address. Changing it breaks existing links."
-              : "Optional — derived from the title when left empty."
+              : "Optional. Defaults to the title."
           }
           placeholder="python-foundations"
         />
@@ -164,7 +164,7 @@ export function ModuleFormDialog({
         >
           <Checkbox.HiddenInput />
           <Checkbox.Control />
-          <Checkbox.Label>Published — visible to Coders in the catalog</Checkbox.Label>
+          <Checkbox.Label>Published</Checkbox.Label>
         </Checkbox.Root>
       </Stack>
     </Modal>

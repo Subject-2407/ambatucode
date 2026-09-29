@@ -126,8 +126,7 @@ export function SubmissionDetail({
             <Stack gap="1">
               <Text textStyle="display">Test results</Text>
               <Text fontSize="xs" color="fg.muted">
-                Sample cases and any tests your Architect chose to show. Hidden grading cases stay
-                hidden — your score already counts them.
+                Sample cases and any tests your Architect chose to show.
               </Text>
             </Stack>
           </Card.Header>

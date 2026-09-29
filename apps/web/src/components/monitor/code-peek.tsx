@@ -69,7 +69,7 @@ export function CodePeekDialog({
         if (!next) onClose();
       }}
       size="lg"
-      title={`${displayName} — code`}
+      title={`${displayName} · code`}
     >
       {isError ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
@@ -82,7 +82,7 @@ export function CodePeekDialog({
         <EmptyState
           sprite="doc"
           title="Nothing to show yet"
-          description="Code appears here the first time this Coder presses Run, and again when they submit."
+          description="Code appears after the first Run."
         />
       ) : (
         <Stack gap="4">

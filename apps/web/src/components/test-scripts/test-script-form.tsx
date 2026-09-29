@@ -199,11 +199,7 @@ export function TestScriptForm({
             value={path}
             onChange={(event) => setPath(event.currentTarget.value)}
             disabled={editing}
-            helperText={
-              editing
-                ? "Upload to a new path to add another script instead."
-                : "Relative, plain segments only. Uploading to an existing path replaces that script."
-            }
+            helperText="Relative path. Uploading to an existing path replaces that script."
           />
         </Box>
         {graded ? (
@@ -231,9 +227,8 @@ export function TestScriptForm({
           <Stack gap="0">
             <Checkbox.Label>Show Coders the test names</Checkbox.Label>
             <Text fontSize="xs" color="fg.muted">
-              On a graded submission, each test&apos;s name and whether it passed — never the script
-              or its output. Off by default, since a name can hint at what is checked. Applies to
-              submissions graded from now on.
+              Coders see each test&apos;s name and whether it passed, but never the script or its
+              output. Names can hint at what is checked.
             </Text>
           </Stack>
         </Checkbox.Root>

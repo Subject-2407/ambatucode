@@ -24,7 +24,7 @@ export function ErrorState({
 }) {
   const description = isApiError(error)
     ? error.userMessage
-    : "An unexpected error occurred. Please try again.";
+    : "Could not complete the request. Try again.";
 
   return (
     <ChakraEmptyState.Root size="md" py="12">
