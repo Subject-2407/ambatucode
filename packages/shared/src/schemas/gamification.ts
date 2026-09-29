@@ -60,6 +60,12 @@ export type LeaderboardView = {
    */
   hiddenAssessmentCount: number;
   rows: LeaderboardRow[];
+  /**
+   * Coders on the whole board. `rows` is only its top `limit`, so this is what
+   * lets the board say "top 25 of 40" rather than leave a Coder wondering
+   * whether the list is everyone.
+   */
+  rankedCount: number;
   /** The viewer's own rank, even when they fall outside the returned page. */
   viewerRank: number | null;
   generatedAtMs: number;

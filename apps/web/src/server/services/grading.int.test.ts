@@ -227,7 +227,9 @@ afterAll(async () => {
       getDeadlineQueue().remove(deadlineJobId({ kind: "SESSION", sessionId })),
     ),
   ]);
-  await getRunQueue().obliterate({ force: true }).catch(() => undefined);
+  await getRunQueue()
+    .obliterate({ force: true })
+    .catch(() => undefined);
 
   await prisma.submission.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.userAchievement.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -262,14 +264,16 @@ describe("grading records", () => {
   it("refuses every reader but the owning Architect", async () => {
     const { assessmentId } = await scoredAssessment("Refusals");
 
-    expect(await refusalCode(() => listModuleGrades(root, moduleId, { page: 1, pageSize: 25 }))).toBe(
-      "FORBIDDEN",
-    );
+    expect(
+      await refusalCode(() => listModuleGrades(root, moduleId, { page: 1, pageSize: 25 })),
+    ).toBe("FORBIDDEN");
     expect(
       await refusalCode(() => listAssessmentGrades(root, assessmentId, { page: 1, pageSize: 25 })),
     ).toBe("FORBIDDEN");
     expect(
-      await refusalCode(() => listModuleGrades(otherArchitect, moduleId, { page: 1, pageSize: 25 })),
+      await refusalCode(() =>
+        listModuleGrades(otherArchitect, moduleId, { page: 1, pageSize: 25 }),
+      ),
     ).toBe("FORBIDDEN");
     expect(
       await refusalCode(() => listModuleGrades(coderA, moduleId, { page: 1, pageSize: 25 })),
@@ -410,9 +414,9 @@ describe("reset and official score", () => {
     });
     await endSession(owner, session.id);
 
-    expect(await refusalCode(() => resetAttempt(owner, first.attemptId, { reason: "Retake" }))).toBe(
-      "CONFLICT",
-    );
+    expect(
+      await refusalCode(() => resetAttempt(owner, first.attemptId, { reason: "Retake" })),
+    ).toBe("CONFLICT");
   });
 
   it("leaves a reset inside a running session belonging to that session", async () => {
@@ -515,9 +519,7 @@ describe("a Coder's own history", () => {
     expect(mine.items.every((item) => item.moduleId === moduleId)).toBe(true);
 
     const theirs = await listOwnSubmissions(coderB, { page: 1, pageSize: 50, moduleId });
-    const overlap = mine.items.filter((item) =>
-      theirs.items.some((other) => other.id === item.id),
-    );
+    const overlap = mine.items.filter((item) => theirs.items.some((other) => other.id === item.id));
     expect(overlap).toHaveLength(0);
   });
 
@@ -546,6 +548,7 @@ describe("leaderboards", () => {
     expect(view.rows[0]?.rank).toBe(1);
     expect(view.rows[1]?.rank).toBe(1);
     expect(view.viewerRank).toBe(1);
+    expect(view.rankedCount).toBe(2);
   });
 
   it("refuses a leaderboard the Architect switched off", async () => {
