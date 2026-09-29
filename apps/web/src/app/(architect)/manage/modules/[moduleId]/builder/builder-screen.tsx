@@ -83,7 +83,6 @@ export function BuilderScreen({ moduleId }: { moduleId: string }) {
 
       <PageHeader
         title={module?.title ?? "Module builder"}
-        description="Arrange sections, write materials, and embed practice activities."
         action={
           <HStack gap="2" wrap="wrap" justify={{ base: "flex-start", sm: "flex-end" }}>
             {module ? (

@@ -143,7 +143,7 @@ export function SectionList({
 
       {order.length === 0 ? (
         <Text fontSize="sm" color="fg.muted">
-          No sections yet. Add one to start building.
+          No sections yet.
         </Text>
       ) : (
         <DndContext

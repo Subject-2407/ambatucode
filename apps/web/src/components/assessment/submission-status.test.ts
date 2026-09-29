@@ -44,7 +44,7 @@ describe("describeSubmission", () => {
   // One case over its limit fails only that case; the rest still earn.
   it("shows the partial score of a submission that hit a limit on some cases", () => {
     const view = describeSubmission("TIME_LIMIT_EXCEEDED", 75);
-    expect(view.label).toBe("Time limit exceeded — 75/100");
+    expect(view.label).toBe("Time limit exceeded · 75/100");
     expect(view.tone).toBe("warning");
     expect(describeSubmission("RUNTIME_ERROR", 0).tone).toBe("danger");
   });

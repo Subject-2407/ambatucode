@@ -138,7 +138,7 @@ export function SessionProvider({
         onOpenChange={() => undefined}
         blocking
         title="You were signed out"
-        description="This account signed in on another browser or device. Ambatucode allows one active session per account, so this one has ended."
+        description="This account signed in on another browser or device."
         footer={
           <Button onClick={goToLogin} autoFocus>
             Sign in again

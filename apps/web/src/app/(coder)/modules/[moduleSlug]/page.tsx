@@ -127,9 +127,7 @@ function AccessPanel({ module }: { module: ModuleDetail }) {
       description={
         pending
           ? "The Architect has your request. The materials open as soon as it is approved."
-          : module.visibility === "CLOSED"
-            ? "This is a Closed module, so the Architect approves each request."
-            : "Enrolling is immediate on a Public module."
+          : undefined
       }
       action={<EnrollButton module={module} />}
     />

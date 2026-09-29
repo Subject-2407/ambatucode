@@ -109,7 +109,6 @@ export function GradesScreen() {
       const result = await reset.mutateAsync({ attemptId: resetTarget.attempt.id, reason });
       toaster.success({
         title: `Attempt ${result.newAttemptNumber} opened for ${resetTarget.record.displayName}`,
-        description: "Every earlier submission is still in the history.",
       });
       setResetTarget(null);
     } catch (error) {
@@ -149,7 +148,7 @@ export function GradesScreen() {
     <PageContainer>
       <PageHeader
         title="Grades"
-        description="Every attempt, and which one counts. Resetting never deletes a submission."
+        description="Every attempt, and which one counts."
         action={
           <ExportGradesButton
             moduleId={selectedModuleId}
@@ -195,7 +194,7 @@ export function GradesScreen() {
               { value: ALL, label: "All sessions" },
               ...(moduleSessions.data ?? []).map((session) => ({
                 value: session.id,
-                label: `${session.assessmentTitle} — ${session.isOpenAccess ? "Open access" : session.name}`,
+                label: `${session.assessmentTitle} · ${session.isOpenAccess ? "Open access" : session.name}`,
               })),
             ]}
             onChange={(value) => changeFilter(() => setSessionId(value))}

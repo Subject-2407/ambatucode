@@ -52,8 +52,8 @@ export function DeleteUserDialog({ user, onClose }: { user: AdminUser; onClose: 
       }
     >
       <Text color="fg.muted" fontSize="sm">
-        This cannot be undone. If the account owns Modules, Submissions, or graded attempts the
-        deletion is refused — deactivate it instead so the history stays intact.
+        This cannot be undone. An account that owns Modules, Submissions, or graded attempts cannot
+        be deleted. Deactivate it instead.
       </Text>
     </Modal>
   );

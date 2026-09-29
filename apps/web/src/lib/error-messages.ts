@@ -12,16 +12,15 @@ import type { ErrorCode } from "@ambatucode/shared";
 const MESSAGES: Readonly<Record<ErrorCode, string>> = {
   UNAUTHENTICATED: "Your session has ended. Sign in again to continue.",
   FORBIDDEN: "You do not have access to this.",
-  NOT_FOUND: "We could not find what you were looking for.",
+  NOT_FOUND: "This could not be found.",
   VALIDATION_FAILED: "Some of the details you entered need fixing.",
   CONFLICT: "That conflicts with something that already exists.",
   RATE_LIMITED: "Too many attempts. Wait a moment and try again.",
-  ATTEMPT_ALREADY_SUBMITTED:
-    "This attempt has already been submitted. Your submitted work is safe.",
+  ATTEMPT_ALREADY_SUBMITTED: "This attempt has already been submitted.",
   ATTEMPT_EXPIRED: "The time for this attempt has ended. Your latest saved work was submitted.",
   SESSION_NOT_RUNNING: "This assessment session is not running yet.",
   LANGUAGE_NOT_ALLOWED: "That programming language is not allowed for this assessment.",
-  INTERNAL: "Something went wrong on our side. Please try again.",
+  INTERNAL: "Server error. Try again.",
 };
 
 export function messageForCode(code: ErrorCode): string {

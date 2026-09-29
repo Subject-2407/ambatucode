@@ -93,9 +93,7 @@ export function PracticeTestScriptsDialog({
       <Stack gap="4">
         <Flex justify="space-between" align="center" gap="3" wrap="wrap">
           <Text fontSize="sm" color="fg.muted" flex="1" minWidth="14rem">
-            Scripts check what a stdin/stdout case cannot, such as a class&apos;s structure. They
-            run on every Run, after the cases. The Coder sees each test&apos;s name and whether it
-            passed.
+            Scripts run on every Run, after the cases. The Coder sees whether each test passed.
           </Text>
           <Button size="sm" onClick={() => setEditing("new")}>
             <Plus aria-hidden />
@@ -112,7 +110,7 @@ export function PracticeTestScriptsDialog({
         )}
         <TestScriptList
           scripts={listed}
-          emptyDescription="Add a script when what matters is how the code is built, not only what it prints."
+          emptyDescription="Add a script to check how the code is structured."
           onEdit={setEditing}
           onDelete={setDeleting}
         />

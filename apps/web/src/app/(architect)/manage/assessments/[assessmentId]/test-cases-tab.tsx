@@ -55,8 +55,7 @@ export function TestCasesTab({ assessment }: { assessment: AssessmentArchitectVi
     <Stack gap="4">
       <HStack justify="space-between" gap="3" wrap="wrap">
         <Text fontSize="sm" color="fg.muted">
-          Public cases are shown to Coders as samples and are what Run checks against. Hidden cases
-          are used for grading only and never reach a browser.
+          Public cases are samples that Run checks against. Hidden cases are used for grading only.
         </Text>
         <Button size="sm" onClick={() => setEditing("new")}>
           <Plus aria-hidden />
@@ -239,14 +238,9 @@ function TestCaseDialog({
           value={kind}
           onChange={(value) => setKind(value as TestCaseKind)}
           options={[
-            { value: "HIDDEN", label: "Hidden — used for grading only" },
-            { value: "PUBLIC", label: "Public — shown to Coders as a sample" },
+            { value: "HIDDEN", label: "Hidden" },
+            { value: "PUBLIC", label: "Public (sample)" },
           ]}
-          helperText={
-            kind === "PUBLIC"
-              ? "Every Coder will see this input and this expected output."
-              : "This case never reaches a browser, not even in an error message."
-          }
         />
 
         <Stack gap="1">

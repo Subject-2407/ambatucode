@@ -144,7 +144,7 @@ export function UserFormDialog({ onClose, user }: Props) {
               required
               onChange={(event) => setPassword(event.currentTarget.value)}
               errorText={errors.password}
-              helperText="At least 8 characters. The user cannot change it themselves."
+              helperText="At least 8 characters."
             />
           </>
         )}
@@ -171,9 +171,7 @@ export function UserFormDialog({ onClose, user }: Props) {
         >
           <Checkbox.HiddenInput />
           <Checkbox.Control />
-          <Checkbox.Label>
-            Active — a deactivated account cannot sign in and loses its live session immediately.
-          </Checkbox.Label>
+          <Checkbox.Label>Active</Checkbox.Label>
         </Checkbox.Root>
       </Stack>
     </Modal>

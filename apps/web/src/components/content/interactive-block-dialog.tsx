@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useId, useMemo, useState } from "react";
-import { Box, Flex, Grid, Text } from "@chakra-ui/react";
+import { Box, Flex, Grid, List, Text } from "@chakra-ui/react";
 import {
   MAX_BLOCK_BYTES_PER_MATERIAL,
   MAX_BLOCK_CSS_BYTES,
@@ -158,7 +158,7 @@ export function InteractiveBlockDialog({
 
           <Flex direction="column" gap="2" minWidth="0">
             <Text fontSize="sm" color="fg.muted">
-              Preview — the same isolation a Coder gets
+              Preview
             </Text>
             <Box maxHeight="22rem" overflowY="auto">
               {preview.success ? (
@@ -228,20 +228,25 @@ function ConstraintNotice() {
       <Text fontSize="sm" fontWeight="medium" mb="1">
         What runs here
       </Text>
-      <Text fontSize="sm" color="fg.muted">
-        No network of any kind: <code>fetch</code>, <code>XMLHttpRequest</code> and WebSockets are
-        blocked, and images, media and fonts have to be embedded as data URIs. No{" "}
-        <code>localStorage</code>, <code>sessionStorage</code> or cookies. No <code>alert</code>,{" "}
-        <code>confirm</code> or <code>prompt</code>. No forms, popups, downloads, or navigation
-        outside the frame. The block cannot read the page around it or anything about the Coder
-        reading it — only the current theme and their reduced-motion preference, through{" "}
-        <code>window.AmbatucodeBlock</code>. Dark mode reaches your CSS as{" "}
-        <code>[data-theme=&quot;dark&quot;]</code>.
-      </Text>
-      <Text fontSize="sm" color="fg.muted" mt="2">
-        A block that conveys something no other way needs a text alternative in the material around
-        it — a reader using a screen reader gets nothing from a canvas.
-      </Text>
+      <List.Root fontSize="sm" color="fg.muted" ps="5" gap="0.5">
+        <List.Item>
+          No network: <code>fetch</code>, <code>XMLHttpRequest</code> and WebSockets are blocked.
+          Embed images, media and fonts as data URIs.
+        </List.Item>
+        <List.Item>
+          No <code>localStorage</code>, <code>sessionStorage</code> or cookies.
+        </List.Item>
+        <List.Item>
+          No <code>alert</code>, <code>confirm</code>, <code>prompt</code>, forms, popups,
+          downloads, or navigation.
+        </List.Item>
+        <List.Item>
+          Only the theme and reduced-motion preference are available, through{" "}
+          <code>window.AmbatucodeBlock</code>. Dark mode sets{" "}
+          <code>[data-theme=&quot;dark&quot;]</code>.
+        </List.Item>
+        <List.Item>Add a text alternative in the material for screen reader users.</List.Item>
+      </List.Root>
     </Box>
   );
 }

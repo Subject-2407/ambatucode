@@ -44,7 +44,7 @@ export function ResetPasswordDialog({ user, onClose }: { user: AdminUser; onClos
         if (!next) onClose();
       }}
       title={`Reset password for ${user.username}`}
-      description="The account is signed out everywhere as soon as the password changes, so tell the user their new password before you confirm."
+      description="The account is signed out everywhere. Share the new password with the user first."
       footer={
         <Stack direction="row" gap="3" justify="flex-end" width="full">
           <Button variant="ghost" onClick={onClose} disabled={resetPassword.isPending}>

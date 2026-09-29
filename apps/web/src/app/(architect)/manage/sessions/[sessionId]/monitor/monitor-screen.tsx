@@ -114,8 +114,8 @@ export function MonitorScreen({ sessionId }: { sessionId: string }) {
         </Grid>
 
         <Text fontSize="xs" color="fg.muted">
-          A disconnect is a logged fact, not an accusation. In Individual mode the Coder&apos;s
-          timer pauses and resumes; in Live mode the session clock keeps running.
+          In Individual mode a disconnected Coder&apos;s timer pauses. In Live mode the session
+          clock keeps running.
         </Text>
       </Stack>
     </PageContainer>

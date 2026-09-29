@@ -222,11 +222,11 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               {editable ? (
                 <Text fontSize="sm" color="fg.muted">
                   {counts.total === 0
-                    ? "Readiness is counted over the participant list, and this session has none — so there is nobody to wait for and Start is free."
+                    ? "No participant list, so there is no one to wait for."
                     : !everyoneReady(counts)
                       ? view.requireAllReady
-                        ? "This session is set to wait until everyone listed is ready. You can still start anyway, with the names of whoever is missing in front of you."
-                        : "You can start anyway. Anyone who joins later picks up the session where it is."
+                        ? "This session waits until everyone listed is ready. You can still start early."
+                        : "You can start anyway. Late joiners get the remaining time."
                       : "Everyone listed is ready."}
                 </Text>
               ) : null}

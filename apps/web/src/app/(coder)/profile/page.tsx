@@ -13,7 +13,6 @@ export default async function CoderProfilePage() {
     <PageContainer backdrop="circuit">
       <PageHeader
         title="Profile"
-        description="Your account details, and the Titles you have earned."
       />
       <ProfileScreen user={user} expiresAt={expiresAt.toISOString()} />
     </PageContainer>

@@ -136,9 +136,6 @@ export function PracticeActivity({ activity }: { activity: PracticeActivityView 
           <RotateCcw aria-hidden />
           Reset code
         </Button>
-        <Text fontSize="xs" color="fg.muted">
-          Runs are unlimited and are never graded.
-        </Text>
       </Flex>
 
       <RunOutcome state={state} />

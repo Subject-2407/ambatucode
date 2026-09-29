@@ -112,7 +112,7 @@ export function LeaderboardPanel({
       <EmptyState
         sprite="trophy"
         title="Leaderboard unavailable"
-        description="The ranking could not be loaded. It will reappear once the server answers."
+        description="The ranking could not be loaded."
       />
     );
   }
@@ -169,7 +169,7 @@ export function LeaderboardPanel({
         <Box>
           {data.viewerRank === null ? (
             <Text fontSize="xs" color="fg.muted">
-              You are not on this board yet — finish an assessment to appear.
+              You are not on this board yet.
             </Text>
           ) : data.rows.some((row) => row.userId === viewerId) ? null : (
             <Text fontSize="xs" color="fg.muted">

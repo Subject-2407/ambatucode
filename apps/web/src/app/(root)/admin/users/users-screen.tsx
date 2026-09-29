@@ -141,7 +141,7 @@ export function UsersScreen({ currentUserId }: { currentUserId: string }) {
                           description={
                             search || role
                               ? "Try a different search term or role filter."
-                              : "Create the first account to get started."
+                              : "Create the first account."
                           }
                         />
                       </ChakraTable.Cell>

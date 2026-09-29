@@ -157,7 +157,7 @@ function MaterialForm({ moduleId, material }: { moduleId: string; material: Mate
 
         {material.practiceActivities.length === 0 ? (
           <Text fontSize="sm" color="fg.muted">
-            None yet. A practice activity lets the Coder try what this material just explained.
+            None yet.
           </Text>
         ) : (
           <Stack gap="2">

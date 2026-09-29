@@ -36,26 +36,26 @@ export function describeScriptContract(
       return {
         submission:
           "The submission is main.py. Import it with `from main import …`, from any folder.",
-        results: "pytest 9.1 runs the entrypoint file; its results are read directly.",
+        results: "pytest 9.1 runs the entrypoint file.",
       };
     case "JEST":
       return {
         submission:
           'The submission is main.js. Require it relative to the script, e.g. `require("./main")`.',
-        results: "Jest 30.5 runs the entrypoint file; its results are read directly.",
+        results: "Jest 30.5 runs the entrypoint file.",
       };
     case "JUNIT":
       return {
         submission:
-          "The submission's classes are compiled into the default package. Keep the test class there too — no package line — in a file named after the class, e.g. SolutionTest.java.",
+          "The submission's classes are compiled into the default package. Keep the test class there too, with no package line, in a file named after the class, e.g. SolutionTest.java.",
         results:
-          "JUnit Jupiter (JUnit 6.1) runs the entrypoint class; its results are read directly.",
+          "JUnit Jupiter (JUnit 6.1) runs the entrypoint class.",
       };
     case "GOOGLETEST":
       return {
         submission:
           'Include the submission with `#include "main.cpp"` to test its classes and functions directly. Its main is renamed while the tests build, and GoogleTest supplies its own; do not write a main.',
-        results: "GoogleTest 1.12 runs every TEST in the file; its results are read directly.",
+        results: "GoogleTest 1.12 runs every TEST in the file.",
       };
     case "CUSTOM":
       return { submission: customSubmission(language), results: CUSTOM_REPORT };
@@ -70,6 +70,6 @@ function customSubmission(language: Language): string {
     case "java":
       return "The entrypoint is compiled with the submission's classes and its main method is run. Its path names its class, so a file at the root stays in the default package.";
     case "cpp":
-      return "The entrypoint is compiled on its own, since the submission has its own main. The submission's compiled program is at the path in AMBATUCODE_PROGRAM — run it and check what it prints.";
+      return "The entrypoint is compiled on its own, since the submission has its own main. The submission's compiled program is at the path in AMBATUCODE_PROGRAM. Run it and check what it prints.";
   }
 }

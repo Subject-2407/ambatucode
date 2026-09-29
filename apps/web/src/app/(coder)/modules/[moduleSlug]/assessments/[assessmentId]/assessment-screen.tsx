@@ -173,7 +173,7 @@ function ClosingLine({ session }: { session: CoderSessionEntry }) {
       <CalendarClock size={14} aria-hidden />
       <Text fontSize="xs">
         Closes {new Date(closing).toLocaleString()}. After that you cannot join or submit, and
-        anything still open is handed in for you.
+        open work is submitted automatically.
       </Text>
     </HStack>
   );
@@ -213,7 +213,7 @@ function OpenAccessPanel({
               Start, and the sentence that used to sit here said so at length. */}
           {session.durationMinutes === null ? null : (
             <Text fontSize="sm" color="fg.muted">
-              {`Your ${String(session.durationMinutes)}-minute timer starts the moment you begin, and pauses while you are disconnected. You get one attempt and one formal submission.`}
+              {`Your ${String(session.durationMinutes)}-minute timer starts the moment you begin, and pauses while you are disconnected.`}
             </Text>
           )}
         </Stack>
@@ -260,8 +260,7 @@ function RetakeNote() {
     <HStack gap="2" align="start" color="fg.success">
       <RotateCcw size={14} aria-hidden />
       <Text fontSize="sm">
-        Your Architect opened a new attempt for you. It is yours alone and you can start it now,
-        even though this session has finished.
+        Your Architect opened a new attempt for you.
       </Text>
     </HStack>
   );
@@ -306,9 +305,9 @@ function SessionCard({
           </HStack>
           <Text fontSize="xs" color="fg.muted">
             {session.executionMode === "LIVE"
-              ? "Live — everyone shares one timer"
+              ? "Live"
               : session.executionMode === "INDIVIDUAL"
-                ? "Individual — your own timer, paused while you are disconnected"
+                ? "Individual"
                 : "Untimed"}
             {session.durationMinutes === null ? "" : ` · ${String(session.durationMinutes)} min`}
           </Text>

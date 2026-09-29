@@ -99,7 +99,7 @@ export function InteractiveBlockNode({ node }: { node: RichTextNode }) {
   if (block === null) {
     return (
       <BlockFrame title="">
-        <BlockNotice message="This interactive block could not be loaded. Its author will need to fix it." />
+        <BlockNotice message="This interactive block could not be loaded." />
       </BlockFrame>
     );
   }

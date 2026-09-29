@@ -21,7 +21,7 @@ type FieldErrors = { username?: string; password?: string };
  * saying which would let an attacker enumerate accounts.
  */
 function loginFailureMessage(error: unknown): string {
-  if (!isApiError(error)) return "Something went wrong. Please try again.";
+  if (!isApiError(error)) return "Could not sign in. Try again.";
   return error.code === "UNAUTHENTICATED" ? "Incorrect username or password." : error.userMessage;
 }
 

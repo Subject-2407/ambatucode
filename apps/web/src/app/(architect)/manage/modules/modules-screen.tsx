@@ -58,7 +58,7 @@ export function ArchitectModulesScreen() {
     <PageContainer backdrop="grid">
       <PageHeader
         title="Modules"
-        description="Modules you own. Open the builder to arrange sections, materials, and practice."
+        description="Modules you own."
         action={
           <Button onClick={() => setCreating(true)}>
             <Plus aria-hidden />
