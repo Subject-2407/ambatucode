@@ -31,7 +31,7 @@ import { assertCanRead } from "./modules";
 export async function moduleSequence(
   actor: AuthenticatedUser,
   moduleId: string,
-): Promise<{ moduleSlug: string; items: ModuleItemRef[] }> {
+): Promise<{ moduleSlug: string; moduleTitle: string; items: ModuleItemRef[] }> {
   const { isOwner } = await assertCanRead(actor, moduleId);
   const published = isOwner ? {} : { isPublished: true };
 
@@ -39,6 +39,7 @@ export async function moduleSequence(
     where: { id: moduleId },
     select: {
       slug: true,
+      title: true,
       sections: {
         orderBy: { orderIndex: "asc" },
         select: {
@@ -81,7 +82,7 @@ export async function moduleSequence(
     }
   }
 
-  return { moduleSlug: module.slug, items };
+  return { moduleSlug: module.slug, moduleTitle: module.title, items };
 }
 
 /**
@@ -97,7 +98,12 @@ export async function nextModuleItem(
   moduleId: string,
   from: { kind: ModuleItemKind; id: string },
 ): Promise<NextModuleItem> {
-  const { moduleSlug, items } = await moduleSequence(actor, moduleId);
+  const { moduleSlug, moduleTitle, items } = await moduleSequence(actor, moduleId);
   const index = items.findIndex((item) => item.kind === from.kind && item.id === from.id);
-  return { moduleSlug, next: index < 0 ? null : (items[index + 1] ?? null) };
+  return {
+    moduleSlug,
+    moduleTitle,
+    current: index < 0 ? null : (items[index] ?? null),
+    next: index < 0 ? null : (items[index + 1] ?? null),
+  };
 }

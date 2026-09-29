@@ -100,7 +100,12 @@ export function PageHeader({
           one part of a header that must keep its full width, because a button
           squeezed to half its label is not a control any more. */}
       <Stack gap="1" minWidth="0">
-        <Heading as="h1" textStyle="display" fontSize={{ base: "xl", md: "2xl" }} color="fg.default">
+        <Heading
+          as="h1"
+          textStyle="display"
+          fontSize={{ base: "xl", md: "2xl" }}
+          color="fg.default"
+        >
           {title}
         </Heading>
         {description ? (
@@ -132,33 +137,12 @@ export function PageContainer({
    * the page rather than sitting behind it.
    */
   backdrop,
-  fill = false,
 }: {
   children: ReactNode;
   backdrop?: BackdropVariant;
-  /**
-   * Locks the page to the height of the window instead of letting it grow.
-   *
-   * For screens whose two halves are read side by side and scrolled
-   * independently — the module overview and its leaderboard, where scrolling
-   * the page to reach the board would mean losing sight of the sections it
-   * ranks. The children then own the scrolling: give the scrolling child
-   * `overflowY="auto"` and `minHeight="0"`, or it will refuse to shrink.
-   *
-   * Only from `md` up. On a phone two columns do not fit, the rail sits along
-   * the bottom edge, and a locked page would put content under it.
-   */
-  fill?: boolean;
 }) {
   return (
-    <Box
-      position="relative"
-      minHeight="full"
-      height={fill ? { base: "auto", md: "100dvh" } : undefined}
-      overflow={fill ? { base: "visible", md: "hidden" } : undefined}
-      display={fill ? "flex" : undefined}
-      flexDirection={fill ? "column" : undefined}
-    >
+    <Box position="relative" minHeight="full">
       {backdrop ? <PixelBackdrop variant={backdrop} opacity={0.16} /> : null}
       <Container
         position="relative"
@@ -169,10 +153,6 @@ export function PageContainer({
         maxWidth="full"
         px={{ base: "4", md: "8" }}
         py={{ base: "6", md: "8" }}
-        flex={fill ? "1" : undefined}
-        minHeight={fill ? "0" : undefined}
-        display={fill ? "flex" : undefined}
-        flexDirection={fill ? "column" : undefined}
       >
         {children}
       </Container>

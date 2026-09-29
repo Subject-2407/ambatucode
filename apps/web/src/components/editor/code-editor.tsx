@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Box, Skeleton } from "@chakra-ui/react";
 import { loader, type OnMount } from "@monaco-editor/react";
@@ -9,6 +9,7 @@ import type { Language } from "@ambatucode/shared";
 import { useColorMode } from "@/providers/color-mode";
 import { MONACO_LANGUAGE_ID, TAB_SIZE } from "./language-labels";
 import { monacoThemeFor, monacoThemes } from "./monaco-theme";
+import { createValueSync } from "./value-sync";
 
 /**
  * The Monaco wrapper. Every editor in the product goes through it.
@@ -82,11 +83,71 @@ export function SourceEditor({
     [ariaLabel, blockContextMenu, readOnly, tabSize],
   );
 
+  /**
+   * Monaco owns the text; `value` is only how a parent changes it from outside.
+   *
+   * It used to be passed straight through as a controlled value, and the
+   * wrapper rewrote the whole document whenever the prop differed from the
+   * model. Typing fast, the prop is always a keystroke or two behind, so every
+   * lagging render replaced the buffer with an older copy: the caret jumped to
+   * the end of the file and the newest characters vanished. The wrapper is
+   * handed only the initial text now, and changes are reconciled here — see
+   * `value-sync.ts` for how an echo is told apart from a real change.
+   */
+  const editorRef = useRef<MonacoApi.editor.IStandaloneCodeEditor | null>(null);
+  const sync = useRef(createValueSync());
+  const latestValue = useRef(value);
+  const onChangeRef = useRef(onChange);
+  /** Set while this component writes into the model, so that write is not reported back. */
+  const applying = useRef(false);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  const applyExternal = useCallback((next: string) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    if (!sync.current.shouldApply(next, model.getValue())) return;
+
+    // An edit rather than `setValue`, so it lands on the undo stack and the
+    // Coder can take a reset or a language switch back with Ctrl+Z. The caret
+    // stays where it was, clamped to the new text, instead of being thrown to
+    // the end.
+    const position = editor.getPosition();
+    applying.current = true;
+    try {
+      editor.pushUndoStop();
+      model.pushEditOperations([], [{ range: model.getFullModelRange(), text: next }], () => null);
+      editor.pushUndoStop();
+    } finally {
+      applying.current = false;
+    }
+    if (position) editor.setPosition(model.validatePosition(position));
+  }, []);
+
+  useEffect(() => {
+    latestValue.current = value;
+    applyExternal(value);
+  }, [applyExternal, value]);
+
+  const handleChange = useCallback((next: string | undefined) => {
+    if (applying.current) return;
+    const text = next ?? "";
+    sync.current.emitted(text);
+    onChangeRef.current(text);
+  }, []);
+
   const handleMount = useCallback<OnMount>(
     (editor) => {
+      editorRef.current = editor;
+      // Monaco loads asynchronously, and the parent may have changed the text
+      // while it did — a recovered draft, most often. Catch up once.
+      applyExternal(latestValue.current);
       if (autoFocus) editor.focus();
     },
-    [autoFocus],
+    [applyExternal, autoFocus],
   );
 
   // Themes have to exist before the editor asks for one by name, and
@@ -105,8 +166,8 @@ export function SourceEditor({
       <MonacoEditor
         language={monacoLanguage}
         theme={monacoThemeFor(colorMode)}
-        value={value}
-        onChange={(next) => onChange(next ?? "")}
+        defaultValue={value}
+        onChange={handleChange}
         beforeMount={handleBeforeMount}
         onMount={handleMount}
         options={options}

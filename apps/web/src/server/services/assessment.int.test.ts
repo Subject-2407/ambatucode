@@ -44,6 +44,7 @@ import {
   startAttempt,
   submitAttempt,
 } from "./attempts";
+import { getCoderAgenda } from "./coder-agenda";
 import { EXPIRED_RESULT_MESSAGE, ingestExecutionResult } from "./execution-result";
 import {
   createSession,
@@ -1661,5 +1662,35 @@ describe("results that arrive after their callback token expired", () => {
     expect(
       (await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } })).status,
     ).toBe("QUEUED");
+  });
+});
+
+describe("the Coder's agenda", () => {
+  it("offers a running session, then says continue once it is started", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Agenda individual");
+
+    const before = await getCoderAgenda(coderD);
+    expect(before.find((item) => item.sessionId === session.id)?.kind).toBe("OPEN");
+
+    const attempt = await startAttempt(coderD, session.id);
+    createdAttemptIds.push(attempt.id);
+
+    const after = await getCoderAgenda(coderD);
+    const entry = after.find((item) => item.sessionId === session.id);
+    expect(entry).toMatchObject({ kind: "CONTINUE", attemptId: attempt.id });
+    // Once, under the more urgent reason — not also as a session to open.
+    expect(after.filter((item) => item.sessionId === session.id)).toHaveLength(1);
+  });
+
+  it("offers nothing to a Coder outside the module, and refuses anyone but a Coder", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Agenda outsider");
+
+    const outsiders = await getCoderAgenda(outsider);
+    expect(outsiders.some((item) => item.sessionId === session.id)).toBe(false);
+
+    expect(await refusalCode(() => getCoderAgenda(root))).toBe("FORBIDDEN");
+    expect(await refusalCode(() => getCoderAgenda(owner))).toBe("FORBIDDEN");
   });
 });

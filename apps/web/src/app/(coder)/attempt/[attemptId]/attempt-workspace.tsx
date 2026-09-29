@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
-import { CircleDot, DoorOpen, Play, Send } from "lucide-react";
+import { ChevronLeft, CircleDot, Play, Send } from "lucide-react";
 import type { AttemptView, Language } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ShortcutKeys, WithShortcut, ariaShortcut } from "@/components/ui/shortcut";
 import { TabBar, TabPanel } from "@/components/ui/tabs";
 import { toaster } from "@/components/ui/toaster";
 import { CodeEditor } from "@/components/editor/code-editor";
@@ -32,14 +33,13 @@ import { useAttemptSubmission } from "@/hooks/use-attempt-submission";
 import { useRunJob } from "@/hooks/use-run-job";
 import { apiClient, isApiError } from "@/lib/api-client";
 import { describeAntiCheat } from "@/lib/anti-cheat";
-import {
-  chooseDraft,
-  clearLocalDraft,
-  readLocalDraft,
-  type LocalDraft,
-} from "@/lib/local-draft";
+import { formatTimeWithSeconds } from "@/lib/format-date";
+import { chooseDraft, clearLocalDraft, readLocalDraft, type LocalDraft } from "@/lib/local-draft";
 import { routes } from "@/lib/routes";
 import { useEnterAssessmentMode } from "@/providers/assessment-mode";
+
+const RUN_KEYS = ["mod", "enter"] as const;
+const SUBMIT_KEYS = ["mod", "shift", "enter"] as const;
 
 /**
  * The assessment workspace: the highest-risk screen in the product.
@@ -308,6 +308,9 @@ export function AttemptWorkspace({
 
   const confirmSubmit = useCallback(async () => {
     setSubmitOpen(false);
+    // On a narrow screen the status lands in the Console tab, which the Coder
+    // is not looking at while they are on Code. Take them to it.
+    setMobileTab("console");
     try {
       // The buffer, read here and now. Never the draft.
       await submit({ language, sourceCode: source });
@@ -483,14 +486,26 @@ export function AttemptWorkspace({
           <RunOutcome
             state={runState}
             idle={
-              <Text fontSize="sm" color="fg.muted">
-                {/* A Run carries this Assessment's test scripts now, so an
-                    Assessment with no sample case is no longer just a program
-                    being executed with nothing to check it against. */}
-                {assessment.sampleCases.length === 0
-                  ? "Run your code to check it."
-                  : "Run your code to check it against the sample cases."}
-              </Text>
+              <Stack gap="2">
+                <Text fontSize="sm" color="fg.muted">
+                  {/* A Run carries this Assessment's test scripts now, so an
+                      Assessment with no sample case is no longer just a program
+                      being executed with nothing to check it against. */}
+                  {assessment.sampleCases.length === 0
+                    ? "Run your code to check it."
+                    : "Run your code to check it against the sample cases."}
+                </Text>
+                <HStack gap="3" wrap="wrap" fontSize="xs" color="fg.muted">
+                  <HStack gap="1.5">
+                    <ShortcutKeys keys={RUN_KEYS} />
+                    <Text>run</Text>
+                  </HStack>
+                  <HStack gap="1.5">
+                    <ShortcutKeys keys={SUBMIT_KEYS} />
+                    <Text>submit</Text>
+                  </HStack>
+                </HStack>
+              </Stack>
             }
           />
         ) : null}
@@ -514,10 +529,43 @@ export function AttemptWorkspace({
         bg="bg.surface"
       >
         <HStack gap="3" minWidth="0">
+          {/* The way out sits with the title, away from Run and Submit. It was a
+              solid crimson button beside Submit: two loud controls one slip
+              apart, one of which can end the attempt. Here it reads as what it
+              is — the back door — and Submit is the only solid button left.
+
+              BLOCKED is still the absence of the button, never a dead one, and
+              it is disabled only while a submit is actually in flight. See
+              `settled`: after the attempt is over this is the way out, not an
+              action to guard. */}
+          {assessment.exitPolicy === "BLOCKED" ? null : (
+            <Button
+              size="sm"
+              variant="ghost"
+              flexShrink="0"
+              onClick={() => {
+                // A finished attempt has nothing left to decide, so there is
+                // nothing to confirm either. The dialog was a speed bump on the
+                // only way out.
+                if (settled) router.push(routes.assessment(moduleSlug, assessment.id));
+                else setExitOpen(true);
+              }}
+              disabled={submissionState.phase === "submitting" || exiting}
+            >
+              <ChevronLeft aria-hidden />
+              Leave
+            </Button>
+          )}
           <Text textStyle="display" truncate>
             {assessment.title}
           </Text>
-          <Badge tone="neutral">Attempt {attempt.attemptNumber}</Badge>
+          {/* Only after a reset, which is the one time the number means
+              anything. "Attempt 1" on everybody's first try was noise. */}
+          {attempt.attemptNumber > 1 ? (
+            <Badge tone="neutral" flexShrink="0">
+              Attempt {attempt.attemptNumber}
+            </Badge>
+          ) : null}
         </HStack>
 
         <HStack gap="4" wrap="wrap">
@@ -528,45 +576,31 @@ export function AttemptWorkspace({
           />
           <ConnectionDot connection={socket.connection} />
           <HStack gap="2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void run()}
-              loading={isRunning}
-              loadingText="Running"
-              disabled={locked}
-            >
-              <Play aria-hidden />
-              Run
-            </Button>
-            <Button size="sm" onClick={() => setSubmitOpen(true)} disabled={locked}>
-              <Send aria-hidden />
-              Submit
-            </Button>
-            {/* There was no way out of this screen at all: the shell hides its
-                navigation during an attempt, so a Coder who opened one had the
-                browser's Back button and nothing else. What this does is the
-                Architect's decision — see `exitPolicy`.
-
-                Crimson, and solid rather than outlined. Leaving is the one
-                control here that can end an attempt, and it sat in the same
-                quiet grey as Run beside two buttons that cannot. BLOCKED is
-                still the absence of the button, never a dead one.
-
-                Only ever disabled while a submit is actually in flight. See
-                `settled`: after the attempt is over this is the way out, not an
-                action to guard. */}
-            {assessment.exitPolicy === "BLOCKED" ? null : (
+            <WithShortcut label="Run" keys={RUN_KEYS}>
               <Button
                 size="sm"
-                colorPalette="danger"
-                onClick={() => setExitOpen(true)}
-                disabled={submissionState.phase === "submitting" || exiting}
+                variant="outline"
+                onClick={() => void run()}
+                loading={isRunning}
+                loadingText="Running"
+                disabled={locked}
+                aria-keyshortcuts={ariaShortcut(RUN_KEYS)}
               >
-                <DoorOpen aria-hidden />
-                Leave
+                <Play aria-hidden />
+                Run
               </Button>
-            )}
+            </WithShortcut>
+            <WithShortcut label="Submit" keys={SUBMIT_KEYS}>
+              <Button
+                size="sm"
+                onClick={() => setSubmitOpen(true)}
+                disabled={locked}
+                aria-keyshortcuts={ariaShortcut(SUBMIT_KEYS)}
+              >
+                <Send aria-hidden />
+                Submit
+              </Button>
+            </WithShortcut>
           </HStack>
         </HStack>
       </Flex>
@@ -647,26 +681,16 @@ export function AttemptWorkspace({
 
       <ConfirmDialog
         open={exitOpen}
-        title={
-          settled
-            ? "Close this attempt?"
-            : assessment.exitPolicy === "SUBMIT"
-              ? "Leave and submit?"
-              : "Leave this attempt?"
-        }
+        title={assessment.exitPolicy === "SUBMIT" ? "Leave and submit?" : "Leave this attempt?"}
         description={
-          settled
-            ? "This attempt is finished. Its result stays on the assessment page."
-            : assessment.exitPolicy === "SUBMIT"
-              ? "Leaving submits the code in the editor. You cannot come back to this attempt."
-              : attempt.executionMode === "LIVE"
-                ? "Your code is saved and you can continue later. The live timer keeps running."
-                : "Your code is saved and you can continue later. Your timer pauses while you are away."
+          assessment.exitPolicy === "SUBMIT"
+            ? "Leaving submits the code in the editor. You cannot come back to this attempt."
+            : attempt.executionMode === "LIVE"
+              ? "Your code is saved and you can continue later. The live timer keeps running."
+              : "Your code is saved and you can continue later. Your timer pauses while you are away."
         }
-        confirmLabel={
-          settled ? "Leave" : assessment.exitPolicy === "SUBMIT" ? "Submit and leave" : "Leave"
-        }
-        destructive={!settled && assessment.exitPolicy === "SUBMIT"}
+        confirmLabel={assessment.exitPolicy === "SUBMIT" ? "Submit and leave" : "Leave"}
+        destructive={assessment.exitPolicy === "SUBMIT"}
         loading={exiting}
         onConfirm={() => void confirmExit()}
         onClose={() => setExitOpen(false)}
@@ -691,6 +715,7 @@ export function AttemptWorkspace({
         onView={() => {
           setAwaitingDeadline(false);
           setAutoSubmitSeen(true);
+          setMobileTab("console");
         }}
       />
 
@@ -709,7 +734,7 @@ function DraftIndicator({ state }: { state: DraftSaveState }) {
   if (state.phase === "saved") {
     return (
       <Text fontSize="xs" color="fg.muted">
-        Saved {new Date(state.atMs).toLocaleTimeString()}
+        Saved {formatTimeWithSeconds(state.atMs)}
       </Text>
     );
   }

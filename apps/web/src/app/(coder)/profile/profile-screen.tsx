@@ -7,11 +7,12 @@ import { AchievementShowcase } from "@/components/gamification/achievement-showc
 import { ROLE_LABEL } from "@/components/layout/navigation";
 import { PixelFrame } from "@/components/ui/pixel-frame";
 import { TabBar, TabPanel, type TabItem } from "@/components/ui/tabs";
+import { formatDateTime } from "@/lib/format-date";
 
 /**
  * Who you are, and what you have earned — one screen, two tabs.
  *
- * Titles used to have their own rail slot. That made the rail carry two
+ * Achievements used to have their own rail slot. That made the rail carry two
  * entries about the same person, and left a screen whose whole content was one
  * grid. They belong together: a profile is the account *and* what the account
  * has done.
@@ -64,7 +65,7 @@ export function ProfileScreen({
               <DetailRow label="Username">{user.username}</DetailRow>
               <DetailRow label="Role">{ROLE_LABEL[user.role]}</DetailRow>
               <DetailRow label="Session ends">
-                <time dateTime={expiresAt}>{new Date(expiresAt).toLocaleString("en-GB")}</time>
+                <time dateTime={expiresAt}>{formatDateTime(expiresAt)}</time>
               </DetailRow>
             </Stack>
           </PixelFrame>

@@ -13,6 +13,7 @@ import {
 } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
 import { pixelSkin } from "@/theme/pixel";
+import { formatDate } from "@/lib/format-date";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,23 +22,19 @@ import { useAchievements } from "@/hooks/use-achievements";
 import { AchievementIcon } from "./achievement-icon";
 
 /**
- * Titles a Coder has earned, and the ones still out there.
+ * Achievements a Coder has earned, and the ones still out there.
  *
- * Locked titles are shown with their full description rather than hidden
+ * Called Achievements everywhere a Coder reads it. The screen said "titles"
+ * in one line and "Achievements" in the tab above it, which left a reader
+ * wondering whether they were two different things.
+ *
+ * Locked achievements are shown with their full description rather than hidden
  * behind question marks. An achievement nobody can read is not a goal, it is a
  * surprise — and the descriptions say things like "submit without running your
  * code first", which is the sort of thing worth reading beforehand.
  */
 
 const ALL = "ALL";
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
 
 function AchievementCard({
   achievement,
@@ -51,22 +48,21 @@ function AchievementCard({
     <Flex
       gap="3"
       padding="4"
-      // An earned Title is one of only two things in the product allowed to be
-      // gold; the other is the frame around Architect-authored content. Keeping
-      // it that scarce is what makes gold mean "you earned this" on sight.
+      // An earned achievement is one of only two things in the product allowed
+      // to be gold; the other is the frame around Architect-authored content.
+      // Keeping it that scarce is what makes gold mean "you earned this" on
+      // sight.
       //
-      // Locked keeps a dashed outline and a muted icon rather than a faded
-      // card: the description is the goal, and fading it would fail contrast
-      // for the very text a Coder is meant to read. A dashed edge cannot be an
-      // inset shadow, so only the earned card takes the notch.
-      {...(earned
-        ? pixelSkin("var(--amb-colors-gold-solid)", "var(--amb-colors-bg-surface)", 3)
-        : {
-            borderWidth: "1px",
-            borderColor: "border.default",
-            borderStyle: "dashed",
-            bg: "bg.subtle",
-          })}
+      // Locked wears the same notched edge in the muted ink, on the subtle
+      // ground, with a lock for an icon — not a faded card: the description is
+      // the goal, and fading it would fail contrast for the very text a Coder
+      // is meant to read. The dashed rounded box this replaces was the one
+      // shape on the screen that was not drawn on the pixel grid.
+      {...pixelSkin(
+        earned ? "var(--amb-colors-gold-solid)" : "var(--amb-colors-border-muted)",
+        earned ? "var(--amb-colors-bg-surface)" : "var(--amb-colors-bg-subtle)",
+        3,
+      )}
       align="start"
     >
       <Box color={earned ? "gold.fg" : "fg.muted"} paddingTop="0.5" flexShrink={0}>
@@ -135,7 +131,7 @@ export function AchievementShowcase({ userId }: { userId: string }) {
     return (
       <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap="3">
         {[0, 1, 2, 3].map((key) => (
-          <Skeleton key={key} height="6rem" borderRadius="lg" />
+          <Skeleton key={key} height="6rem" borderRadius="0" />
         ))}
       </Grid>
     );
@@ -148,7 +144,7 @@ export function AchievementShowcase({ userId }: { userId: string }) {
       <HStack gap="3" wrap="wrap">
         <Trophy size={18} aria-hidden />
         <Text fontSize="sm" color="fg.muted">
-          {data.earned.length} of {data.earned.length + data.locked.length} titles earned
+          {data.earned.length} of {data.earned.length + data.locked.length} achievements earned
         </Text>
       </HStack>
 
@@ -162,11 +158,7 @@ export function AchievementShowcase({ userId }: { userId: string }) {
 
       <TabPanel id={panelId} value={category}>
         {entries.length === 0 ? (
-          <EmptyState
-            sprite="trophy"
-            title="Nothing here yet"
-            description="No Titles here yet."
-          />
+          <EmptyState sprite="trophy" title="No achievements in this category" />
         ) : (
           <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap="3">
             {entries.map((entry) =>

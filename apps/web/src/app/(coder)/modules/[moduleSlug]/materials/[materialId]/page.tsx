@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import NextLink from "next/link";
-import { Stack, Text } from "@chakra-ui/react";
-import { ChevronLeft } from "lucide-react";
+import { Box, Stack, Text } from "@chakra-ui/react";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
-import { Button } from "@/components/ui/button";
+import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { NextItemLink } from "@/components/content/next-item-link";
 import { PracticeActivity } from "@/components/content/practice-activity";
 import { isEmptyDocument } from "@/components/content/rich-text";
@@ -48,37 +46,41 @@ export default async function MaterialPage({ params }: PageProps) {
 
   return (
     <PageContainer>
-      <Stack gap="2" mb="2">
-        <Button asChild variant="ghost" size="sm" alignSelf="start">
-          <NextLink href={routes.module(moduleSlug)}>
-            <ChevronLeft aria-hidden />
-            Back to module
-          </NextLink>
-        </Button>
-      </Stack>
+      {/* A reading measure. Prose that runs the full width of a wide monitor
+          is a line the eye cannot find the start of again. */}
+      <Box maxWidth="52rem">
+        <Breadcrumbs
+          items={[
+            { label: progression.moduleTitle, href: routes.module(moduleSlug) },
+            ...(progression.current ? [{ label: progression.current.sectionTitle }] : []),
+          ]}
+        />
 
-      <PageHeader title={material.title} />
+        <PageHeader title={material.title} />
 
-      <Stack gap="8">
-        {isEmptyDocument(material.content) ? (
-          <Text color="fg.muted">This material has no content yet.</Text>
-        ) : (
-          <RichTextView document={material.content} />
-        )}
+        <Stack gap="8">
+          {isEmptyDocument(material.content) ? (
+            <Text color="fg.muted">This material has no content yet.</Text>
+          ) : (
+            <RichTextView document={material.content} />
+          )}
 
-        {material.practiceActivities.length > 0 ? (
-          <Stack gap="4">
-            <Text textStyle="display">Practice</Text>
-            {material.practiceActivities.map((activity) => (
-              <PracticeActivity key={activity.id} activity={activity} />
-            ))}
-          </Stack>
-        ) : null}
+          {material.practiceActivities.length > 0 ? (
+            <Stack gap="4">
+              <Text textStyle="display" fontSize="sm" color="accent.fg">
+                Practice
+              </Text>
+              {material.practiceActivities.map((activity) => (
+                <PracticeActivity key={activity.id} activity={activity} />
+              ))}
+            </Stack>
+          ) : null}
 
-        {/* The SRS asks for explanation, example, practice, next material as
-            one progression. This is the last of those four. */}
-        <NextItemLink progression={progression} />
-      </Stack>
+          {/* The SRS asks for explanation, example, practice, next material as
+              one progression. This is the last of those four. */}
+          <NextItemLink progression={progression} />
+        </Stack>
+      </Box>
     </PageContainer>
   );
 }

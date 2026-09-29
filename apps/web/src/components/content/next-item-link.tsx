@@ -47,7 +47,10 @@ export function NextItemLink({ progression }: { progression: NextModuleItem }) {
     : routes.material(moduleSlug, next.id);
 
   return (
-    <PixelFrame tone={isAssessment ? "danger" : "accent"} pad="4">
+    // Lagoon for an Assessment, the colour the module overview gives it.
+    // Crimson here made the same exam read as the next step on one page and
+    // as an alarm on the next.
+    <PixelFrame tone={isAssessment ? "info" : "accent"} pad="4">
       <HStack justify="space-between" gap="4" wrap="wrap">
         <Stack gap="1" minWidth="0">
           <Text textStyle="display" fontSize="2xs" color="fg.muted">
@@ -60,7 +63,11 @@ export function NextItemLink({ progression }: { progression: NextModuleItem }) {
               <FileText size={16} aria-hidden />
             )}
             <Text truncate>{next.title}</Text>
-            {isAssessment ? <Badge tone="danger">Assessment</Badge> : null}
+            {isAssessment ? (
+              <Badge tone="info" flexShrink="0">
+                Assessment
+              </Badge>
+            ) : null}
           </HStack>
         </Stack>
 

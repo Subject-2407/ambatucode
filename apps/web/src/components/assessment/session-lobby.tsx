@@ -89,11 +89,15 @@ export function SessionLobby({
         </Switch.Root>
 
         {lobby.counts === null ? null : (
-          <HStack gap="2" aria-live="polite">
-            <Badge tone="success">Ready {lobby.counts.ready}</Badge>
-            <Badge tone="neutral">Not ready {lobby.counts.notReady}</Badge>
-            <Badge tone="warning">Offline {lobby.counts.offline}</Badge>
-          </HStack>
+          // One count, not three. Who is offline versus merely not ready is
+          // the Architect's question; a Coder waiting in the room only wants
+          // to know how full it is.
+          <Badge
+            tone={lobby.counts.ready === lobby.counts.total ? "success" : "neutral"}
+            aria-live="polite"
+          >
+            {lobby.counts.ready} of {lobby.counts.total} ready
+          </Badge>
         )}
       </HStack>
 

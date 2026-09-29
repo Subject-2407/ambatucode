@@ -94,6 +94,14 @@ async function openAssessment(page: Page, fixture: AssessmentFixture): Promise<v
 async function startAttempt(page: Page, fixture: AssessmentFixture): Promise<void> {
   await openAssessment(page, fixture);
   await page.getByRole("button", { name: /^(Start|Continue)$/ }).click();
+  // Starting an Individual clock asks first; continuing, or a Live session,
+  // goes straight in. Whichever arrives first decides.
+  const confirm = page.getByRole("dialog").getByRole("button", { name: "Start" });
+  await Promise.race([
+    page.waitForURL(/\/attempt\//, { timeout: 30_000 }),
+    confirm.waitFor({ timeout: 30_000 }),
+  ]);
+  if (!/\/attempt\//.test(page.url())) await confirm.click();
   await page.waitForURL(/\/attempt\//, { timeout: 30_000 });
   await expect(page.locator(".monaco-editor").first()).toBeVisible({ timeout: 30_000 });
 }

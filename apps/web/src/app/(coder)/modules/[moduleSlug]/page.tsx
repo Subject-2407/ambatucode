@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import NextLink from "next/link";
-import { Box, Flex, Grid, HStack, Stack, Text } from "@chakra-ui/react";
-import { ChevronRight, ClipboardCheck, FileText, Lock, Terminal } from "lucide-react";
+import { Box, Flex, HStack, Stack, Text } from "@chakra-ui/react";
+import { ChevronRight, ClipboardCheck, FileText, Terminal } from "lucide-react";
 import type { AssessmentSummary, ModuleDetail, ModuleSectionView } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
-import { ModuleLeaderboards } from "@/components/gamification/module-leaderboards";
+import { TimingBadge } from "@/components/assessment/timing-badge";
+import { ModuleLeaderboardDrawer } from "@/components/gamification/module-leaderboards";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PixelFrame } from "@/components/ui/pixel-frame";
@@ -37,79 +38,40 @@ export default async function ModuleOverviewPage({ params }: PageProps) {
   );
 
   return (
-    // The overview and the board it ranks are read together, so the page is
-    // locked to the window and each column scrolls on its own. Scrolling the
-    // whole page to reach the leaderboard meant losing sight of the sections.
-    <PageContainer backdrop="constellation" fill={module.viewer.canRead}>
+    <PageContainer backdrop="constellation">
+      {/* No Public or Closed badge. Once a Coder is inside, how they got in no
+          longer matters; before that, the enroll control already says "Enroll"
+          or "Request access", which is the same fact put as the next step. */}
       <PageHeader
         title={module.title}
         description={module.description ?? undefined}
         action={
-          module.visibility === "CLOSED" ? (
-            <Badge tone="warning">
-              <Lock size={12} aria-hidden /> Closed
-            </Badge>
-          ) : (
-            <Badge>Public</Badge>
-          )
+          module.viewer.canRead ? (
+            // Gamification belongs to learning, so it lives on the module page
+            // and never inside the attempt workspace.
+            <ModuleLeaderboardDrawer
+              moduleId={module.id}
+              viewerId={session.user.id}
+              sections={module.sections.map((section) => ({
+                id: section.id,
+                title: section.title,
+              }))}
+            />
+          ) : undefined
         }
       />
 
       {module.viewer.canRead ? (
-        <Grid
-          // Close to even. At 1.6:1 the board was a column of truncated names
-          // beside a column of half-empty rows — a leaderboard that cannot show
-          // a name and a score on one line is not ranking anything legibly.
-          templateColumns={{ base: "1fr", lg: "minmax(0, 1.1fr) minmax(0, 1fr)" }}
-          // And a gutter wide enough to read as two panels rather than as one
-          // list that happens to have a table stuck to its right edge.
-          gap={{ base: "8", lg: "10" }}
-          flex={{ md: "1" }}
-          minHeight={{ md: "0" }}
-        >
-          {/* `minHeight: 0` on both: a grid item's default minimum is its
-              content, so without it neither column can be shorter than what is
-              inside it and the page scrolls after all. */}
-          <Column>
-            <SectionTree module={module} />
-          </Column>
-
-          {/* Gamification belongs to learning, so it lives on the module page
-              and never inside the attempt workspace. */}
-          <Column>
-            <Stack gap="3">
-              <Text fontSize="sm" textStyle="display">
-                Leaderboard
-              </Text>
-              <ModuleLeaderboards
-                moduleId={module.id}
-                viewerId={session.user.id}
-                sections={module.sections.map((section) => ({
-                  id: section.id,
-                  title: section.title,
-                }))}
-              />
-            </Stack>
-          </Column>
-        </Grid>
+        // A reading measure rather than the full window: on a wide screen a
+        // row whose title sits at one edge and its chevron at the other is
+        // two things, not one.
+        <Box maxWidth="56rem">
+          <SectionTree module={module} />
+        </Box>
       ) : (
         <AccessPanel module={module} />
       )}
     </PageContainer>
-  );
-}
-
-/** One scrolling half of the overview. See the grid above for why. */
-function Column({ children }: { children: ReactNode }) {
-  return (
-    <Box
-      minHeight={{ md: "0" }}
-      overflowY={{ base: "visible", md: "auto" }}
-      // Room for the scrollbar so a row's text does not sit under it.
-      pe={{ md: "2" }}
-    >
-      {children}
-    </Box>
   );
 }
 
@@ -187,9 +149,11 @@ function SectionBlock({
               <HStack gap="3" minWidth="0">
                 <FileText size={16} aria-hidden />
                 <Text truncate>{material.title}</Text>
+                {/* Spelled out: a terminal icon beside a bare "2" left the
+                    Coder to guess what was being counted. */}
                 {material.practiceCount > 0 ? (
-                  <Badge tone="accent">
-                    <Terminal size={12} aria-hidden /> {material.practiceCount}
+                  <Badge tone="accent" plain flexShrink="0">
+                    <Terminal size={12} aria-hidden /> {material.practiceCount} practice
                   </Badge>
                 ) : null}
               </HStack>
@@ -283,22 +247,17 @@ function AssessmentCard({ href, assessment }: { href: string; assessment: Assess
             </HStack>
 
             <HStack gap="3" flexShrink="0">
-              <AssessmentTimingBadge assessment={assessment} />
+              <TimingBadge
+                durationMinutes={
+                  assessment.timeMode === "UNTIMED" ? null : assessment.durationMinutes
+                }
+                executionMode={assessment.executionMode}
+              />
               <ChevronRight size={16} aria-hidden />
             </HStack>
           </Flex>
         </NextLink>
       </Box>
     </PixelFrame>
-  );
-}
-
-function AssessmentTimingBadge({ assessment }: { assessment: AssessmentSummary }) {
-  if (assessment.timeMode === "UNTIMED") return <Badge tone="neutral">Untimed</Badge>;
-  return (
-    <Badge tone="warning">
-      {assessment.durationMinutes} min ·{" "}
-      {assessment.executionMode === "LIVE" ? "Live" : "Individual"}
-    </Badge>
   );
 }

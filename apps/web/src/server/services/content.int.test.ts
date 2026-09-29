@@ -420,6 +420,13 @@ describe("module progression", () => {
       id: readMe.id,
     });
     expect(afterMaterial.next).toMatchObject({ kind: "ASSESSMENT", id: exam.id });
+    // Where the Coder is now, for the breadcrumb above the page.
+    expect(afterMaterial.moduleTitle).toBe(module.title);
+    expect(afterMaterial.current).toMatchObject({
+      kind: "MATERIAL",
+      id: readMe.id,
+      sectionTitle: "One",
+    });
 
     const afterAssessment = await nextModuleItem(enrolledCoder, module.id, {
       kind: "ASSESSMENT",

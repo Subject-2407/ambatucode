@@ -137,5 +137,9 @@ export type ModuleItemRef = {
 /** Null at the end of the Module. There is nothing after the last item. */
 export type NextModuleItem = {
   moduleSlug: string;
+  /** Named so a page can say which Module it belongs to without a second read. */
+  moduleTitle: string;
+  /** The item the Coder is on, or null when it is not in the sequence. */
+  current: ModuleItemRef | null;
   next: ModuleItemRef | null;
 };
