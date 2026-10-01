@@ -1,5 +1,5 @@
 import "server-only";
-import { prisma, type Prisma } from "@ambatucode/db";
+import { loadSessionRoster, prisma, type Prisma } from "@ambatucode/db";
 import {
   AppError,
   attemptRemainingMs,
@@ -23,6 +23,7 @@ import {
   type UpdateSessionRequest,
 } from "@ambatucode/shared";
 import { cancelDeadline, scheduleDeadline } from "../queue/deadlines";
+import { platformOnline } from "../realtime/presence";
 import { publishAssessmentBroadcast } from "../realtime/publish";
 import {
   clockFor,
@@ -60,15 +61,6 @@ const SESSION_SELECT = {
   updatedAt: true,
 } satisfies Prisma.AssessmentSessionSelect;
 
-const PARTICIPANT_SELECT = {
-  userId: true,
-  isListed: true,
-  readyState: true,
-  connectionState: true,
-  lastSeenAt: true,
-  user: { select: { username: true, displayName: true } },
-} satisfies Prisma.AssessmentParticipantSelect;
-
 /** Monitor feeds start from this many recent events; the socket carries the rest. */
 const MONITOR_EVENT_BACKLOG = 200;
 
@@ -93,25 +85,30 @@ async function sessionView(
   row: Prisma.AssessmentSessionGetPayload<{ select: typeof SESSION_SELECT }>,
   moduleId: string,
 ): Promise<SessionView> {
-  const listedParticipantCount = await prisma.assessmentParticipant.count({
-    where: { sessionId: row.id, isListed: true },
-  });
-  return toSessionView(row, { moduleId, listedParticipantCount });
+  const [listedParticipantCount, attemptCount, submissionCount] = await Promise.all([
+    prisma.assessmentParticipant.count({ where: { sessionId: row.id, isListed: true } }),
+    prisma.assessmentAttempt.count({ where: { sessionId: row.id } }),
+    prisma.submission.count({ where: { sessionId: row.id } }),
+  ]);
+  return toSessionView(row, { moduleId, listedParticipantCount, attemptCount, submissionCount });
 }
 
+/**
+ * The roster with presence folded in, which is everything the readiness board
+ * and the gate at Start read. One function so the two can never disagree.
+ */
 async function readinessFor(sessionId: string): Promise<ReadinessView> {
-  const session = await prisma.assessmentSession.findUniqueOrThrow({
-    where: { id: sessionId },
-    select: {
-      status: true,
-      participants: { select: PARTICIPANT_SELECT, orderBy: { user: { displayName: "asc" } } },
-    },
-  });
+  const roster = await loadSessionRoster(prisma, sessionId);
+  if (!roster) throw new AppError("NOT_FOUND", "Session not found");
+
+  const online = await platformOnline(roster.entries.map((entry) => entry.userId));
+  const participants = roster.entries.map((entry) => toParticipantView(entry, online));
   return {
     sessionId,
-    status: session.status,
-    counts: countReadiness(session.participants),
-    participants: session.participants.map(toParticipantView),
+    status: roster.status,
+    rosterSource: roster.source,
+    counts: countReadiness(participants),
+    participants,
   };
 }
 
@@ -325,6 +322,9 @@ export async function createSession(
       access: input.access ?? "LISTED",
       closesAt: closesAt === null ? null : new Date(closesAt),
       requireAllReady,
+      // READY is the lobby being open: the Coders it expects can see it and
+      // say they are there. A DRAFT is visible to the Architect alone.
+      status: input.openLobby === true ? "READY" : "DRAFT",
     },
     select: SESSION_SELECT,
   });
@@ -368,8 +368,7 @@ export async function updateSession(
   // Architect unable to edit the very session they need to fix.
   const problem = sessionRuleProblem({
     executionMode: input.executionMode ?? row.executionMode,
-    closesAt:
-      input.closesAt !== undefined ? input.closesAt : (row.closesAt?.toISOString() ?? null),
+    closesAt: input.closesAt !== undefined ? input.closesAt : (row.closesAt?.toISOString() ?? null),
     requireAllReady: input.requireAllReady ?? row.requireAllReady,
     ...(input.closesAt === undefined ? {} : { nowMs: Date.now() }),
   });
@@ -395,7 +394,11 @@ export async function updateSession(
     throw new AppError("CONFLICT", "Only a draft or ready session can be changed");
   }
 
-  if (input.status !== undefined) await broadcastSessionState(sessionId);
+  // Who takes part decides whose readiness is counted, so changing it moves the
+  // board as surely as a lobby opening or closing does.
+  if (input.status !== undefined || input.access !== undefined) {
+    await broadcastSessionState(sessionId);
+  }
 
   const fresh = await prisma.assessmentSession.findUniqueOrThrow({
     where: { id: sessionId },
@@ -563,14 +566,26 @@ export async function startSession(
     );
   }
 
-  const participants = await prisma.assessmentParticipant.findMany({
-    where: { sessionId },
-    select: { isListed: true, readyState: true, connectionState: true },
-  });
-  const counts = countReadiness(participants);
+  const { rosterSource, counts } = await readinessFor(sessionId);
 
-  if (isLive && counts.total === 0) {
-    throw new AppError("VALIDATION_FAILED", "A live session needs a participant list");
+  /**
+   * A session limited to chosen Coders with nobody chosen is refused, in every
+   * mode. It used to quietly mean "everyone enrolled" for Individual and
+   * Untimed sessions, which is the opposite of what "only the Coders I choose"
+   * says — and with no roster, "wait until everyone is ready" had nobody to
+   * wait for and let Start straight through.
+   */
+  if (rosterSource === "NONE") {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      "Choose who takes part first: pick participants, or open the session to everyone enrolled in the module",
+    );
+  }
+  if (counts.total === 0) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      "Nobody is enrolled in this module yet, so there is nobody to take part",
+    );
   }
 
   /**
@@ -579,19 +594,15 @@ export async function startSession(
    * Live always is — everybody shares one clock, so a Coder who is not there
    * when it begins loses that time for good. Every other mode is the
    * Architect's choice, and `requireAllReady` is where they made it.
-   *
-   * `counts` is over the participant list alone. A session with no list has
-   * nothing to be ready, so the gate stands aside rather than blocking a Start
-   * on a roster that does not exist.
    */
-  const gated = (isLive || row.requireAllReady) && counts.total > 0;
+  const gated = isLive || row.requireAllReady;
   const missing = gated && !everyoneReady(counts);
   if (missing && !input.force) {
     return {
       started: false,
       warning: {
         code: "PARTICIPANTS_NOT_READY",
-        message: `Not all selected participants are ready (${counts.ready}/${counts.total} ready, ${counts.offline} offline)`,
+        message: `Not all participants are ready (${counts.ready}/${counts.total} ready, ${counts.offline} offline)`,
         counts,
       },
     };
@@ -792,15 +803,17 @@ export async function listMonitorableSessions(
     throw new AppError("FORBIDDEN", "Only an Architect monitors a session");
   }
 
+  // A lobby that is open is worth watching too: it is where an Architect sees
+  // the room fill up before pressing Start.
   const rows = await prisma.assessmentSession.findMany({
     where: {
-      status: "RUNNING",
+      status: { in: ["READY", "RUNNING"] },
       assessment: { section: { module: { ownerId: actor.id } } },
     },
     // Scheduled sessions first: an open-access session is always running, so
     // sorting by recency alone would bury the exam that started ten minutes
     // ago under every assessment left open all term.
-    orderBy: [{ isOpenAccess: "asc" }, { startedAt: "desc" }],
+    orderBy: [{ isOpenAccess: "asc" }, { status: "desc" }, { startedAt: "desc" }],
     select: {
       id: true,
       name: true,
@@ -820,6 +833,7 @@ export async function listMonitorableSessions(
       // Counted in memory rather than with a filtered `_count`, which Prisma
       // does not offer alongside an unfiltered one on the same relation.
       attempts: { where: { status: "IN_PROGRESS" }, select: { id: true } },
+      participants: { where: { connectionState: "ONLINE" }, select: { userId: true } },
     },
   });
 
@@ -837,37 +851,47 @@ export async function listMonitorableSessions(
     endsAt: row.endsAt?.toISOString() ?? null,
     activeAttempts: row.attempts.length,
     participantCount: row._count.participants,
+    hereCount: row.participants.length,
   }));
 }
 
+/**
+ * The monitor's seed, and its periodic correction.
+ *
+ * The feed carries connection and anti-cheat events as they happen, but not
+ * the attempt itself — its status, its clock, its submission — so the monitor
+ * re-reads this while it is open. `includeEvents` is false on those re-reads:
+ * the feed already holds the history, and re-sending two hundred rows every
+ * few seconds would be paying for nothing.
+ */
 export async function getMonitorSnapshot(
   actor: AuthenticatedUser,
   sessionId: string,
+  options: { includeEvents?: boolean } = {},
 ): Promise<MonitorSnapshot> {
   const { scope, row } = await ownedSession(actor, sessionId);
   const nowMs = Date.now();
+  const includeEvents = options.includeEvents ?? true;
 
-  const [participants, events] = await Promise.all([
-    prisma.assessmentParticipant.findMany({
-      where: { sessionId },
-      select: PARTICIPANT_SELECT,
-      orderBy: { user: { displayName: "asc" } },
-    }),
-    prisma.assessmentEvent.findMany({
-      where: { sessionId },
-      orderBy: { occurredAt: "desc" },
-      take: MONITOR_EVENT_BACKLOG,
-      select: {
-        id: true,
-        sessionId: true,
-        userId: true,
-        attemptId: true,
-        type: true,
-        durationMs: true,
-        occurredAt: true,
-        payloadJson: true,
-      },
-    }),
+  const [readiness, events] = await Promise.all([
+    readinessFor(sessionId),
+    includeEvents
+      ? prisma.assessmentEvent.findMany({
+          where: { sessionId },
+          orderBy: { occurredAt: "desc" },
+          take: MONITOR_EVENT_BACKLOG,
+          select: {
+            id: true,
+            sessionId: true,
+            userId: true,
+            attemptId: true,
+            type: true,
+            durationMs: true,
+            occurredAt: true,
+            payloadJson: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const attempts = await prisma.assessmentAttempt.findMany({
@@ -893,12 +917,18 @@ export async function getMonitorSnapshot(
     if (!latestByUser.has(attempt.userId)) latestByUser.set(attempt.userId, attempt);
   }
 
-  const rows: MonitorParticipantRow[] = participants.map((participant) => {
+  // Everyone the session expects is shown, started or not — "who has not
+  // begun yet" is the first thing an Architect asks of a room — and so is
+  // anyone with an attempt here, expected or not.
+  const shown = readiness.participants.filter(
+    (participant) => participant.onRoster || latestByUser.has(participant.userId),
+  );
+  const rows: MonitorParticipantRow[] = shown.map((participant) => {
     const attempt = latestByUser.get(participant.userId) ?? null;
     const submission = attempt?.submissions[0] ?? null;
     const active = attempt?.status === "IN_PROGRESS";
     return {
-      ...toParticipantView(participant),
+      ...participant,
       attempt:
         attempt === null
           ? null
@@ -924,7 +954,7 @@ export async function getMonitorSnapshot(
 
   return {
     session: await sessionView(row, scope.moduleId),
-    counts: countReadiness(participants),
+    counts: readiness.counts,
     participants: rows,
     events: events.reverse().map(toMonitorEventPayload),
     serverTimeMs: nowMs,

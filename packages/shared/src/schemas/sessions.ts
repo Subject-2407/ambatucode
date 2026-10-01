@@ -11,6 +11,7 @@ import {
   type SubmissionStatus,
 } from "../enums";
 import type { MonitorEventPayload, SessionCounts } from "../realtime-events";
+import type { ParticipantPresence, RosterSource } from "../session-readiness";
 import { durationMinutesSchema } from "./assessments";
 
 /**
@@ -53,8 +54,14 @@ export const createSessionRequestSchema = z.object({
    */
   access: z.enum(SESSION_ACCESS_MODES).optional(),
   closesAt: sessionClosesAtSchema.optional(),
-  /** Hold Start until every listed participant has said they are ready. */
+  /** Hold Start until everyone on the roster has said they are ready. */
   requireAllReady: z.boolean().optional(),
+  /**
+   * Open the lobby straight away, so the Coders it expects can see it and say
+   * they are ready. Without it the session is created as a DRAFT that only the
+   * Architect can see, which is what preparing next week's exam wants.
+   */
+  openLobby: z.boolean().optional(),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
@@ -117,8 +124,9 @@ export const MAX_SESSION_PARTICIPANTS = 1_000;
  * enrollments, because a list that changed under a running session would
  * change who the warning at start was about.
  *
- * An empty SELECTED list clears the list, which reopens an Individual or
- * Untimed session to every enrolled Coder.
+ * An empty SELECTED list clears the list. A session limited to chosen Coders
+ * then has nobody to wait for and cannot be started until someone is chosen or
+ * it is opened to everyone enrolled.
  */
 export const replaceParticipantsRequestSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("ALL_ENROLLED") }),
@@ -133,6 +141,16 @@ export const replaceParticipantsRequestSchema = z.discriminatedUnion("mode", [
   }),
 ]);
 export type ReplaceParticipantsRequest = z.infer<typeof replaceParticipantsRequestSchema>;
+
+/**
+ * `events=false` leaves the event backlog out. The monitor re-reads its
+ * snapshot for attempt state while it is open, and the feed it already holds
+ * makes the backlog redundant after the first read.
+ */
+export const monitorSnapshotQuerySchema = z.object({
+  events: z.enum(["true", "false"]).default("true"),
+});
+export type MonitorSnapshotQuery = z.infer<typeof monitorSnapshotQuerySchema>;
 
 export const startSessionRequestSchema = z.object({
   /** Start even though not every listed participant is ready. */
@@ -163,6 +181,14 @@ export type SessionView = {
   listedParticipantCount: number;
   /** True while a participant list exists and therefore limits who may start. */
   isRestricted: boolean;
+  /** Who the session is waiting for. NONE cannot be started — see `startSession`. */
+  rosterSource: RosterSource;
+  /**
+   * What deleting the session would take with it. Attempts include the no-show
+   * records written when a session ends; submissions are the graded work.
+   */
+  attemptCount: number;
+  submissionCount: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -172,15 +198,21 @@ export type ParticipantView = {
   username: string;
   displayName: string;
   isListed: boolean;
+  /** Expected by this session, so counted on the readiness board. */
+  onRoster: boolean;
   readyState: ReadyState;
+  /** This session's page only. `presence` folds in the rest of the platform. */
   connectionState: ConnectionState;
+  presence: ParticipantPresence;
   lastSeenAt: string | null;
 };
 
 export type ReadinessView = {
   sessionId: string;
   status: AssessmentSessionStatus;
+  rosterSource: RosterSource;
   counts: SessionCounts;
+  /** Everyone on the roster, plus anyone who joined without being expected. */
   participants: ParticipantView[];
 };
 
@@ -255,6 +287,8 @@ export type MonitorableSession = {
   activeAttempts: number;
   /** Everyone with a participant row, listed or admitted. */
   participantCount: number;
+  /** On the session's own page right now — the lobby before the start, the workspace after. */
+  hereCount: number;
 };
 
 /** What the monitor room is seeded with before the live feed takes over. */

@@ -19,4 +19,5 @@ if (process.env.NODE_ENV !== "production") {
 
 export * from "./errors";
 export * from "./json";
+export * from "./session-roster";
 export * from "@prisma/client";

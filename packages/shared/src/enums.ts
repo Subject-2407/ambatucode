@@ -72,6 +72,9 @@ export type AssessmentSessionStatus = (typeof ASSESSMENT_SESSION_STATUSES)[numbe
 export const SESSION_ACCESS_MODES = ["LISTED", "MODULE"] as const;
 export type SessionAccess = (typeof SESSION_ACCESS_MODES)[number];
 
+/** Derived, never stored: see `presenceOf` in session-readiness.ts. */
+export const PARTICIPANT_PRESENCES = ["HERE", "ELSEWHERE", "OFFLINE"] as const;
+
 export const READY_STATES = ["NOT_READY", "READY"] as const;
 export type ReadyState = (typeof READY_STATES)[number];
 

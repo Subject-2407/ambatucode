@@ -89,16 +89,19 @@ export function orderAgenda(items: readonly AgendaItem[]): AgendaItem[] {
 export function classifySession(input: {
   status: AssessmentSessionStatus;
   eligible: boolean;
+  /** Expected in the lobby, so there is a ready button waiting for them. */
+  onRoster?: boolean;
   attempt: { status: string; grantedOutsideSession: boolean } | null;
 }): AgendaKind | null {
-  const { status, eligible, attempt } = input;
+  const { status, eligible, attempt, onRoster = true } = input;
   if (attempt?.status === "IN_PROGRESS") return "CONTINUE";
   if (attempt?.status === "NOT_STARTED" && attempt.grantedOutsideSession) return "RETAKE";
   if (!eligible) return null;
   // Submitted or expired: this session has nothing left for the Coder to do.
   if (attempt !== null && attempt.status !== "NOT_STARTED") return null;
   if (status === "RUNNING") return "OPEN";
-  if (status === "READY") return "WAITING";
+  // A lobby is only worth walking to for a Coder it is waiting for.
+  if (status === "READY") return onRoster ? "WAITING" : null;
   return null;
 }
 
@@ -176,13 +179,14 @@ export async function getCoderAgenda(actor: AuthenticatedUser): Promise<AgendaIt
   const items: AgendaItem[] = [];
   for (const session of sessions) {
     const attempt = session.attempts[0] ?? null;
-    const { eligible } = await sessionEligibility(
+    const { eligible, onRoster } = await sessionEligibility(
       session.id,
       actor.id,
       session.executionMode,
       session.access,
+      session.isOpenAccess,
     );
-    const kind = classifySession({ status: session.status, eligible, attempt });
+    const kind = classifySession({ status: session.status, eligible, onRoster, attempt });
     if (kind === null) continue;
 
     const closing = session.status === "RUNNING" ? session.endsAt : session.closesAt;

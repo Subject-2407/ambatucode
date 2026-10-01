@@ -328,6 +328,7 @@ async function loadCoderView(
       actor.id,
       session.executionMode,
       session.access,
+      session.isOpenAccess,
     );
     // A Coder sees a session they can take part in, or one they already did.
     if (!eligibility.eligible && attempt === null) continue;
@@ -365,6 +366,7 @@ async function loadCoderView(
       openToModule: session.access === "MODULE",
       isGrantedRetake: grantedRetake,
       isListed: eligibility.listed,
+      onRoster: eligibility.onRoster,
     });
   }
 
