@@ -3,9 +3,10 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Box, HStack, Stack, Text, chakra } from "@chakra-ui/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ShieldAlert } from "lucide-react";
+import { ScrollText, ShieldAlert } from "lucide-react";
 import { readinessStateOf, type MonitorParticipantRow } from "@ambatucode/shared";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { IconButton } from "@/components/ui/button";
 import { PixelFrame, type PixelFrameTone } from "@/components/ui/pixel-frame";
 import { describeSubmission } from "@/components/assessment/submission-status";
 import { formatRemaining } from "@/lib/attempt-clock";
@@ -31,6 +32,7 @@ export function ParticipantGrid({
   readAtMs,
   flags,
   emptyMessage,
+  onShowActivity,
 }: {
   rows: MonitorParticipantRow[];
   /** Before the start a card shows readiness; after it, the attempt. */
@@ -39,6 +41,8 @@ export function ParticipantGrid({
   readAtMs: number;
   flags: ReadonlyMap<string, number>;
   emptyMessage: string;
+  /** Opens the activity log narrowed to one Coder. Must be stable; cards are memoized on it. */
+  onShowActivity: (userId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // The card whose code is open. Held here rather than per card so opening one
@@ -89,6 +93,7 @@ export function ParticipantGrid({
                 readAtMs={readAtMs}
                 flags={flags.get(row.userId) ?? 0}
                 onPeek={onPeek}
+                onShowActivity={onShowActivity}
               />
             </Box>
           );
@@ -166,12 +171,14 @@ const ParticipantCard = memo(function ParticipantCard({
   readAtMs,
   flags,
   onPeek,
+  onShowActivity,
 }: {
   row: MonitorParticipantRow;
   started: boolean;
   readAtMs: number;
   flags: number;
   onPeek: (attemptId: string, displayName: string) => void;
+  onShowActivity: (userId: string) => void;
 }) {
   const submission = row.submission;
   const summary = submission ? describeSubmission(submission.status, submission.score) : null;
@@ -212,11 +219,21 @@ const ParticipantCard = memo(function ParticipantCard({
               {row.username}
             </Text>
           </Stack>
-          {started ? (
-            <PresenceBadge presence={row.presence} />
-          ) : (
-            <ReadinessStateBadge state={readinessStateOf(row)} />
-          )}
+          <HStack gap="1" flexShrink="0">
+            {started ? (
+              <PresenceBadge presence={row.presence} />
+            ) : (
+              <ReadinessStateBadge state={readinessStateOf(row)} />
+            )}
+            <IconButton
+              size="xs"
+              aria-label={`Show ${row.displayName}'s activity`}
+              title="Show activity"
+              onClick={() => onShowActivity(row.userId)}
+            >
+              <ScrollText />
+            </IconButton>
+          </HStack>
         </HStack>
 
         <HStack gap="2" wrap="wrap">

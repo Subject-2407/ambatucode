@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import NextLink from "next/link";
-import { Box, Grid, HStack, Stack, Text } from "@chakra-ui/react";
+import { Box, HStack, Stack, Text } from "@chakra-ui/react";
 import { ChevronLeft, CircleDot, Search } from "lucide-react";
 import type { AssessmentEventType, MonitorParticipantRow } from "@ambatucode/shared";
 import { PageContainer, PageHeader } from "@/components/layout/app-shell";
-import { EventStream } from "@/components/monitor/event-stream";
+import { ActivityLog } from "@/components/monitor/activity-log";
 import { ParticipantGrid } from "@/components/monitor/participant-grid";
 import { ReadinessBoard } from "@/components/monitor/readiness-board";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TabBar, TabPanel } from "@/components/ui/tabs";
 import { useMonitorSocket } from "@/hooks/use-monitor-socket";
 import { useMonitorBacklog, useMonitorSnapshot } from "@/hooks/use-sessions";
 import { formatRemaining } from "@/lib/attempt-clock";
@@ -66,6 +67,17 @@ export function MonitorScreen({ sessionId }: { sessionId: string }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<MonitorFilter>("ALL");
   const [sort, setSort] = useState<MonitorSort>("STATUS");
+  /**
+   * Participants and the log each get the full width of the page. Side by
+   * side they were two cramped columns of half a screen each, and the one an
+   * Architect is not reading is the one that does not need the room.
+   */
+  const [tab, setTab] = useState<"participants" | "activity">("participants");
+  const [logUserId, setLogUserId] = useState<string | null>(null);
+  const showActivity = useCallback((userId: string) => {
+    setLogUserId(userId);
+    setTab("activity");
+  }, []);
 
   // A burst of attempt changes — a start, a deadline — is one re-read, not
   // a hundred.
@@ -114,6 +126,14 @@ export function MonitorScreen({ sessionId }: { sessionId: string }) {
     return (userId: string | null) =>
       userId === null ? "Session" : (names.get(userId) ?? "Unknown participant");
   }, [rows]);
+  const logParticipants = useMemo(
+    () =>
+      [...rows]
+        .sort((a, b) => a.displayName.localeCompare(b.displayName))
+        .map((row) => ({ userId: row.userId, displayName: row.displayName })),
+    [rows],
+  );
+  const flagged = useMemo(() => [...flags.values()].reduce((sum, n) => sum + n, 0), [flags]);
 
   if (snapshot.isError) {
     return (
@@ -187,74 +207,103 @@ export function MonitorScreen({ sessionId }: { sessionId: string }) {
           <ReadinessBoard counts={counts} />
         )}
 
-        <Grid templateColumns={{ base: "1fr", xl: "1.4fr 1fr" }} gap="5" alignItems="start">
-          <Panel
-            title={
-              shown.length === rows.length
-                ? `Participants (${String(rows.length)})`
-                : `Participants (${String(shown.length)} of ${String(rows.length)})`
-            }
-          >
-            <Stack gap="3">
-              <HStack gap="2" wrap="wrap" align="end">
-                <HStack gap="2" flex="1" minWidth="12rem">
-                  <Box color="fg.muted" aria-hidden>
-                    <Search size={16} />
+        <Stack
+          gap="4"
+          {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)")}
+          padding="4"
+          minWidth="0"
+        >
+          <TabBar
+            aria-label="Monitor views"
+            controls="monitor-view"
+            value={tab}
+            onValueChange={(value) => setTab(value === "activity" ? "activity" : "participants")}
+            items={[
+              {
+                value: "participants",
+                label: "Participants",
+                count: rows.length,
+              },
+              {
+                value: "activity",
+                label: flagged > 0 ? `Activity · ${String(flagged)} flagged` : "Activity",
+                count: live.events.length,
+              },
+            ]}
+          />
+          <TabPanel id="monitor-view" value={tab} minWidth="0">
+            {tab === "participants" ? (
+              <Stack gap="3">
+                <HStack gap="2" wrap="wrap" align="end">
+                  <HStack gap="2" flex="1" minWidth="12rem">
+                    <Box color="fg.muted" aria-hidden>
+                      <Search size={16} />
+                    </Box>
+                    <Input
+                      value={search}
+                      onChange={(event) => setSearch(event.currentTarget.value)}
+                      placeholder="Search by name"
+                      size="sm"
+                      aria-label="Search participants"
+                    />
+                  </HStack>
+                  <Box minWidth="10rem">
+                    <SelectField
+                      label="Show"
+                      value={filter}
+                      onChange={(value) => setFilter(value as MonitorFilter)}
+                      options={[
+                        { value: "ALL", label: "Everyone" },
+                        { value: "ATTENTION", label: "Needs attention" },
+                        { value: "WORKING", label: "Working" },
+                        { value: "NOT_STARTED", label: "Not started" },
+                        { value: "SUBMITTED", label: "Finished" },
+                      ]}
+                    />
                   </Box>
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.currentTarget.value)}
-                    placeholder="Search by name"
-                    size="sm"
-                    aria-label="Search participants"
-                  />
+                  <Box minWidth="9rem">
+                    <SelectField
+                      label="Sort by"
+                      value={sort}
+                      onChange={(value) => setSort(value as MonitorSort)}
+                      options={[
+                        { value: "STATUS", label: "Status" },
+                        { value: "NAME", label: "Name" },
+                        { value: "TIME_LEFT", label: "Time left" },
+                        { value: "SCORE", label: "Score" },
+                      ]}
+                    />
+                  </Box>
                 </HStack>
-                <Box minWidth="10rem">
-                  <SelectField
-                    label="Show"
-                    value={filter}
-                    onChange={(value) => setFilter(value as MonitorFilter)}
-                    options={[
-                      { value: "ALL", label: "Everyone" },
-                      { value: "ATTENTION", label: "Needs attention" },
-                      { value: "WORKING", label: "Working" },
-                      { value: "NOT_STARTED", label: "Not started" },
-                      { value: "SUBMITTED", label: "Finished" },
-                    ]}
-                  />
-                </Box>
-                <Box minWidth="9rem">
-                  <SelectField
-                    label="Sort by"
-                    value={sort}
-                    onChange={(value) => setSort(value as MonitorSort)}
-                    options={[
-                      { value: "STATUS", label: "Status" },
-                      { value: "NAME", label: "Name" },
-                      { value: "TIME_LEFT", label: "Time left" },
-                      { value: "SCORE", label: "Score" },
-                    ]}
-                  />
-                </Box>
-              </HStack>
-              <ParticipantGrid
-                rows={shown}
-                started={started}
-                readAtMs={readAtMs}
-                flags={flags}
-                emptyMessage={
-                  rows.length === 0
-                    ? "Nobody is expected in this session and nobody has joined it yet."
-                    : "Nobody matches these filters."
-                }
+                {shown.length === rows.length ? null : (
+                  <Text fontSize="xs" color="fg.muted">
+                    Showing {shown.length} of {rows.length}
+                  </Text>
+                )}
+                <ParticipantGrid
+                  rows={shown}
+                  started={started}
+                  readAtMs={readAtMs}
+                  flags={flags}
+                  emptyMessage={
+                    rows.length === 0
+                      ? "Nobody is expected in this session and nobody has joined it yet."
+                      : "Nobody matches these filters."
+                  }
+                  onShowActivity={showActivity}
+                />
+              </Stack>
+            ) : (
+              <ActivityLog
+                events={live.events}
+                participants={logParticipants}
+                nameFor={nameFor}
+                userId={logUserId}
+                onUserIdChange={setLogUserId}
               />
-            </Stack>
-          </Panel>
-
-          <Panel title="Events">
-            <EventStream events={live.events} nameFor={nameFor} />
-          </Panel>
-        </Grid>
+            )}
+          </TabPanel>
+        </Stack>
 
         <Text fontSize="xs" color="fg.muted">
           {view.executionMode === "LIVE"
@@ -289,21 +338,5 @@ function SessionClock({ endsAtMs, live }: { endsAtMs: number; live: boolean }) {
     <Text fontSize="sm" textStyle="data" color={left < 5 * 60_000 ? "fg.warning" : "fg.muted"}>
       {live ? `${formatRemaining(left)} left` : `Closes ${formatDateTime(new Date(endsAtMs))}`}
     </Text>
-  );
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Stack
-      gap="3"
-      {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)")}
-      padding="4"
-      minWidth="0"
-    >
-      <Text textStyle="display" fontSize="sm">
-        {title}
-      </Text>
-      <Box minWidth="0">{children}</Box>
-    </Stack>
   );
 }
