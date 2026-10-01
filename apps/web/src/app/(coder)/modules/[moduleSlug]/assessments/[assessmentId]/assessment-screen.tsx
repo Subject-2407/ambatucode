@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Box, Grid, HStack, List, Stack, Text } from "@chakra-ui/react";
 import { CalendarClock, DoorOpen, Play, RotateCcw, ShieldCheck, Users } from "lucide-react";
@@ -41,6 +41,9 @@ import { routes } from "@/lib/routes";
  * Architect's Start is the beginning and waiting for a second click would only
  * cost the Coder time from a clock that is already running.
  */
+/** How often a Coder waiting for a session re-reads the page. */
+const WAITING_REFRESH_MS = 15_000;
+
 export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderView }) {
   const router = useRouter();
   const [starting, setStarting] = useState<string | null>(null);
@@ -87,6 +90,22 @@ export function AssessmentScreen({ assessment }: { assessment: AssessmentCoderVi
 
   const openAccess = assessment.sessions.find((session) => session.isOpenAccess) ?? null;
   const scheduled = assessment.sessions.filter((session) => !session.isOpenAccess);
+
+  /**
+   * A Coder waiting here for their Architect to open a lobby had no way to
+   * learn that it had opened short of reloading. Nothing pushes a new session
+   * to someone who is not yet in it, so the page re-reads itself while there
+   * is something to wait for — and stops once a session is running, where the
+   * Start button is already in front of them.
+   */
+  const waiting = !assessment.sessions.some((session) => session.status === "RUNNING");
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") router.refresh();
+    }, WAITING_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [router, waiting]);
   const rules = describeAttemptRules({
     executionMode: assessment.executionMode,
     exitPolicy: assessment.exitPolicy,
@@ -379,11 +398,11 @@ function SessionCard({
           </Text>
         ) : null}
 
-        {/* The lobby is for whoever the Architect listed, in any mode. Readiness
-            is counted over that list, so a Coder who walked into an open
-            session would be flipping a switch nothing reads — they get the
-            plain wait instead. */}
-        {waiting && session.isListed ? (
+        {/* The lobby is for whoever the session expects, in any mode: the
+            Coders on its list, or everyone enrolled when it is open to the
+            Module. Anyone else would be pressing a button nothing counts, so
+            they get the plain wait instead. */}
+        {waiting && session.onRoster ? (
           <SessionLobby
             sessionId={session.id}
             requireAllReady={session.requireAllReady}

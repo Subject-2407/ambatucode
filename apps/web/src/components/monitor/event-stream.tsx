@@ -54,6 +54,33 @@ const EVENT_TONE: Readonly<Record<AssessmentEventType, BadgeTone>> = {
   ATTEMPT_RESET: "info",
 };
 
+/**
+ * The label, sharpened by what the event recorded about itself.
+ *
+ * Every way of going away is logged as DISCONNECTED — the SRS treats them
+ * alike, and so does the grade — but an Architect reads "walked to another
+ * page" and "the connection dropped" very differently, and the payload knows
+ * which it was.
+ */
+export function eventLabel(event: MonitorEventPayload): string {
+  if (event.type === "DISCONNECTED") {
+    switch (event.payload.reason) {
+      case "LEFT":
+        return "Left the workspace";
+      case "LOST":
+        return "Connection lost";
+      case "SUPERSEDED":
+        return "Moved to another device";
+      default:
+        return EVENT_LABEL.DISCONNECTED;
+    }
+  }
+  if (event.type === "FOCUS_LOST" && typeof event.payload.count === "number") {
+    return `${EVENT_LABEL.FOCUS_LOST} (${String(event.payload.count)}×)`;
+  }
+  return EVENT_LABEL[event.type];
+}
+
 export function EventStream({
   events,
   nameFor,
@@ -123,7 +150,7 @@ const EventRow = memo(function EventRow({
     >
       <Stack gap="0" minWidth="0">
         <HStack gap="2" minWidth="0">
-          <Badge tone={EVENT_TONE[event.type]}>{EVENT_LABEL[event.type]}</Badge>
+          <Badge tone={EVENT_TONE[event.type]}>{eventLabel(event)}</Badge>
           <Text fontSize="sm" truncate>
             {name}
           </Text>

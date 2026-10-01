@@ -24,10 +24,18 @@ import { getSocket } from "@/lib/socket";
 /** Enough scrollback to explain what just happened, bounded so it cannot grow forever. */
 const MAX_EVENTS = 500;
 
+/**
+ * A participant delta and when this browser received it. The monitor re-reads
+ * its snapshot while it is open, and a delta older than the snapshot it would
+ * be laid over must lose to it — otherwise a disconnect from a minute ago
+ * would keep overriding a Coder who has since come back.
+ */
+export type ParticipantDelta = { payload: MonitorParticipantPayload; receivedAtMs: number };
+
 export type MonitorFeed = {
   sessionState: SessionStatePayload | null;
   /** Keyed by user id; the latest delta for each participant wins. */
-  participants: ReadonlyMap<string, MonitorParticipantPayload>;
+  participants: ReadonlyMap<string, ParticipantDelta>;
   /** Newest first, so the stream reads from the top. */
   events: MonitorEventPayload[];
   connected: boolean;
@@ -41,7 +49,7 @@ export function useMonitorSocket(input: {
   const { sessionId, initialEvents } = input;
 
   const [sessionState, setSessionState] = useState<SessionStatePayload | null>(null);
-  const [participants, setParticipants] = useState<ReadonlyMap<string, MonitorParticipantPayload>>(
+  const [participants, setParticipants] = useState<ReadonlyMap<string, ParticipantDelta>>(
     () => new Map(),
   );
   const [events, setEvents] = useState<MonitorEventPayload[]>(() =>
@@ -65,7 +73,7 @@ export function useMonitorSocket(input: {
   }, [initialEvents]);
 
   /** Arrivals since the last frame. Flushed together, never applied one by one. */
-  const pendingParticipants = useRef<MonitorParticipantPayload[]>([]);
+  const pendingParticipants = useRef<ParticipantDelta[]>([]);
   const pendingEvents = useRef<MonitorEventPayload[]>([]);
   const frame = useRef<number | null>(null);
 
@@ -80,7 +88,7 @@ export function useMonitorSocket(input: {
         pendingParticipants.current = [];
         setParticipants((current) => {
           const next = new Map(current);
-          for (const participant of participantBatch) next.set(participant.userId, participant);
+          for (const delta of participantBatch) next.set(delta.payload.userId, delta);
           return next;
         });
       }
@@ -109,7 +117,7 @@ export function useMonitorSocket(input: {
 
     const onParticipant = (payload: MonitorParticipantPayload) => {
       if (payload.sessionId !== sessionId) return;
-      pendingParticipants.current.push(payload);
+      pendingParticipants.current.push({ payload, receivedAtMs: Date.now() });
       schedule();
     };
 

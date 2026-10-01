@@ -2,30 +2,22 @@
 
 import { useState } from "react";
 import NextLink from "next/link";
-import { Alert, Checkbox, HStack, Stack, Text } from "@chakra-ui/react";
+import { useRouter } from "next/navigation";
+import { HStack, Stack, Text } from "@chakra-ui/react";
 import { ChevronRight, DoorOpen, Plus } from "lucide-react";
-import {
-  createSessionRequestSchema,
-  sessionRuleProblem,
-  type AssessmentArchitectView,
-  type AssessmentSessionStatus,
-  type ExecutionMode,
-  type SessionAccess,
-  type SessionView,
-} from "@ambatucode/shared";
-import { Badge, type BadgeTone } from "@/components/ui/badge";
+import type { AssessmentArchitectView, SessionView } from "@ambatucode/shared";
+import { SessionSettingsDialog } from "@/components/sessions/session-settings-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { TextField } from "@/components/ui/input";
-import { Modal } from "@/components/ui/modal";
-import { SelectField } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toaster } from "@/components/ui/toaster";
-import { validationWarning } from "@/components/test-scripts/validation";
-import { useCreateSession, useSessions } from "@/hooks/use-sessions";
-import { isApiError } from "@/lib/api-client";
+import { useSessions } from "@/hooks/use-sessions";
 import { routes } from "@/lib/routes";
-import { describeSessionRules } from "@/lib/session-copy";
+import {
+  SESSION_STATUS_LABEL,
+  SESSION_STATUS_TONE,
+  describeSessionRules,
+} from "@/lib/session-copy";
 import { pixelSkin } from "@/theme/pixel";
 
 /**
@@ -39,6 +31,7 @@ import { pixelSkin } from "@/theme/pixel";
 export function SessionsPanel({ assessment }: { assessment: AssessmentArchitectView }) {
   const { data, isPending, isError } = useSessions(assessment.id);
   const [creating, setCreating] = useState(false);
+  const router = useRouter();
 
   return (
     <Stack gap="3">
@@ -80,7 +73,14 @@ export function SessionsPanel({ assessment }: { assessment: AssessmentArchitectV
       )}
 
       {creating ? (
-        <CreateSessionDialog assessment={assessment} onClose={() => setCreating(false)} />
+        <SessionSettingsDialog
+          mode="create"
+          assessment={assessment}
+          onClose={() => setCreating(false)}
+          // Straight to the new session: who takes part, the lobby and Start
+          // all live there, and they are the next thing to do.
+          onCreated={(session) => router.push(routes.manageSession(session.id))}
+        />
       ) : null}
     </Stack>
   );
@@ -124,14 +124,6 @@ function OpenAccessRow({ sessionId }: { sessionId: string }) {
   );
 }
 
-const STATUS_TONE: Readonly<Record<AssessmentSessionStatus, BadgeTone>> = {
-  DRAFT: "neutral",
-  READY: "info",
-  RUNNING: "success",
-  ENDED: "neutral",
-  CANCELLED: "warning",
-};
-
 function SessionRow({ session }: { session: SessionView }) {
   return (
     <HStack
@@ -154,203 +146,17 @@ function SessionRow({ session }: { session: SessionView }) {
           </Text>
         </Stack>
         <HStack gap="3" flexShrink="0">
-          <Badge tone={STATUS_TONE[session.status]}>{session.status}</Badge>
+          {session.submissionCount > 0 ? (
+            <Text fontSize="xs" color="fg.muted" textStyle="data">
+              {session.submissionCount} submitted
+            </Text>
+          ) : null}
+          <Badge tone={SESSION_STATUS_TONE[session.status]}>
+            {SESSION_STATUS_LABEL[session.status]}
+          </Badge>
           <ChevronRight size={16} aria-hidden />
         </HStack>
       </NextLink>
     </HStack>
-  );
-}
-
-/**
- * Timing is inherited from the Assessment and may be overridden here, which is
- * what makes a session reusable: the same problem runs 30 minutes live for one
- * class and 45 minutes individual for another without either edit touching the
- * Assessment itself.
- */
-function CreateSessionDialog({
-  assessment,
-  onClose,
-}: {
-  assessment: AssessmentArchitectView;
-  onClose: () => void;
-}) {
-  const create = useCreateSession(assessment.id);
-  const timed = assessment.timeMode === "TIMED";
-
-  const [name, setName] = useState("");
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>(
-    assessment.executionMode ?? "INDIVIDUAL",
-  );
-  const [durationMinutes, setDurationMinutes] = useState(String(assessment.durationMinutes ?? 30));
-  const [access, setAccess] = useState<SessionAccess>("LISTED");
-  /** `datetime-local`, so an empty string is "no closing time". */
-  const [closesAt, setClosesAt] = useState("");
-  const [requireAllReady, setRequireAllReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Advisory only: a session may still be created with unchecked scripts.
-  const scriptWarning = validationWarning(assessment.testScripts);
-
-  // Live sets both of these by itself: its shared clock is the closing time,
-  // and starting it before everyone is there costs those Coders their minutes.
-  const isLive = timed && executionMode === "LIVE";
-
-  async function save() {
-    setError(null);
-
-    const closing = closesAt === "" ? null : new Date(closesAt).toISOString();
-    const rule = sessionRuleProblem({
-      executionMode: timed ? executionMode : null,
-      closesAt: isLive ? null : closing,
-      requireAllReady,
-      nowMs: Date.now(),
-    });
-    if (rule) {
-      setError(rule);
-      return;
-    }
-
-    const parsed = createSessionRequestSchema.safeParse({
-      name,
-      // An untimed Assessment only ever produces untimed sessions, and the
-      // server refuses timing sent for one rather than ignoring it.
-      ...(timed ? { executionMode, durationMinutes: Number.parseInt(durationMinutes, 10) } : {}),
-      access,
-      closesAt: isLive ? null : closing,
-      requireAllReady: isLive || requireAllReady,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Check the fields above.");
-      return;
-    }
-
-    try {
-      await create.mutateAsync(parsed.data);
-      toaster.success({ title: "Session created" });
-      onClose();
-    } catch (saveError) {
-      setError(isApiError(saveError) ? saveError.userMessage : "Could not create the session.");
-    }
-  }
-
-  return (
-    <Modal
-      open
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-      size="sm"
-      title="New session"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={create.isPending}>
-            Cancel
-          </Button>
-          <Button onClick={() => void save()} loading={create.isPending}>
-            Create
-          </Button>
-        </>
-      }
-    >
-      <Stack gap="4">
-        {scriptWarning === null ? null : (
-          <Alert.Root status="warning" size="sm">
-            <Alert.Indicator />
-            <Alert.Content>
-              <Alert.Description>
-                {scriptWarning} Check them in the Test Scripts tab before Coders take this session.
-              </Alert.Description>
-            </Alert.Content>
-          </Alert.Root>
-        )}
-        <TextField
-          label="Name"
-          value={name}
-          onChange={(event) => setName(event.currentTarget.value)}
-          placeholder="Class A, Tuesday lab"
-          autoFocus
-        />
-
-        <SelectField
-          label="Who may join"
-          value={access}
-          onChange={(value) => setAccess(value as SessionAccess)}
-          options={[
-            { value: "LISTED", label: "Only the participants I list" },
-            { value: "MODULE", label: "Anyone enrolled in the module" },
-          ]}
-          helperText={
-            access === "MODULE"
-              ? "Every approved Coder in the module can join once you start it. A participant list only sets whose readiness is counted."
-              : "Only Coders on the participant list can see this session. An empty list allows every enrolled Coder."
-          }
-        />
-
-        {timed ? (
-          <>
-            <SelectField
-              label="Execution mode"
-              value={executionMode}
-              onChange={(value) => setExecutionMode(value as ExecutionMode)}
-              options={[
-                { value: "INDIVIDUAL", label: "Individual" },
-                { value: "LIVE", label: "Live" },
-              ]}
-            />
-            <TextField
-              label="Duration (minutes)"
-              type="number"
-              min={1}
-              max={600}
-              value={durationMinutes}
-              onChange={(event) => setDurationMinutes(event.currentTarget.value)}
-              helperText="Defaults to the assessment's own duration."
-            />
-          </>
-        ) : (
-          <Text fontSize="sm" color="fg.muted">
-            This assessment is untimed, so the session has no timer.
-          </Text>
-        )}
-
-        {/* Live has both of these settled already: the shared countdown is the
-            closing time, and starting it early spends everybody's minutes. */}
-        {isLive ? (
-          <Text fontSize="sm" color="fg.muted">
-            A live session closes when its shared timer runs out, and waits for everyone on the list
-            before it starts.
-          </Text>
-        ) : (
-          <>
-            <TextField
-              label="Closes at (optional)"
-              type="datetime-local"
-              value={closesAt}
-              onChange={(event) => setClosesAt(event.currentTarget.value)}
-              helperText="After this moment nobody may join or submit, and anyone still working is submitted automatically. Leave it empty to close the session by hand."
-            />
-
-            <Checkbox.Root
-              checked={requireAllReady}
-              onCheckedChange={(details) => setRequireAllReady(details.checked === true)}
-            >
-              <Checkbox.HiddenInput />
-              <Checkbox.Control />
-              <Checkbox.Label>Wait until every listed participant is ready</Checkbox.Label>
-            </Checkbox.Root>
-            <Text fontSize="xs" color="fg.muted" mt="-2">
-              Coders mark themselves ready on the assessment page. This has no effect without a
-              participant list.
-            </Text>
-          </>
-        )}
-
-        {error === null ? null : (
-          <Text fontSize="sm" color="fg.error" aria-live="polite">
-            {error}
-          </Text>
-        )}
-      </Stack>
-    </Modal>
   );
 }

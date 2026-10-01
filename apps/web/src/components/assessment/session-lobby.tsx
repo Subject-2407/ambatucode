@@ -2,9 +2,11 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { HStack, Stack, Switch, Text } from "@chakra-ui/react";
+import { HStack, Stack, Text } from "@chakra-ui/react";
+import { Check, Hand } from "lucide-react";
 import type { AttemptView } from "@ambatucode/shared";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { toaster } from "@/components/ui/toaster";
 import { useSessionLobby } from "@/hooks/use-session-lobby";
 import { apiClient, isApiError } from "@/lib/api-client";
@@ -14,9 +16,9 @@ import { routes } from "@/lib/routes";
  * The waiting room for a scheduled Assessment Session.
  *
  * The Coder declares themselves ready; the Architect watches the count and
- * decides when to start. It was a Live-only screen, which left readiness
- * half-built: an Architect could set a session to wait for the room and the
- * Coders in an Individual session had no way to say they were in it.
+ * decides when to start. Readiness is a button, not a switch: it is the one
+ * thing this card asks the Coder to do, and a small toggle at the edge of a
+ * card was easy to read past as decoration.
  *
  * What happens when the Architect starts it depends on the mode, and the
  * difference matters. A Live session's global clock is already running by then,
@@ -66,6 +68,18 @@ export function SessionLobby({
 
   const lobby = useSessionLobby({ sessionId, enabled: true, onStarted });
 
+  // The Architect closed the lobby again, or deleted the session, while this
+  // Coder was waiting in it. Saying so beats a button that the server refuses.
+  if (lobby.status === "DRAFT" || lobby.status === "CANCELLED") {
+    return (
+      <Text fontSize="sm" color="fg.muted" borderTopWidth="1px" borderColor="border.default" pt="3">
+        {lobby.status === "DRAFT"
+          ? "Your Architect closed the lobby for now. It reopens here when they are ready."
+          : "This session was withdrawn by your Architect."}
+      </Text>
+    );
+  }
+
   return (
     <Stack
       gap="3"
@@ -75,18 +89,31 @@ export function SessionLobby({
       aria-busy={entering || undefined}
     >
       <HStack justify="space-between" gap="3" wrap="wrap">
-        <Switch.Root
-          checked={lobby.ready}
-          onCheckedChange={(details) => lobby.setReady(details.checked)}
-          colorPalette="accent"
-          disabled={entering}
-        >
-          <Switch.HiddenInput />
-          <Switch.Control>
-            <Switch.Thumb />
-          </Switch.Control>
-          <Switch.Label>I am ready</Switch.Label>
-        </Switch.Root>
+        {lobby.ready ? (
+          <HStack gap="2" wrap="wrap">
+            <Badge tone="success" aria-live="polite">
+              <Check size={12} aria-hidden /> You are ready
+            </Badge>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => lobby.setReady(false)}
+              disabled={entering}
+            >
+              Not ready yet
+            </Button>
+          </HStack>
+        ) : (
+          <Button
+            size="sm"
+            onClick={() => lobby.setReady(true)}
+            loading={lobby.saving}
+            disabled={entering}
+          >
+            <Hand aria-hidden />
+            I&apos;m ready
+          </Button>
+        )}
 
         {lobby.counts === null ? null : (
           // One count, not three. Who is offline versus merely not ready is
@@ -101,26 +128,30 @@ export function SessionLobby({
         )}
       </HStack>
 
-      <Text fontSize="sm" color="fg.muted" aria-live="polite">
+      <Text
+        fontSize="sm"
+        color={lobby.problem === null ? "fg.muted" : "fg.error"}
+        aria-live="polite"
+      >
         {entering
           ? "Opening your workspace…"
           : lobby.problem !== null
             ? lobby.problem
-            : requireAllReady
+            : lobby.ready
               ? autoEnter
-                ? "Mark yourself ready and stay on this page."
-                : "Mark yourself ready. A Start button appears when the session opens."
-              : autoEnter
-                ? "Stay on this page until your Architect starts the session."
-                : "A Start button appears when the session opens. Your timer begins when you press it."}
+                ? "Stay on this page. Your workspace opens by itself when the session starts."
+                : "Stay on this page. A Start button appears here when the session opens."
+              : requireAllReady || autoEnter
+                ? "Press I'm ready once you are at your machine. The session waits for everyone."
+                : "Press I'm ready once you are at your machine, so your Architect knows you are here."}
       </Text>
 
       {/*
         Readiness is per visit, not per account: it says "I am sitting here
-        now", which a reloaded page cannot vouch for.
+        now", which a reloaded or abandoned page cannot vouch for.
       */}
       <Text fontSize="xs" color="fg.subtle">
-        If you reload this page you will need to mark yourself ready again.
+        Leaving or reloading this page takes your ready back.
       </Text>
     </Stack>
   );

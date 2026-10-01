@@ -15,7 +15,8 @@ export const metadata: Metadata = { title: "Monitor" };
 export const dynamic = "force-dynamic";
 
 /**
- * Every session of this Architect's that is running right now.
+ * Every session of this Architect's that is running right now, and every
+ * lobby that is open and filling up.
  *
  * It exists because the monitor had no front door. Reaching one meant
  * remembering which module held which assessment and opening its sessions
@@ -30,25 +31,44 @@ export const dynamic = "force-dynamic";
 export default async function MonitorIndexPage() {
   const session = await requirePageSession("ARCHITECT");
   const sessions = await listMonitorableSessions(session.user);
+  const running = sessions.filter((entry) => entry.status === "RUNNING");
+  const lobbies = sessions.filter((entry) => entry.status === "READY");
 
   return (
     <PageContainer backdrop="circuit">
       <PageHeader
         title="Monitor"
-        description="Sessions running right now, across every module you own."
+        description="Sessions running right now, and lobbies waiting to start, across every module you own."
       />
 
       {sessions.length === 0 ? (
         <EmptyState
           sprite="bars"
           title="Nothing is running"
-          description="Start a session, or switch an assessment to open access, and it appears here while Coders are in it."
+          description="Open a session's lobby or start it, or switch an assessment to open access, and it appears here."
         />
       ) : (
-        <Stack gap="2">
-          {sessions.map((entry) => (
-            <MonitorRow key={entry.sessionId} entry={entry} />
-          ))}
+        <Stack gap="6">
+          {running.length === 0 ? null : (
+            <Stack gap="2">
+              <Text textStyle="display" fontSize="sm">
+                Running now
+              </Text>
+              {running.map((entry) => (
+                <MonitorRow key={entry.sessionId} entry={entry} />
+              ))}
+            </Stack>
+          )}
+          {lobbies.length === 0 ? null : (
+            <Stack gap="2">
+              <Text textStyle="display" fontSize="sm">
+                Lobby open
+              </Text>
+              {lobbies.map((entry) => (
+                <MonitorRow key={entry.sessionId} entry={entry} />
+              ))}
+            </Stack>
+          )}
         </Stack>
       )}
     </PageContainer>
@@ -56,13 +76,13 @@ export default async function MonitorIndexPage() {
 }
 
 function MonitorRow({ entry }: { entry: MonitorableSession }) {
+  // A lobby has nothing to monitor yet; its readiness lives on session control.
+  const lobby = entry.status === "READY";
   return (
     <Box
       asChild
       {...pixelSkin(
-        entry.isOpenAccess
-          ? "var(--amb-colors-accent-solid)"
-          : "var(--amb-colors-border-default)",
+        entry.isOpenAccess ? "var(--amb-colors-accent-solid)" : "var(--amb-colors-border-default)",
         "var(--amb-colors-bg-surface)",
         2,
       )}
@@ -70,7 +90,13 @@ function MonitorRow({ entry }: { entry: MonitorableSession }) {
       py="3"
       _hover={{ _before: { background: "var(--amb-colors-bg-subtle)" } }}
     >
-      <NextLink href={routes.manageSessionMonitor(entry.sessionId)}>
+      <NextLink
+        href={
+          lobby
+            ? routes.manageSession(entry.sessionId)
+            : routes.manageSessionMonitor(entry.sessionId)
+        }
+      >
         <Flex align="center" justify="space-between" gap="4" wrap="wrap">
           <Stack gap="1" minWidth="0" flex="1">
             <HStack gap="2" minWidth="0" wrap="wrap">
@@ -95,18 +121,22 @@ function MonitorRow({ entry }: { entry: MonitorableSession }) {
                 : entry.executionMode === "LIVE"
                   ? " · Live"
                   : " · Individual"}
-              {entry.endsAt === null
-                ? ""
-                : ` · closes ${new Date(entry.endsAt).toLocaleString()}`}
+              {entry.endsAt === null ? "" : ` · closes ${new Date(entry.endsAt).toLocaleString()}`}
             </Text>
           </Stack>
 
           {/* The number that decides whether this row is worth opening: how
               many Coders are mid-attempt, not how many were invited. */}
           <HStack gap="3" flexShrink="0">
-            <Badge tone={entry.activeAttempts > 0 ? "warning" : "neutral"}>
-              {entry.activeAttempts} working
-            </Badge>
+            {lobby ? (
+              <Badge tone={entry.hereCount > 0 ? "info" : "neutral"}>
+                {entry.hereCount} in the lobby
+              </Badge>
+            ) : (
+              <Badge tone={entry.activeAttempts > 0 ? "warning" : "neutral"}>
+                {entry.activeAttempts} working
+              </Badge>
+            )}
             <HStack gap="1" color="fg.muted">
               <Users size={14} aria-hidden />
               <Text fontSize="xs" textStyle="data">

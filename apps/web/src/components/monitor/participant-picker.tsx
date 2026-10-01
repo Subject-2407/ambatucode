@@ -1,46 +1,53 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Box, Checkbox, HStack, Input, Stack, Text } from "@chakra-ui/react";
+import { Box, Checkbox, HStack, Stack, Text } from "@chakra-ui/react";
 import { Search } from "lucide-react";
-import type { EnrollmentView, ParticipantView } from "@ambatucode/shared";
+import type { ParticipantView } from "@ambatucode/shared";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toaster } from "@/components/ui/toaster";
+import { useApprovedCoders } from "@/hooks/use-session-candidates";
 import { useReplaceParticipants } from "@/hooks/use-sessions";
 import { isApiError } from "@/lib/api-client";
 
 /**
- * Who takes part in this session.
+ * Choosing the Coders a session limited to a list is for.
  *
- * The list is a snapshot, not a live query: `ALL_ENROLLED` copies the Module's
- * approved Coders at the moment it is saved and does not follow later
- * enrolments. That is deliberate — a list that changed under a running session
- * would change who the warning at Start was about.
+ * The selection is a draft until it is saved, and says so. It used to be
+ * seeded once, at mount — usually before the current list had arrived — so it
+ * opened empty, and saving it as found wiped the list. It now follows the
+ * saved list until the Architect changes something, and stops following it
+ * from then on so a refresh cannot undo their edits.
  *
- * Clearing the list is a real choice, not an empty state. A session with no
- * list is open to every enrolled Coder, which is what an ordinary Individual
- * or Untimed assessment usually wants.
+ * A session open to everyone enrolled has no list to choose, so this is only
+ * shown for one limited to chosen Coders.
  */
 export function ParticipantPicker({
   sessionId,
-  enrolled,
+  moduleId,
   participants,
-  disabled,
 }: {
   sessionId: string;
-  /** Approved enrolments in the Module this session belongs to. */
-  enrolled: EnrollmentView[];
-  /** The session's current list, used to seed the selection. */
+  moduleId: string;
+  /** The session's participants as last read, used to seed the selection. */
   participants: ParticipantView[];
-  /** True once the session has started, when the list is fixed. */
-  disabled: boolean;
 }) {
   const replace = useReplaceParticipants(sessionId);
+  const coders = useApprovedCoders(moduleId);
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<ReadonlySet<string>>(
-    () => new Set(participants.filter((participant) => participant.isListed).map((p) => p.userId)),
-  );
 
+  const saved = useMemo(
+    () => new Set(participants.filter((participant) => participant.isListed).map((p) => p.userId)),
+    [participants],
+  );
+  /** Null while following the saved list; the Architect's edits once they make one. */
+  const [draft, setDraft] = useState<ReadonlySet<string> | null>(null);
+  const selected = draft ?? saved;
+  const dirty = draft !== null;
+
+  const enrolled = useMemo(() => coders.data ?? [], [coders.data]);
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (needle === "") return enrolled;
@@ -51,36 +58,42 @@ export function ParticipantPicker({
     );
   }, [enrolled, search]);
 
-  function toggle(userId: string, checked: boolean) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (checked) next.add(userId);
-      else next.delete(userId);
-      return next;
-    });
+  function change(next: ReadonlySet<string>) {
+    setDraft(next);
   }
 
-  async function save(mode: "ALL_ENROLLED" | "SELECTED") {
+  function toggle(userId: string, checked: boolean) {
+    const next = new Set(selected);
+    if (checked) next.add(userId);
+    else next.delete(userId);
+    change(next);
+  }
+
+  /** Adds what the search shows, so "search, select all" picks out a group. */
+  function selectShown() {
+    const next = new Set(selected);
+    for (const enrollment of filtered) next.add(enrollment.coder.id);
+    change(next);
+  }
+
+  async function save() {
     try {
-      await replace.mutateAsync(
-        mode === "ALL_ENROLLED"
-          ? { mode: "ALL_ENROLLED" }
-          : { mode: "SELECTED", userIds: [...selected] },
-      );
-      if (mode === "ALL_ENROLLED") setSelected(new Set(enrolled.map((e) => e.coder.id)));
-      toaster.success({ title: "Participant list saved" });
+      await replace.mutateAsync({ mode: "SELECTED", userIds: [...selected] });
+      setDraft(null);
+      toaster.success({ title: "Participants saved" });
     } catch (error) {
       toaster.error({
-        title: "Could not save the participant list",
+        title: "Could not save the participants",
         description: isApiError(error) ? error.userMessage : undefined,
       });
     }
   }
 
-  if (disabled) {
+  if (coders.isPending) return <Skeleton height="12rem" />;
+  if (coders.isError) {
     return (
-      <Text fontSize="sm" color="fg.muted">
-        The participant list is fixed once a session starts.
+      <Text fontSize="sm" color="fg.error">
+        The enrolled Coders could not be loaded.
       </Text>
     );
   }
@@ -88,19 +101,14 @@ export function ParticipantPicker({
   return (
     <Stack gap="4">
       <HStack gap="2" wrap="wrap">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void save("ALL_ENROLLED")}
-          loading={replace.isPending}
-        >
-          Select everyone enrolled
+        <Button size="sm" variant="outline" onClick={selectShown} disabled={filtered.length === 0}>
+          {search.trim() === "" ? "Select all" : "Select these"}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
-          Clear selection
+        <Button size="sm" variant="ghost" onClick={() => change(new Set())}>
+          Clear
         </Button>
         <Text fontSize="xs" color="fg.muted">
-          {selected.size} of {enrolled.length} selected
+          {selected.size} of {enrolled.length} chosen
         </Text>
       </HStack>
 
@@ -111,9 +119,9 @@ export function ParticipantPicker({
         <Input
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
-          placeholder="Search participants"
+          placeholder="Search by name or username"
           size="sm"
-          aria-label="Search participants"
+          aria-label="Search enrolled Coders"
         />
       </HStack>
 
@@ -121,8 +129,8 @@ export function ParticipantPicker({
         {filtered.length === 0 ? (
           <Text fontSize="sm" color="fg.muted">
             {enrolled.length === 0
-              ? "No approved enrolments in this module yet."
-              : "No participant matches that search."}
+              ? "No approved enrollments in this module yet."
+              : "Nobody matches that search."}
           </Text>
         ) : (
           filtered.map((enrollment) => (
@@ -145,13 +153,20 @@ export function ParticipantPicker({
         )}
       </Stack>
 
-      <HStack gap="3">
-        <Button size="sm" onClick={() => void save("SELECTED")} loading={replace.isPending}>
-          Save participant list
+      <HStack gap="3" wrap="wrap">
+        <Button size="sm" onClick={() => void save()} loading={replace.isPending} disabled={!dirty}>
+          Save participants
         </Button>
-        <Text fontSize="xs" color="fg.muted">
-          Saving an empty list opens the session to every enrolled Coder.
-        </Text>
+        {dirty ? (
+          <>
+            <Text fontSize="xs" color="fg.warning">
+              Unsaved changes
+            </Text>
+            <Button size="xs" variant="ghost" onClick={() => setDraft(null)}>
+              Undo
+            </Button>
+          </>
+        ) : null}
       </HStack>
     </Stack>
   );
