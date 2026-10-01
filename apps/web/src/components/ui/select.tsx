@@ -6,9 +6,17 @@ import { pixelFieldStyles } from "./input";
 
 export type SelectOption = { value: string; label: string };
 
+/**
+ * A labelled run of options, drawn as a native `<optgroup>`. For lists whose
+ * entries only make sense under a heading — a session named "Tuesday lab" means
+ * nothing until you can see which assessment it belongs to.
+ */
+export type SelectOptionGroup = { label: string; options: readonly SelectOption[] };
+
 export type SelectFieldProps = {
   label: string;
-  options: readonly SelectOption[];
+  /** Options and groups may be mixed, so an "All" entry can sit above the groups. */
+  options: readonly (SelectOption | SelectOptionGroup)[];
   value?: string;
   defaultValue?: string;
   onChange?: (value: string) => void;
@@ -65,11 +73,22 @@ export const SelectField = forwardRef<HTMLSelectElement, SelectFieldProps>(funct
           placeholder={placeholder}
           onChange={(event) => onChange?.(event.currentTarget.value)}
         >
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
+          {options.map((option, index) =>
+            "options" in option ? (
+              // Keyed by position: two groups may carry the same heading.
+              <optgroup key={`group-${index}`} label={option.label}>
+                {option.options.map((inner) => (
+                  <option key={inner.value} value={inner.value}>
+                    {inner.label}
+                  </option>
+                ))}
+              </optgroup>
+            ) : (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ),
+          )}
         </NativeSelect.Field>
         <NativeSelect.Indicator />
       </NativeSelect.Root>

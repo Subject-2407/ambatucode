@@ -2,8 +2,11 @@ import "server-only";
 import { Prisma, prisma } from "@ambatucode/db";
 import {
   AppError,
+  resolveGradeSort,
   type AuthenticatedUser,
+  type GradeRecordPage,
   type GradeRecordQuery,
+  type GradeRecordSummary,
   type GradeRecordView,
   type Paginated,
   type ResetAttemptRequest,
@@ -21,6 +24,14 @@ import {
 } from "../serializers/grades";
 import { announceEvents, recordEvent } from "./assessment-events";
 import { scopeForAssessment, scopeForAttempt } from "./assessment-scope";
+import {
+  RECORD_GROUP_BY,
+  RECORD_SUMMARY_AGGREGATES,
+  RECORD_SUMMARY_COLUMNS,
+  gradeRecordOrderBy,
+  toGradeRecordSummary,
+  type GradeSummaryRow,
+} from "./grades-query";
 import { invalidateLeaderboards } from "./leaderboards";
 import { clearOfficialAttempts, setOfficialAttempt } from "./official-score";
 
@@ -47,8 +58,8 @@ type RecordScope =
  * The filter half of the record query, as SQL fragments.
  *
  * Raw rather than Prisma's query builder because the page is a page of
- * *groups* — distinct `(sessionId, userId)` pairs ordered by the Coder's name —
- * and `LIMIT`/`OFFSET` has to apply after the grouping. Prisma's `distinct`
+ * *groups* — distinct `(sessionId, userId)` pairs in the order the reader
+ * chose — and `LIMIT`/`OFFSET` has to apply after the grouping. Prisma's `distinct`
  * does not compose with pagination in a way that can be relied on, and a
  * half-correct page of grades is worse than a slower one.
  *
@@ -107,10 +118,11 @@ function recordFrom(filters: Prisma.Sql[]): Prisma.Sql {
 }
 
 /**
- * Ordered by the Coder's name first, because an Architect reading grades is
- * looking someone up. Section and assessment order keep one Coder's rows in
- * the order the module presents them, and the session id is the final
- * tiebreak so the page is stable across requests.
+ * Ordered by the Coder's display name unless the reader chose otherwise,
+ * because an Architect reading grades is looking someone up — and by the name
+ * the table shows, not the username beneath it. The order itself comes from
+ * the allow-list in `grades-query.ts`, which ends on the group key so the page
+ * is stable across requests.
  */
 async function recordKeyPage(
   scope: RecordScope,
@@ -118,23 +130,32 @@ async function recordKeyPage(
   page: { skip: number; take: number },
 ): Promise<RecordKey[]> {
   const from = recordFrom(recordFilters(scope, query));
+  const { sort, order } = resolveGradeSort(query);
   return prisma.$queryRaw<RecordKey[]>(Prisma.sql`
     SELECT a."sessionId", a."userId"
     ${from}
-    GROUP BY a."sessionId", a."userId", u."username", sec."orderIndex", asm."orderIndex"
-    ORDER BY u."username" ASC, sec."orderIndex" ASC, asm."orderIndex" ASC, a."sessionId" ASC
+    GROUP BY ${RECORD_GROUP_BY}
+    ORDER BY ${gradeRecordOrderBy(sort, order)}
     LIMIT ${page.take} OFFSET ${page.skip}
   `);
 }
 
-async function recordCount(scope: RecordScope, query: GradeRecordQuery): Promise<number> {
+/**
+ * The count and the summary in one pass over the filtered set. The page's
+ * `total` is the summary's record count, so the two can never disagree about
+ * how many records the filters matched.
+ */
+async function recordSummary(
+  scope: RecordScope,
+  query: GradeRecordQuery,
+): Promise<GradeRecordSummary> {
   const from = recordFrom(recordFilters(scope, query));
-  const rows = await prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
-    SELECT COUNT(*)::bigint AS count FROM (
-      SELECT 1 ${from} GROUP BY a."sessionId", a."userId"
+  const rows = await prisma.$queryRaw<GradeSummaryRow[]>(Prisma.sql`
+    SELECT ${RECORD_SUMMARY_AGGREGATES} FROM (
+      SELECT ${RECORD_SUMMARY_COLUMNS} ${from} GROUP BY a."sessionId", a."userId"
     ) grouped
   `);
-  return Number(rows[0]?.count ?? 0n);
+  return toGradeRecordSummary(rows[0]);
 }
 
 const RECORD_ATTEMPT_SELECT = {
@@ -250,7 +271,7 @@ export async function listModuleGrades(
   actor: AuthenticatedUser,
   moduleId: string,
   query: GradeRecordQuery,
-): Promise<Paginated<GradeRecordView>> {
+): Promise<GradeRecordPage> {
   const scope: RecordScope = { kind: "MODULE", moduleId };
   await scopeFor(actor, scope);
   return listGrades(scope, query);
@@ -260,26 +281,24 @@ export async function listAssessmentGrades(
   actor: AuthenticatedUser,
   assessmentId: string,
   query: GradeRecordQuery,
-): Promise<Paginated<GradeRecordView>> {
+): Promise<GradeRecordPage> {
   const scope: RecordScope = { kind: "ASSESSMENT", assessmentId };
   await scopeFor(actor, scope);
   return listGrades(scope, query);
 }
 
-async function listGrades(
-  scope: RecordScope,
-  query: GradeRecordQuery,
-): Promise<Paginated<GradeRecordView>> {
+async function listGrades(scope: RecordScope, query: GradeRecordQuery): Promise<GradeRecordPage> {
   const skip = (query.page - 1) * query.pageSize;
-  const [total, keys] = await Promise.all([
-    recordCount(scope, query),
+  const [summary, keys] = await Promise.all([
+    recordSummary(scope, query),
     recordKeyPage(scope, query, { skip, take: query.pageSize }),
   ]);
   return {
     items: await loadRecords(keys),
-    total,
+    total: summary.records,
     page: query.page,
     pageSize: query.pageSize,
+    summary,
   };
 }
 
@@ -288,7 +307,8 @@ async function listGrades(
  *
  * The export streams rather than buffering, so the keys have to arrive in
  * pages too — holding every grade in a module in memory to write a file is
- * exactly what streaming is meant to avoid.
+ * exactly what streaming is meant to avoid. Those pages are `OFFSET` pages,
+ * which is why the export query carries no sort: see `gradeExportQuerySchema`.
  */
 export async function* iterateGradeRecords(
   actor: AuthenticatedUser,

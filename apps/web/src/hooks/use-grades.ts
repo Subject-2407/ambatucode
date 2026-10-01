@@ -2,8 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  GradeRecordPage,
   GradeRecordQuery,
-  GradeRecordView,
   Paginated,
   ResetAttemptRequest,
   ResetAttemptResponse,
@@ -39,6 +39,8 @@ function toQueryParams(query: GradeRecordQuery) {
     sessionId: query.sessionId,
     status: query.status,
     resetOnly: query.resetOnly === true ? "true" : undefined,
+    sort: query.sort,
+    order: query.order,
   };
 }
 
@@ -47,7 +49,7 @@ export function useModuleGrades(moduleId: string, query: GradeRecordQuery, enabl
     enabled: enabled && moduleId !== "",
     queryKey: gradeKeys.module(moduleId, query),
     queryFn: ({ signal }) =>
-      apiClient.get<Paginated<GradeRecordView>>(`/api/modules/${moduleId}/grades`, {
+      apiClient.get<GradeRecordPage>(`/api/modules/${moduleId}/grades`, {
         signal,
         query: toQueryParams(query),
       }),
@@ -66,7 +68,7 @@ export function useAssessmentGrades(
     enabled: enabled && assessmentId !== "",
     queryKey: gradeKeys.assessment(assessmentId, query),
     queryFn: ({ signal }) =>
-      apiClient.get<Paginated<GradeRecordView>>(`/api/assessments/${assessmentId}/grades`, {
+      apiClient.get<GradeRecordPage>(`/api/assessments/${assessmentId}/grades`, {
         signal,
         query: toQueryParams(query),
       }),

@@ -5,6 +5,8 @@ import { Download } from "lucide-react";
 import type { GradeRecordQuery } from "@ambatucode/shared";
 import { Button } from "@/components/ui/button";
 import { toaster } from "@/components/ui/toaster";
+import { isApiError } from "@/lib/api-client";
+import { exportErrorFrom } from "./export-error";
 
 /**
  * Downloads the module's grades as CSV.
@@ -46,7 +48,8 @@ export function ExportGradesButton({
       const response = await fetch(`/api/modules/${moduleId}/grades/export?${params.toString()}`);
       if (!response.ok) {
         // The error envelope is JSON even though the success path is a file.
-        throw new Error(String(response.status));
+        const body: unknown = await response.json().catch(() => null);
+        throw exportErrorFrom(response.status, body);
       }
 
       const chunks: BlobPart[] = [];
@@ -78,10 +81,14 @@ export function ExportGradesButton({
       URL.revokeObjectURL(url);
 
       toaster.success({ title: "Grades exported" });
-    } catch {
+    } catch (error) {
       toaster.error({
         title: "Could not export the grades",
-        description: "Check that you still own this module, then try again.",
+        // Anything that is not a refusal failed in transit: the request never
+        // landed, or the stream broke part way through the file.
+        description: isApiError(error)
+          ? error.userMessage
+          : "The download was interrupted. Check your connection and try again.",
       });
     } finally {
       setBusy(false);
