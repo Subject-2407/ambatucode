@@ -43,6 +43,7 @@ export function SectionList({
   selectedId,
   onSelect,
   onAdd,
+  adding = false,
   isStale = false,
 }: {
   moduleId: string;
@@ -50,6 +51,8 @@ export function SectionList({
   selectedId: string | null;
   onSelect: (sectionId: string) => void;
   onAdd: () => void;
+  /** True while a new section is being created, so a second click does not race it. */
+  adding?: boolean;
   /** True while the tree is being refetched, which makes it unsafe to drag. */
   isStale?: boolean;
 }) {
@@ -100,12 +103,21 @@ export function SectionList({
     }
   }
 
+  /**
+   * Both dialogs stay open until the server answers. Closing first threw away
+   * the loading state the dialog exists to show, and a failed rename took the
+   * typed title with it.
+   */
   async function rename(section: ModuleSectionView, title: string) {
-    setRenaming(null);
-    if (title === section.title) return;
+    if (updateSection.isPending) return;
+    if (title === section.title) {
+      setRenaming(null);
+      return;
+    }
 
     try {
       await updateSection.mutateAsync({ sectionId: section.id, changes: { title } });
+      setRenaming(null);
     } catch (error) {
       toaster.error({
         title: "Could not rename the section",
@@ -115,7 +127,6 @@ export function SectionList({
   }
 
   async function remove(section: ModuleSectionView) {
-    setDeleting(null);
     try {
       await deleteSection.mutateAsync(section.id);
       toaster.success({ title: `Deleted ${section.title}` });
@@ -124,6 +135,8 @@ export function SectionList({
         title: "Could not delete the section",
         description: isApiError(error) ? error.userMessage : undefined,
       });
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -135,7 +148,7 @@ export function SectionList({
         <Text textStyle="display" fontSize="sm">
           Sections
         </Text>
-        <Button size="xs" variant="ghost" onClick={onAdd}>
+        <Button size="xs" variant="ghost" onClick={onAdd} loading={adding}>
           <Plus aria-hidden />
           Add section
         </Button>
@@ -186,7 +199,7 @@ export function SectionList({
       <ConfirmDialog
         open={deleting !== null}
         title="Delete section"
-        description={`"${deleting?.title ?? ""}" and every material inside it will be removed.`}
+        description={`"${deleting?.title ?? ""}" and every material and assessment inside it will be removed. A section holding an assessment with submissions cannot be deleted.`}
         confirmLabel="Delete"
         destructive
         loading={deleteSection.isPending}

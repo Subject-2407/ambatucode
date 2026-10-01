@@ -338,14 +338,14 @@ export type CoderSessionEntry = {
   closesAt: string | null;
   /** Readiness holds this session's Start until everyone listed has said so. */
   requireAllReady: boolean;
-  /**
-   * True when the Architect named this Coder on the participant list.
-   *
-   * Readiness is counted over that list alone, so only a listed Coder has a
-   * readiness to declare — one who walked into an open session would be
-   * toggling a switch the board does not read.
-   */
+  /** True when the Architect named this Coder on the participant list. */
   isListed: boolean;
+  /**
+   * True when the session expects this Coder — named on its list, or enrolled
+   * in a Module the session is open to. Only they have a readiness to declare:
+   * anyone else would be pressing a button the board does not read.
+   */
+  onRoster: boolean;
 };
 
 export type AssessmentCoderView = AssessmentWorkspaceView & {

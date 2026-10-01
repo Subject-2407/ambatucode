@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import type { RosterEntry } from "@ambatucode/db";
 import { toValidationView } from "./test-script-validation";
 import {
   AppError,
@@ -7,6 +8,8 @@ import {
   attemptRemainingMs,
   attemptDeadlineMs,
   isLanguage,
+  presenceOf,
+  rosterSource,
   starterCodeMapSchema,
   type AntiCheatConfig,
   type AssessmentArchitectView,
@@ -296,7 +299,12 @@ export type SessionRow = {
 
 export function toSessionView(
   row: SessionRow,
-  context: { moduleId: string; listedParticipantCount: number },
+  context: {
+    moduleId: string;
+    listedParticipantCount: number;
+    attemptCount: number;
+    submissionCount: number;
+  },
 ): SessionView {
   return {
     id: row.id,
@@ -317,29 +325,36 @@ export function toSessionView(
     // A session opened to the whole Module is never restricted, however long
     // its participant list is — the list is then a roll call, not a gate.
     isRestricted: row.access === "LISTED" && context.listedParticipantCount > 0,
+    rosterSource: rosterSource({
+      access: row.access,
+      isOpenAccess: row.isOpenAccess,
+      listedCount: context.listedParticipantCount,
+    }),
+    attemptCount: context.attemptCount,
+    submissionCount: context.submissionCount,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-export type ParticipantRow = {
-  userId: string;
-  isListed: boolean;
-  readyState: ParticipantView["readyState"];
-  connectionState: ParticipantView["connectionState"];
-  lastSeenAt: Date | null;
-  user: { username: string; displayName: string };
-};
-
-export function toParticipantView(row: ParticipantRow): ParticipantView {
+/** A roster entry, from `loadSessionRoster`, with platform presence looked up. */
+export function toParticipantView(
+  entry: RosterEntry,
+  online: ReadonlySet<string>,
+): ParticipantView {
   return {
-    userId: row.userId,
-    username: row.user.username,
-    displayName: row.user.displayName,
-    isListed: row.isListed,
-    readyState: row.readyState,
-    connectionState: row.connectionState,
-    lastSeenAt: iso(row.lastSeenAt),
+    userId: entry.userId,
+    username: entry.username,
+    displayName: entry.displayName,
+    isListed: entry.isListed,
+    onRoster: entry.onRoster,
+    readyState: entry.readyState,
+    connectionState: entry.connectionState,
+    presence: presenceOf({
+      connectionState: entry.connectionState,
+      platformOnline: online.has(entry.userId),
+    }),
+    lastSeenAt: iso(entry.lastSeenAt),
   };
 }
 

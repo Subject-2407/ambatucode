@@ -1,8 +1,10 @@
-import { prisma, type Prisma } from "@ambatucode/db";
+import { loadSessionRoster, prisma, type Prisma } from "@ambatucode/db";
 import {
   errorFields,
   CLIENT_EVENTS,
   DISCONNECT_DEBOUNCE_MS,
+  PRESENCE_REFRESH_MS,
+  PRESENCE_STALE_MS,
   SERVER_EVENTS,
   TICK_INTERVAL_MS,
   antiCheatConfigSchema,
@@ -12,14 +14,17 @@ import {
   attemptDeadlineMs,
   attemptDraftPayloadSchema,
   attemptJoinPayloadSchema,
+  attemptLeavePayloadSchema,
   attemptReadyPayloadSchema,
   attemptRemainingMs,
   countReadiness,
   focusLossResponse,
   isAttemptOverdue,
   isLanguage,
+  lobbyLeavePayloadSchema,
   monitorJoinPayloadSchema,
   pauseAttemptClock,
+  presenceOf,
   resumeAttemptClock,
   rooms,
   type Ack,
@@ -29,8 +34,10 @@ import {
   type AttemptClock,
   type AttemptStatePayload,
   type MonitorEventPayload,
+  type MonitorParticipantPayload,
 } from "@ambatucode/shared";
 import type { DeadlineScheduler } from "./deadlines";
+import type { PlatformPresence } from "./presence";
 import type { AppServer, AppSocket } from "./server";
 import type { WebClient } from "./web-client";
 import { log } from "./logger";
@@ -53,7 +60,15 @@ export type AssessmentRuntime = {
 };
 
 type Bound = { attemptId: string; sessionId: string; userId: string };
-type Lobby = { sessionId: string; userId: string };
+/**
+ * A socket that is on a session's page without a live attempt bound to it: a
+ * Coder waiting in the lobby, or looking at an attempt that has closed. Only
+ * presence hangs off it — leaving logs nothing and pauses nothing.
+ *
+ * `attemptId` is set for the closed-attempt case, so the workspace's own
+ * `attempt:leave` can find it.
+ */
+type Lobby = { sessionId: string; userId: string; attemptId?: string };
 
 const ATTEMPT_SELECT = {
   id: true,
@@ -137,15 +152,22 @@ function isIndividualTimed(row: AttemptRow): boolean {
   return row.session.executionMode === "INDIVIDUAL" && row.session.durationMinutes !== null;
 }
 
+/** Platform presence changes are gathered for this long before the boards hear of them. */
+const PRESENCE_FLUSH_MS = 1_000;
+
 export function createAssessmentRuntime(options: {
   io: AppServer;
   deadlines: DeadlineScheduler;
   web: WebClient;
+  presence: PlatformPresence;
   disconnectDebounceMs?: number;
   tickIntervalMs?: number;
+  presenceRefreshMs?: number;
+  presenceStaleMs?: number;
 }): AssessmentRuntime {
-  const { io, deadlines, web } = options;
+  const { io, deadlines, web, presence } = options;
   const debounceMs = options.disconnectDebounceMs ?? DISCONNECT_DEBOUNCE_MS;
+  const staleMs = options.presenceStaleMs ?? PRESENCE_STALE_MS;
 
   /** socket id -> the attempt it is working on. */
   const boundAttempts = new Map<string, Bound>();
@@ -157,6 +179,49 @@ export function createAssessmentRuntime(options: {
   const superseded = new Set<string>();
   /** lobby key -> a lobby disconnect waiting out its debounce window. */
   const pendingLobbyDisconnects = new Map<string, NodeJS.Timeout>();
+  /** Coders who came online or went offline since the last presence flush. */
+  const presenceChanges = new Set<string>();
+  let presenceFlush: NodeJS.Timeout | null = null;
+
+  const lobbyKey = (sessionId: string, userId: string) => `${sessionId}:${userId}`;
+
+  /**
+   * socket id -> page -> how many times it was opened, and up to which opening
+   * it has been left.
+   *
+   * A join waits on the database before it binds anything, and a leave does
+   * not wait at all. A page opened and closed within a few milliseconds — a
+   * misclick, React's development double-mount — therefore delivers a leave
+   * that finds nothing bound yet, followed by a join that binds a page nobody
+   * is on. Numbering the openings lets that join see it has already been left.
+   */
+  const visits = new Map<string, Map<string, { opened: number; left: number }>>();
+
+  function openVisit(socketId: string, page: string): number {
+    const pages = visits.get(socketId) ?? new Map<string, { opened: number; left: number }>();
+    visits.set(socketId, pages);
+    const visit = pages.get(page) ?? { opened: 0, left: 0 };
+    visit.opened += 1;
+    pages.set(page, visit);
+    return visit.opened;
+  }
+
+  function leaveVisit(socketId: string, page: string): void {
+    const visit = visits.get(socketId)?.get(page);
+    if (visit) visit.left = visit.opened;
+  }
+
+  function visitIsOpen(socketId: string, page: string, opening: number): boolean {
+    const visit = visits.get(socketId)?.get(page);
+    return visit === undefined || opening > visit.left;
+  }
+
+  function cancelLobbySettle(sessionId: string, userId: string): void {
+    const key = lobbyKey(sessionId, userId);
+    const pending = pendingLobbyDisconnects.get(key);
+    if (pending) clearTimeout(pending);
+    pendingLobbyDisconnects.delete(key);
+  }
 
   // --- Shared helpers ---------------------------------------------------------
 
@@ -195,42 +260,81 @@ export function createAssessmentRuntime(options: {
     return event;
   }
 
-  async function announceParticipant(sessionId: string, userId: string): Promise<void> {
-    const participant = await prisma.assessmentParticipant.findUnique({
-      where: { sessionId_userId: { sessionId, userId } },
-      select: {
-        readyState: true,
-        connectionState: true,
-        lastSeenAt: true,
-        user: { select: { displayName: true } },
-      },
+  /**
+   * One participant as the monitor shows them. A Coder the session expects but
+   * who has never opened it has no participant row yet; they still have a
+   * presence worth reporting, so they are described from their user row.
+   */
+  async function participantPayload(
+    sessionId: string,
+    userId: string,
+  ): Promise<MonitorParticipantPayload | null> {
+    const [participant, online] = await Promise.all([
+      prisma.assessmentParticipant.findUnique({
+        where: { sessionId_userId: { sessionId, userId } },
+        select: {
+          readyState: true,
+          connectionState: true,
+          lastSeenAt: true,
+          user: { select: { displayName: true } },
+        },
+      }),
+      presence.online([userId]),
+    ]);
+    const platformOnline = online.has(userId);
+    if (participant) {
+      return {
+        sessionId,
+        userId,
+        displayName: participant.user.displayName,
+        readyState: participant.readyState,
+        connectionState: participant.connectionState,
+        presence: presenceOf({ connectionState: participant.connectionState, platformOnline }),
+        lastSeenAt: participant.lastSeenAt?.getTime() ?? null,
+      };
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true },
     });
-    if (!participant) return;
-    io.to(rooms.monitor(sessionId)).emit(SERVER_EVENTS.MONITOR_PARTICIPANT, {
+    if (!user) return null;
+    return {
       sessionId,
       userId,
-      displayName: participant.user.displayName,
-      readyState: participant.readyState,
-      connectionState: participant.connectionState,
-      lastSeenAt: participant.lastSeenAt?.getTime() ?? null,
-    });
+      displayName: user.displayName,
+      readyState: "NOT_READY",
+      connectionState: "OFFLINE",
+      presence: platformOnline ? "ELSEWHERE" : "OFFLINE",
+      lastSeenAt: null,
+    };
+  }
+
+  async function announceParticipant(sessionId: string, userId: string): Promise<void> {
+    const payload = await participantPayload(sessionId, userId);
+    if (payload) io.to(rooms.monitor(sessionId)).emit(SERVER_EVENTS.MONITOR_PARTICIPANT, payload);
   }
 
   async function announceSessionState(sessionId: string): Promise<void> {
-    const session = await prisma.assessmentSession.findUnique({
-      where: { id: sessionId },
-      select: {
-        status: true,
-        endsAt: true,
-        participants: { select: { isListed: true, readyState: true, connectionState: true } },
-      },
-    });
-    if (!session) return;
+    const [roster, session] = await Promise.all([
+      loadSessionRoster(prisma, sessionId),
+      prisma.assessmentSession.findUnique({ where: { id: sessionId }, select: { endsAt: true } }),
+    ]);
+    if (!roster || !session) return;
+    const online = await presence.online(roster.entries.map((entry) => entry.userId));
     const payload = {
       sessionId,
-      status: session.status,
+      status: roster.status,
       endsAt: session.endsAt?.getTime() ?? null,
-      counts: countReadiness(session.participants),
+      counts: countReadiness(
+        roster.entries.map((entry) => ({
+          onRoster: entry.onRoster,
+          readyState: entry.readyState,
+          presence: presenceOf({
+            connectionState: entry.connectionState,
+            platformOnline: online.has(entry.userId),
+          }),
+        })),
+      ),
     };
     io.to(rooms.session(sessionId))
       .to(rooms.monitor(sessionId))
@@ -331,6 +435,8 @@ export function createAssessmentRuntime(options: {
     if (!parsed.success) return ack?.(reject("VALIDATION_FAILED", "Invalid join payload"));
     const { userId, role } = socket.data;
     if (role !== "CODER") return ack?.(reject("FORBIDDEN", "Only a Coder joins an attempt"));
+    const page = `attempt:${parsed.data.attemptId}`;
+    const opening = openVisit(socket.id, page);
 
     const row = await loadOwnAttempt(parsed.data.attemptId, userId);
     if (!row) return ack?.(reject("NOT_FOUND", "Attempt not found"));
@@ -351,12 +457,21 @@ export function createAssessmentRuntime(options: {
     });
     const previousSocketId = participant.activeConnectionId;
 
+    // The workspace was closed again while this join waited on the database.
+    // Checked before anything pending is touched: a departure already waiting
+    // out its debounce belongs to that close and must be left to land.
+    if (!visitIsOpen(socket.id, page, opening)) return ack?.({ ok: true });
+
     const pending = pendingDisconnects.get(row.id);
     const isRefresh = pending !== undefined;
     if (pending) {
       clearTimeout(pending.timer);
       pendingDisconnects.delete(row.id);
     }
+    // A Live start takes the Coder from the lobby straight into the workspace on
+    // the same socket. The lobby's departure, still waiting out its debounce,
+    // would otherwise land after this join and mark them offline mid-exam.
+    cancelLobbySettle(sessionId, userId);
 
     // Claimed before the previous socket is dropped, so its disconnect handler
     // sees it no longer holds the attempt and logs and pauses nothing.
@@ -371,7 +486,16 @@ export function createAssessmentRuntime(options: {
       socket.id,
       (lobbies.get(socket.id) ?? []).filter((lobby) => lobby.sessionId !== sessionId),
     );
-    boundAttempts.set(socket.id, { attemptId: row.id, sessionId, userId });
+    const bound = { attemptId: row.id, sessionId, userId };
+    boundAttempts.set(socket.id, bound);
+
+    // Closed during the claim itself. The row is this socket's now, so it is
+    // released the way any departure is.
+    if (!visitIsOpen(socket.id, page, opening)) {
+      boundAttempts.delete(socket.id);
+      scheduleAttemptSettle(bound, socket.id, Date.now(), "LEFT");
+      return ack?.({ ok: true });
+    }
     await socket.join(rooms.session(sessionId));
 
     if (!isRefresh) {
@@ -424,7 +548,12 @@ export function createAssessmentRuntime(options: {
    * against the participant row, not memory: if any socket — on this instance
    * or another — has claimed the attempt since, this disconnect is stale.
    */
-  async function settleDisconnect(bound: Bound, socketId: string, atMs: number): Promise<void> {
+  async function settleDisconnect(
+    bound: Bound,
+    socketId: string,
+    atMs: number,
+    reason: "LEFT" | null,
+  ): Promise<void> {
     if (pendingDisconnects.get(bound.attemptId)?.socketId === socketId) {
       pendingDisconnects.delete(bound.attemptId);
     }
@@ -435,12 +564,16 @@ export function createAssessmentRuntime(options: {
     });
     if (released.count === 0) return;
 
+    // DISCONNECTED either way, since the SRS treats every way of going away
+    // alike. A Coder who walked to another page is still told apart from one
+    // whose connection dropped, because the Architect reads the two differently.
     await record({
       sessionId: bound.sessionId,
       type: "DISCONNECTED",
       userId: bound.userId,
       attemptId: bound.attemptId,
       occurredAt: new Date(atMs),
+      ...(reason === null ? {} : { payload: { reason } }),
     });
 
     const row = await loadOwnAttempt(bound.attemptId, bound.userId);
@@ -450,15 +583,53 @@ export function createAssessmentRuntime(options: {
     await announceParticipant(bound.sessionId, bound.userId);
   }
 
+  /**
+   * Leaving the lobby takes the readiness with it.
+   *
+   * READY means "I am sitting here now". A Coder who walked away from the
+   * lobby is not, and if the flag outlived them the board would show a room
+   * readier than it is the moment they wandered back to the dashboard.
+   */
   async function settleLobbyDisconnect(lobby: Lobby, socketId: string): Promise<void> {
-    pendingLobbyDisconnects.delete(`${lobby.sessionId}:${lobby.userId}`);
+    pendingLobbyDisconnects.delete(lobbyKey(lobby.sessionId, lobby.userId));
+    // The same socket may since have bound this session's attempt. The row is
+    // the workspace's now, and the workspace decides when it is released.
+    const rebound = boundAttempts.get(socketId);
+    if (rebound?.sessionId === lobby.sessionId) return;
+
     const released = await prisma.assessmentParticipant.updateMany({
       where: { sessionId: lobby.sessionId, userId: lobby.userId, activeConnectionId: socketId },
-      data: { activeConnectionId: null, connectionState: "OFFLINE" },
+      data: { activeConnectionId: null, connectionState: "OFFLINE", readyState: "NOT_READY" },
     });
     if (released.count === 0) return;
     await announceParticipant(lobby.sessionId, lobby.userId);
     await announceSessionState(lobby.sessionId);
+  }
+
+  function scheduleAttemptSettle(
+    bound: Bound,
+    socketId: string,
+    atMs: number,
+    reason: "LEFT" | null,
+  ): void {
+    const existing = pendingDisconnects.get(bound.attemptId);
+    if (existing) clearTimeout(existing.timer);
+    const timer = setTimeout(() => {
+      void settleDisconnect(bound, socketId, atMs, reason).catch((error: unknown) => {
+        log.error("attempt.disconnect_settle_failed", errorFields(error));
+      });
+    }, debounceMs);
+    pendingDisconnects.set(bound.attemptId, { timer, socketId });
+  }
+
+  function scheduleLobbySettle(lobby: Lobby, socketId: string): void {
+    cancelLobbySettle(lobby.sessionId, lobby.userId);
+    const timer = setTimeout(() => {
+      void settleLobbyDisconnect(lobby, socketId).catch((error: unknown) => {
+        log.error("lobby.disconnect_settle_failed", errorFields(error));
+      });
+    }, debounceMs);
+    pendingLobbyDisconnects.set(lobbyKey(lobby.sessionId, lobby.userId), timer);
   }
 
   function handleDisconnect(socket: AppSocket): void {
@@ -469,77 +640,182 @@ export function createAssessmentRuntime(options: {
     // A socket dropped for a takeover was never "gone": the handover was logged
     // when it happened, and a debounce here would race the new connection's.
     const wasSuperseded = superseded.delete(socket.id);
-    if (bound && !wasSuperseded) {
-      const existing = pendingDisconnects.get(bound.attemptId);
-      if (existing) clearTimeout(existing.timer);
-      const timer = setTimeout(() => {
-        void settleDisconnect(bound, socket.id, atMs).catch((error: unknown) => {
-          log.error("attempt.disconnect_settle_failed", errorFields(error));
-        });
-      }, debounceMs);
-      pendingDisconnects.set(bound.attemptId, { timer, socketId: socket.id });
+    if (bound && !wasSuperseded) scheduleAttemptSettle(bound, socket.id, atMs, null);
+
+    for (const lobby of lobbies.get(socket.id) ?? []) scheduleLobbySettle(lobby, socket.id);
+    lobbies.delete(socket.id);
+    visits.delete(socket.id);
+
+    const { userId, role } = socket.data;
+    void presence
+      .remove(userId, socket.id)
+      .then((wasLast) => {
+        if (wasLast && role === "CODER") queuePresenceChange(userId);
+      })
+      .catch((error: unknown) => log.error("presence.remove_failed", errorFields(error)));
+  }
+
+  // --- attempt:leave / lobby:leave --------------------------------------------
+
+  /**
+   * The page closed but the socket did not: a navigation inside the app.
+   *
+   * Handled exactly as a disconnect would be, debounced so that React
+   * remounting the workspace or a quick Back-and-forward is not an event,
+   * because to the Architect and to an Individual clock it is the same thing:
+   * the Coder is no longer working on this attempt. RESUME promises the clock
+   * pauses while they are away; before this it only paused when the whole
+   * browser went away.
+   *
+   * Synchronous, on purpose. A leave followed at once by a join on the same
+   * socket must have registered its pending departure before the join looks for
+   * one. socket.io calls each handler as its event arrives, so a handler with no
+   * await in it has finished before the next one starts.
+   */
+  function handleAttemptLeave(socket: AppSocket, raw: unknown, ack?: AckFn): void {
+    const parsed = attemptLeavePayloadSchema.safeParse(raw);
+    if (!parsed.success) return ack?.(reject("VALIDATION_FAILED", "Invalid leave payload"));
+    const { attemptId } = parsed.data;
+    leaveVisit(socket.id, `attempt:${attemptId}`);
+
+    const bound = boundAttempts.get(socket.id);
+    if (bound?.attemptId === attemptId) {
+      boundAttempts.delete(socket.id);
+      scheduleAttemptSettle(bound, socket.id, Date.now(), "LEFT");
+      return ack?.({ ok: true });
     }
 
-    for (const lobby of lobbies.get(socket.id) ?? []) {
-      const key = `${lobby.sessionId}:${lobby.userId}`;
-      const timer = setTimeout(() => {
-        void settleLobbyDisconnect(lobby, socket.id).catch((error: unknown) => {
-          log.error("lobby.disconnect_settle_failed", errorFields(error));
-        });
-      }, debounceMs);
-      pendingLobbyDisconnects.set(key, timer);
+    // A closed attempt's workspace, which only ever held presence.
+    const joined = lobbies.get(socket.id) ?? [];
+    for (const lobby of joined) {
+      if (lobby.attemptId === attemptId) scheduleLobbySettle(lobby, socket.id);
     }
-    lobbies.delete(socket.id);
+    lobbies.set(
+      socket.id,
+      joined.filter((lobby) => lobby.attemptId !== attemptId),
+    );
+    return ack?.({ ok: true });
+  }
+
+  function handleLobbyLeave(socket: AppSocket, raw: unknown, ack?: AckFn): void {
+    const parsed = lobbyLeavePayloadSchema.safeParse(raw);
+    if (!parsed.success) return ack?.(reject("VALIDATION_FAILED", "Invalid leave payload"));
+    const { sessionId } = parsed.data;
+    leaveVisit(socket.id, `lobby:${sessionId}`);
+
+    const joined = lobbies.get(socket.id) ?? [];
+    for (const lobby of joined) {
+      if (lobby.sessionId === sessionId && lobby.attemptId === undefined) {
+        scheduleLobbySettle(lobby, socket.id);
+      }
+    }
+    lobbies.set(
+      socket.id,
+      joined.filter((lobby) => lobby.sessionId !== sessionId || lobby.attemptId !== undefined),
+    );
+    return ack?.({ ok: true });
   }
 
   // --- attempt:ready ----------------------------------------------------------
 
   /**
-   * Readiness before a session starts. Only a listed participant has a
-   * readiness to report, and toggling it is also what puts them in the lobby,
-   * so the board can tell "ready" from "not ready" from "not here".
+   * Whether this Coder is someone the session expects — the same rule as
+   * `loadSessionRoster`, asked about one person rather than read for all.
+   */
+  async function isOnRoster(
+    session: { access: "LISTED" | "MODULE"; isOpenAccess: boolean; moduleId: string },
+    sessionId: string,
+    userId: string,
+  ): Promise<boolean> {
+    if (session.isOpenAccess) return false;
+    if (session.access === "MODULE") {
+      const enrolled = await prisma.moduleEnrollment.count({
+        where: { moduleId: session.moduleId, userId, status: "APPROVED" },
+      });
+      return enrolled > 0;
+    }
+    const own = await prisma.assessmentParticipant.findUnique({
+      where: { sessionId_userId: { sessionId, userId } },
+      select: { isListed: true },
+    });
+    return own?.isListed === true;
+  }
+
+  /**
+   * Readiness in the lobby. Opening the lobby sends this too, carrying
+   * whatever the Coder last said, which is what marks them as here: without it
+   * a Coder waiting quietly would look exactly like one who never turned up.
+   *
+   * The lobby is the session's READY status. A DRAFT is the Architect's alone
+   * — Coders cannot see it — and a session that has started has no lobby left.
    */
   async function handleReady(socket: AppSocket, raw: unknown, ack?: AckFn): Promise<void> {
     const parsed = attemptReadyPayloadSchema.safeParse(raw);
     if (!parsed.success) return ack?.(reject("VALIDATION_FAILED", "Invalid ready payload"));
     const { sessionId, ready } = parsed.data;
-    const { userId } = socket.data;
+    const { userId, role } = socket.data;
+    if (role !== "CODER") return ack?.(reject("FORBIDDEN", "Only a Coder takes part"));
+    const page = `lobby:${sessionId}`;
+    const opening = openVisit(socket.id, page);
 
-    const [session, participant] = await Promise.all([
-      prisma.assessmentSession.findUnique({ where: { id: sessionId }, select: { status: true } }),
-      prisma.assessmentParticipant.findUnique({
-        where: { sessionId_userId: { sessionId, userId } },
-        select: { isListed: true },
-      }),
-    ]);
-    if (!session || !participant?.isListed) {
-      return ack?.(reject("FORBIDDEN", "You are not on this session's participant list"));
-    }
-    if (session.status !== "DRAFT" && session.status !== "READY") {
-      return ack?.(
-        reject("SESSION_NOT_RUNNING", "Readiness can only change before the session starts"),
-      );
-    }
-
-    const pending = pendingLobbyDisconnects.get(`${sessionId}:${userId}`);
-    if (pending) {
-      clearTimeout(pending);
-      pendingLobbyDisconnects.delete(`${sessionId}:${userId}`);
-    }
-
-    await prisma.assessmentParticipant.update({
-      where: { sessionId_userId: { sessionId, userId } },
-      data: {
-        readyState: ready ? "READY" : "NOT_READY",
-        connectionState: "ONLINE",
-        activeConnectionId: socket.id,
-        lastSeenAt: new Date(),
+    const session = await prisma.assessmentSession.findUnique({
+      where: { id: sessionId },
+      select: {
+        status: true,
+        access: true,
+        isOpenAccess: true,
+        assessment: { select: { section: { select: { moduleId: true } } } },
       },
     });
+    const expected =
+      session !== null &&
+      (await isOnRoster(
+        {
+          access: session.access,
+          isOpenAccess: session.isOpenAccess,
+          moduleId: session.assessment.section.moduleId,
+        },
+        sessionId,
+        userId,
+      ));
+    if (!session || !expected) {
+      return ack?.(reject("FORBIDDEN", "This session is not expecting you"));
+    }
+    if (session.status === "DRAFT") {
+      return ack?.(reject("CONFLICT", "The lobby is not open yet"));
+    }
+    if (session.status !== "READY") {
+      return ack?.(reject("SESSION_NOT_RUNNING", "This session has already started"));
+    }
 
+    // The lobby was closed again while this waited on the database.
+    if (!visitIsOpen(socket.id, page, opening)) return ack?.({ ok: true });
+    cancelLobbySettle(sessionId, userId);
+
+    // A Coder expected because the session is open to their Module has no row
+    // until now. It is created unlisted, so it never turns the session into a
+    // restricted one.
+    const state = {
+      readyState: ready ? ("READY" as const) : ("NOT_READY" as const),
+      connectionState: "ONLINE" as const,
+      activeConnectionId: socket.id,
+      lastSeenAt: new Date(),
+    };
+    await prisma.assessmentParticipant.upsert({
+      where: { sessionId_userId: { sessionId, userId } },
+      create: { sessionId, userId, isListed: false, ...state },
+      update: state,
+    });
+
+    const lobby = { sessionId, userId };
+    // Closed during the claim itself: released like any other departure.
+    if (!visitIsOpen(socket.id, page, opening)) {
+      scheduleLobbySettle(lobby, socket.id);
+      return ack?.({ ok: true });
+    }
     const joined = lobbies.get(socket.id) ?? [];
-    if (!joined.some((lobby) => lobby.sessionId === sessionId)) {
-      lobbies.set(socket.id, [...joined, { sessionId, userId }]);
+    if (!joined.some((entry) => entry.sessionId === sessionId && entry.attemptId === undefined)) {
+      lobbies.set(socket.id, [...joined, lobby]);
     }
     await socket.join(rooms.session(sessionId));
 
@@ -740,11 +1016,169 @@ export function createAssessmentRuntime(options: {
           clearTimeout(pending.timer);
           pendingDisconnects.delete(message.attemptId);
         }
-        for (const socketId of socketsBoundTo(message.attemptId)) boundAttempts.delete(socketId);
+        // The Coder is usually still looking at the closed workspace. They stay
+        // present on its page, but as presence only: leaving it now logs no
+        // disconnect and pauses no clock. Dropping the binding outright, as
+        // this used to, left the row ONLINE until the end of time.
+        for (const socketId of socketsBoundTo(message.attemptId)) {
+          const bound = boundAttempts.get(socketId);
+          boundAttempts.delete(socketId);
+          if (!bound) continue;
+          lobbies.set(socketId, [
+            ...(lobbies.get(socketId) ?? []),
+            { sessionId: bound.sessionId, userId: bound.userId, attemptId: bound.attemptId },
+          ]);
+        }
         await sendState(rooms.user(message.userId), message.attemptId, message.userId);
         return;
       }
     }
+  }
+
+  // --- Platform presence ------------------------------------------------------
+
+  function queuePresenceChange(userId: string): void {
+    presenceChanges.add(userId);
+    presenceFlush ??= setTimeout(() => {
+      presenceFlush = null;
+      void flushPresenceChanges().catch((error: unknown) =>
+        log.error("presence.flush_failed", errorFields(error)),
+      );
+    }, PRESENCE_FLUSH_MS);
+  }
+
+  /**
+   * Tells every board that can see these Coders that they came or went.
+   *
+   * Batched, because a lab arriving at once is thirty of these in a second and
+   * each session's counts only need recomputing once for all of them. Only
+   * sessions that could be waiting for someone are told: before the start for
+   * the lobby, while running for the monitor.
+   */
+  async function flushPresenceChanges(): Promise<void> {
+    const userIds = [...presenceChanges];
+    presenceChanges.clear();
+    if (userIds.length === 0) return;
+
+    const sessions = await prisma.assessmentSession.findMany({
+      where: {
+        status: { in: ["DRAFT", "READY", "RUNNING"] },
+        OR: [
+          { participants: { some: { userId: { in: userIds } } } },
+          {
+            access: "MODULE",
+            isOpenAccess: false,
+            assessment: {
+              section: {
+                module: { enrollments: { some: { userId: { in: userIds }, status: "APPROVED" } } },
+              },
+            },
+          },
+        ],
+      },
+      select: { id: true },
+    });
+    for (const session of sessions) {
+      for (const userId of userIds) await announceParticipant(session.id, userId);
+      await announceSessionState(session.id);
+    }
+  }
+
+  /**
+   * Vouches for the connections this instance holds, and retires the ones
+   * nobody vouches for any more.
+   *
+   * Every participant row this instance's sockets hold gets a fresh
+   * `lastSeenAt`. A row still ONLINE but unrefreshed for longer than the stale
+   * window belongs to a socket no instance holds — one that crashed, or was
+   * restarted, before its sockets could say goodbye. It is released here as a
+   * lost connection, logged and paused exactly as a disconnect would have been,
+   * at the moment it was last known to be there.
+   *
+   * The socket is looked for across every instance before it is retired, so a
+   * row this instance merely failed to refresh is touched, not torn down.
+   */
+  async function refreshPresence(): Promise<void> {
+    const now = new Date();
+    const held = [...new Set([...boundAttempts.keys(), ...lobbies.keys()])];
+    if (held.length > 0) {
+      await prisma.assessmentParticipant.updateMany({
+        where: { activeConnectionId: { in: held }, connectionState: "ONLINE" },
+        data: { lastSeenAt: now },
+      });
+    }
+    await presence.refresh([
+      ...new Set([...io.of("/").sockets.values()].map((socket) => socket.data.userId)),
+    ]);
+
+    const cutoff = new Date(now.getTime() - staleMs);
+    const stale = await prisma.assessmentParticipant.findMany({
+      where: {
+        connectionState: "ONLINE",
+        OR: [{ lastSeenAt: { lt: cutoff } }, { lastSeenAt: null }],
+      },
+      select: { sessionId: true, userId: true, activeConnectionId: true, lastSeenAt: true },
+      take: 500,
+    });
+
+    const touched = new Set<string>();
+    for (const row of stale) {
+      const socketId = row.activeConnectionId;
+      if (socketId !== null && (await io.in(socketId).fetchSockets()).length > 0) {
+        await prisma.assessmentParticipant.updateMany({
+          where: { sessionId: row.sessionId, userId: row.userId, activeConnectionId: socketId },
+          data: { lastSeenAt: now },
+        });
+        continue;
+      }
+
+      const released = await prisma.assessmentParticipant.updateMany({
+        where: {
+          sessionId: row.sessionId,
+          userId: row.userId,
+          connectionState: "ONLINE",
+          activeConnectionId: socketId,
+        },
+        data: { connectionState: "OFFLINE", activeConnectionId: null, readyState: "NOT_READY" },
+      });
+      if (released.count === 0) continue;
+
+      const atMs = (row.lastSeenAt ?? now).getTime();
+      const open = await prisma.assessmentAttempt.findFirst({
+        where: { sessionId: row.sessionId, userId: row.userId, status: "IN_PROGRESS" },
+        select: ATTEMPT_SELECT,
+      });
+      if (open) {
+        await record({
+          sessionId: row.sessionId,
+          type: "DISCONNECTED",
+          userId: row.userId,
+          attemptId: open.id,
+          occurredAt: new Date(atMs),
+          payload: { reason: "LOST" },
+        });
+        await pauseIfIndividual(open, atMs);
+      }
+      await announceParticipant(row.sessionId, row.userId);
+      touched.add(row.sessionId);
+    }
+    for (const sessionId of touched) await announceSessionState(sessionId);
+  }
+
+  const presenceTimer = setInterval(() => {
+    void refreshPresence().catch((error: unknown) =>
+      log.error("presence.refresh_failed", errorFields(error)),
+    );
+  }, options.presenceRefreshMs ?? PRESENCE_REFRESH_MS);
+
+  function cameOnline(socket: AppSocket): void {
+    const { userId, role } = socket.data;
+    void presence
+      .add(userId, socket.id)
+      .then((isFirst) => {
+        if (isFirst && role === "CODER") queuePresenceChange(userId);
+      })
+      .catch((error: unknown) => log.error("presence.add_failed", errorFields(error)));
   }
 
   // --- Ticks ------------------------------------------------------------------
@@ -782,6 +1216,22 @@ export function createAssessmentRuntime(options: {
     void tick().catch((error: unknown) => log.error("attempt.tick_failed", errorFields(error)));
   }, options.tickIntervalMs ?? TICK_INTERVAL_MS);
 
+  /** For the handlers that must finish before the next event is read; see handleAttemptLeave. */
+  function guardedSync(
+    name: string,
+    handler: (socket: AppSocket, raw: unknown, ack?: AckFn) => void,
+    socket: AppSocket,
+  ) {
+    return (raw: unknown, ack?: AckFn) => {
+      try {
+        handler(socket, raw, ack);
+      } catch (error) {
+        log.error("socket.handler_failed", { handler: name, ...errorFields(error) });
+        ack?.(reject("INTERNAL", "Something went wrong"));
+      }
+    };
+  }
+
   function guarded(
     name: string,
     handler: (socket: AppSocket, raw: unknown, ack?: AckFn) => Promise<void>,
@@ -797,7 +1247,13 @@ export function createAssessmentRuntime(options: {
 
   return {
     register(socket) {
+      cameOnline(socket);
       socket.on(CLIENT_EVENTS.ATTEMPT_JOIN, guarded("attempt:join", handleJoin, socket));
+      socket.on(
+        CLIENT_EVENTS.ATTEMPT_LEAVE,
+        guardedSync("attempt:leave", handleAttemptLeave, socket),
+      );
+      socket.on(CLIENT_EVENTS.LOBBY_LEAVE, guardedSync("lobby:leave", handleLobbyLeave, socket));
       socket.on(CLIENT_EVENTS.ATTEMPT_READY, guarded("attempt:ready", handleReady, socket));
       socket.on(CLIENT_EVENTS.ATTEMPT_DRAFT, guarded("attempt:draft", handleDraft, socket));
       socket.on(CLIENT_EVENTS.ANTICHEAT_FOCUS, guarded("anticheat:focus", handleFocus, socket));
@@ -811,6 +1267,9 @@ export function createAssessmentRuntime(options: {
     handleBroadcast,
     close() {
       clearInterval(tickTimer);
+      clearInterval(presenceTimer);
+      if (presenceFlush) clearTimeout(presenceFlush);
+      presenceChanges.clear();
       for (const pending of pendingDisconnects.values()) clearTimeout(pending.timer);
       for (const timer of pendingLobbyDisconnects.values()) clearTimeout(timer);
       pendingDisconnects.clear();

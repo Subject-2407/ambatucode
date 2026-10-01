@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Paginated } from "../api";
 import { ATTEMPT_STATUSES, LANGUAGES, SUBMISSION_STATUSES } from "../enums";
 import type { AttemptStatus, Language, SubmissionStatus } from "../enums";
 import { cuidSchema, paginationSchema } from "./common";
@@ -14,6 +15,44 @@ import { cuidSchema, paginationSchema } from "./common";
 
 // --- Reading -------------------------------------------------------------------
 
+/**
+ * The orders a list of grading records can be read in, one per column an
+ * Architect can see. The server maps each to a fixed `ORDER BY`: the value
+ * chooses between fragments that were written in advance, it never becomes one.
+ */
+export const GRADE_SORTS = ["name", "assessment", "score", "submittedAt"] as const;
+export type GradeSort = (typeof GRADE_SORTS)[number];
+
+export const GRADE_SORT_ORDERS = ["asc", "desc"] as const;
+export type GradeSortOrder = (typeof GRADE_SORT_ORDERS)[number];
+
+/** By name, because the first column is the Coder and an Architect is looking someone up. */
+export const DEFAULT_GRADE_SORT: GradeSort = "name";
+
+/**
+ * The direction a column sorts in when it is first chosen. A name reads A to Z
+ * and an assessment in module order, but a score is read to find the top and a
+ * submission time to find the latest, so those two start descending.
+ */
+export const DEFAULT_GRADE_SORT_ORDER: Readonly<Record<GradeSort, GradeSortOrder>> = {
+  name: "asc",
+  assessment: "asc",
+  score: "desc",
+  submittedAt: "desc",
+};
+
+/**
+ * Fills in an absent sort or direction. Shared so the column the screen marks
+ * as sorted is the column the server actually sorted by.
+ */
+export function resolveGradeSort(query: { sort?: GradeSort; order?: GradeSortOrder }): {
+  sort: GradeSort;
+  order: GradeSortOrder;
+} {
+  const sort = query.sort ?? DEFAULT_GRADE_SORT;
+  return { sort, order: query.order ?? DEFAULT_GRADE_SORT_ORDER[sort] };
+}
+
 export const gradeRecordQuerySchema = paginationSchema.extend({
   /** Matches a username or display name. Trimmed; empty means no filter. */
   search: z.string().trim().max(120).optional(),
@@ -27,8 +66,37 @@ export const gradeRecordQuerySchema = paginationSchema.extend({
     .union([z.boolean(), z.enum(["true", "false"])])
     .transform((value) => value === true || value === "true")
     .optional(),
+  /**
+   * Optional rather than defaulted, so a caller that only filters — the export,
+   * the service tests — need not restate the default. See `resolveGradeSort`.
+   */
+  sort: z.enum(GRADE_SORTS).optional(),
+  order: z.enum(GRADE_SORT_ORDERS).optional(),
 });
 export type GradeRecordQuery = z.infer<typeof gradeRecordQuerySchema>;
+
+/**
+ * The filtered set at a glance: what an Architect would otherwise count off a
+ * page at a time. Computed over every record that matches the filters, not just
+ * the page on screen.
+ */
+export type GradeRecordSummary = {
+  /** Records matching the filters — the same number as the page's `total`. */
+  records: number;
+  /** Records whose official attempt has a score. */
+  scored: number;
+  /** Mean official score across `scored`, to one decimal. Null when nothing is scored. */
+  averageScore: number | null;
+  /** Records with at least one formal Submission, on any attempt. */
+  submitted: number;
+  /**
+   * Records with a Submission but no official attempt — after a reset, waiting
+   * on the Architect to say which attempt counts.
+   */
+  needsOfficialChoice: number;
+};
+
+export type GradeRecordPage = Paginated<GradeRecordView> & { summary: GradeRecordSummary };
 
 export type GradeSubmissionView = {
   id: string;
@@ -115,8 +183,14 @@ export type SetOfficialAttemptRequest = z.infer<typeof setOfficialAttemptSchema>
 export const GRADE_EXPORT_FORMATS = ["csv"] as const;
 export type GradeExportFormat = (typeof GRADE_EXPORT_FORMATS)[number];
 
+/**
+ * The record filters without paging or order. The file is always written in the
+ * default order: it is read in `OFFSET` batches, and a score-ordered walk would
+ * skip or repeat a record whose score changed between two batches — which,
+ * during a running session, is exactly what scores do.
+ */
 export const gradeExportQuerySchema = gradeRecordQuerySchema
-  .omit({ page: true, pageSize: true })
+  .omit({ page: true, pageSize: true, sort: true, order: true })
   .extend({ format: z.enum(GRADE_EXPORT_FORMATS).default("csv") });
 export type GradeExportQuery = z.infer<typeof gradeExportQuerySchema>;
 

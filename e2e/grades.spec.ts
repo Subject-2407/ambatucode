@@ -98,7 +98,7 @@ async function buildFixture(page: Page, suffix: string): Promise<Fixture> {
     request,
     "post",
     `/api/assessments/${assessment.id}/sessions`,
-    { name: `Class ${suffix}` },
+    { name: `Class ${suffix}`, access: "MODULE" },
   );
   await json(request, "post", `/api/sessions/${session.id}/start`, { force: true });
 

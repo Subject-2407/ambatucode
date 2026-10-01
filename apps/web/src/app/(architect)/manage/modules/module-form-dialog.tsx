@@ -5,6 +5,7 @@ import { Checkbox, Stack } from "@chakra-ui/react";
 import {
   MODULE_VISIBILITIES,
   createModuleRequestSchema,
+  updateModuleRequestSchema,
   type ModuleSummary,
   type ModuleVisibility,
 } from "@ambatucode/shared";
@@ -22,6 +23,16 @@ const VISIBILITY_OPTIONS = MODULE_VISIBILITIES.map((visibility) => ({
 }));
 
 type FieldErrors = Partial<Record<"title" | "slug", string>>;
+
+/** The first message for each field this form can point at. */
+function fieldErrorsFrom(issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>) {
+  const errors: FieldErrors = {};
+  for (const issue of issues) {
+    const field = issue.path[0];
+    if (field === "title" || field === "slug") errors[field] ??= issue.message;
+  }
+  return errors;
+}
 
 /**
  * One dialog for creating and editing a Module.
@@ -64,12 +75,7 @@ export function ModuleFormDialog({
         isPublished,
       });
       if (!parsed.success) {
-        const next: FieldErrors = {};
-        for (const issue of parsed.error.issues) {
-          const field = issue.path[0];
-          if (field === "title" || field === "slug") next[field] ??= issue.message;
-        }
-        setErrors(next);
+        setErrors(fieldErrorsFrom(parsed.error.issues));
         return;
       }
 
@@ -86,17 +92,22 @@ export function ModuleFormDialog({
       return;
     }
 
+    // The same check the server applies, run first so a bad slug is pointed at
+    // under its field instead of arriving as a toast about the whole form.
+    const parsed = updateModuleRequestSchema.safeParse({
+      title,
+      slug: trimmedSlug,
+      description: description.trim() === "" ? null : description,
+      visibility,
+      isPublished,
+    });
+    if (!parsed.success) {
+      setErrors(fieldErrorsFrom(parsed.error.issues));
+      return;
+    }
+
     try {
-      await updateModule.mutateAsync({
-        moduleId: module.id,
-        changes: {
-          title,
-          slug: trimmedSlug,
-          description: description.trim() === "" ? null : description,
-          visibility,
-          isPublished,
-        },
-      });
+      await updateModule.mutateAsync({ moduleId: module.id, changes: parsed.data });
       toaster.success({ title: "Module updated" });
       onClose();
     } catch (error) {

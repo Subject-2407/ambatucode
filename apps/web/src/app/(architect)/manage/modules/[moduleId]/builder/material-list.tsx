@@ -38,15 +38,19 @@ export function MaterialList({
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<ModuleMaterialSummary | null>(null);
 
+  /**
+   * Both dialogs stay open until the server answers, so their loading state is
+   * real and a failed create keeps the typed title for a retry.
+   */
   async function add(title: string) {
-    setAdding(false);
-    if (sectionId === null) return;
+    if (sectionId === null || createMaterial.isPending) return;
 
     try {
       const created = await createMaterial.mutateAsync({
         sectionId,
         input: { title, isPublished: false },
       });
+      setAdding(false);
       // A new material opens straight away: the Architect asked for it in order
       // to write in it.
       onSelect(created.id);
@@ -59,7 +63,6 @@ export function MaterialList({
   }
 
   async function remove(material: ModuleMaterialSummary) {
-    setDeleting(null);
     try {
       await deleteMaterial.mutateAsync(material.id);
       if (selectedId === material.id) onSelect(null);
@@ -69,6 +72,8 @@ export function MaterialList({
         title: "Could not delete the material",
         description: isApiError(error) ? error.userMessage : undefined,
       });
+    } finally {
+      setDeleting(null);
     }
   }
 

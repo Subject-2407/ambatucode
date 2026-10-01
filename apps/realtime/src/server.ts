@@ -29,6 +29,7 @@ import { createAssessmentRuntime } from "./assessment";
 import { authenticateHandshake } from "./auth";
 import { createDeadlineRuntime, type DeadlineRuntime } from "./deadlines";
 import { getEnv } from "./env";
+import { createPlatformPresence } from "./presence";
 import { createRedisClients, type RealtimeRedis } from "./redis";
 import { createWebClient, type WebClient } from "./web-client";
 import { log } from "./logger";
@@ -90,16 +91,15 @@ function handleHealth(
   }
 
   if (path === "/health/ready") {
-    void Promise.all([
-      probe(() => prisma.$queryRaw`SELECT 1`),
-      probe(() => redis.pub.ping()),
-    ]).then(([database, cache]) => {
-      const status = database && cache ? "ok" : "degraded";
-      send(status === "ok" ? 200 : 503, {
-        ok: status === "ok",
-        data: { status, service: "realtime", database, redis: cache, serverTimeMs: Date.now() },
-      });
-    });
+    void Promise.all([probe(() => prisma.$queryRaw`SELECT 1`), probe(() => redis.pub.ping())]).then(
+      ([database, cache]) => {
+        const status = database && cache ? "ok" : "degraded";
+        send(status === "ok" ? 200 : 503, {
+          ok: status === "ok",
+          data: { status, service: "realtime", database, redis: cache, serverTimeMs: Date.now() },
+        });
+      },
+    );
     return;
   }
 
@@ -121,6 +121,8 @@ export type RealtimeServerOptions = {
   disconnectDebounceMs?: number;
   tickIntervalMs?: number;
   sweepIntervalMs?: number;
+  presenceRefreshMs?: number;
+  presenceStaleMs?: number;
 };
 
 /**
@@ -218,6 +220,11 @@ export function createRealtimeServer(options: RealtimeServerOptions = {}): Realt
     io,
     deadlines,
     web,
+    presence: createPlatformPresence(redis.pub),
+    ...(options.presenceRefreshMs === undefined
+      ? {}
+      : { presenceRefreshMs: options.presenceRefreshMs }),
+    ...(options.presenceStaleMs === undefined ? {} : { presenceStaleMs: options.presenceStaleMs }),
     ...(options.disconnectDebounceMs === undefined
       ? {}
       : { disconnectDebounceMs: options.disconnectDebounceMs }),

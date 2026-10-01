@@ -6,6 +6,7 @@ import {
   MAX_TEST_SCRIPTS_PER_LANGUAGE,
   QUEUE_NAMES,
   REDIS_CHANNELS,
+  REDIS_KEYS,
   deadlineJobId,
   isAppError,
   type AssessmentArchitectView,
@@ -51,6 +52,7 @@ import {
   deleteSession,
   endSession,
   getMonitorSnapshot,
+  getReadiness,
   getSession,
   listMonitorableSessions,
   listSessions,
@@ -195,7 +197,9 @@ async function startedSession(
   name: string,
   setup?: (session: SessionView) => Promise<void>,
 ): Promise<SessionView> {
-  const session = await createSession(owner, assessmentId, { name });
+  // Open to the module: a session limited to chosen Coders with nobody chosen
+  // cannot be started, and most specs here are about what happens after.
+  const session = await createSession(owner, assessmentId, { name, access: "MODULE" });
   createdSessionIds.push(session.id);
   if (setup) await setup(session);
   const started = await startSession(owner, session.id, { force: true });
@@ -760,18 +764,38 @@ describe("the readiness gate on a scheduled session", () => {
     expect(forced.started).toBe(true);
   });
 
-  it("stands aside when there is no participant list to be ready", async () => {
+  it("waits for everyone enrolled when the session is open to the whole module", async () => {
     const assessment = await individualAssessment();
     const session = await createSession(owner, assessment.id, {
-      name: "Gate with nobody behind it",
+      name: "Whole class waits",
       requireAllReady: true,
       access: "MODULE",
     });
     createdSessionIds.push(session.id);
 
-    // No list means nobody to wait for, so an unforced start still goes.
-    const started = await startSession(owner, session.id, { force: false });
-    expect(started.started).toBe(true);
+    // No list, but a roster all the same: the module's four Coders. This is
+    // the case that used to let Start straight through with nobody ready.
+    const held = await startSession(owner, session.id, { force: false });
+    expect(held.started).toBe(false);
+    if (held.started) throw new Error("the gate did not hold");
+    expect(held.warning.counts).toEqual({ ready: 0, notReady: 0, offline: 4, total: 4 });
+
+    const forced = await startSession(owner, session.id, { force: true });
+    expect(forced.started).toBe(true);
+  });
+
+  it("refuses to start a session limited to chosen Coders when nobody is chosen", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Nobody chosen",
+      access: "LISTED",
+    });
+    createdSessionIds.push(session.id);
+    expect(session.rosterSource).toBe("NONE");
+
+    expect(await refusalCode(() => startSession(owner, session.id, { force: true }))).toBe(
+      "VALIDATION_FAILED",
+    );
   });
 
   it("leaves a session without the gate starting unready, as it always did", async () => {
@@ -782,6 +806,98 @@ describe("the readiness gate on a scheduled session", () => {
 
     const started = await startSession(owner, session.id, { force: false });
     expect(started.started).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("the roster and the lobby", () => {
+  it("creates a draft by default and opens the lobby when asked", async () => {
+    const assessment = await individualAssessment();
+    const draft = await createSession(owner, assessment.id, { name: "Prepared ahead" });
+    const lobby = await createSession(owner, assessment.id, {
+      name: "Open now",
+      access: "MODULE",
+      openLobby: true,
+    });
+    createdSessionIds.push(draft.id, lobby.id);
+
+    expect(draft.status).toBe("DRAFT");
+    expect(lobby.status).toBe("READY");
+  });
+
+  it("puts every enrolled Coder on the board of a session open to the module", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Everyone counts",
+      access: "MODULE",
+    });
+    createdSessionIds.push(session.id);
+
+    const readiness = await getReadiness(owner, session.id);
+    expect(readiness.rosterSource).toBe("MODULE");
+    expect(readiness.counts.total).toBe(4);
+    const ids = readiness.participants.map((participant) => participant.userId);
+    expect(ids).toEqual(expect.arrayContaining([coderA.id, coderB.id, coderC.id, coderD.id]));
+    expect(ids).not.toContain(outsider.id);
+    // Nobody has opened the lobby, so nobody has a socket to vouch for them.
+    expect(readiness.participants.every((participant) => participant.presence === "OFFLINE")).toBe(
+      true,
+    );
+  });
+
+  it("counts a ready Coder on the page as ready, and a READY left on another page as not", async () => {
+    const assessment = await individualAssessment();
+    const session = await createSession(owner, assessment.id, {
+      name: "Who is here",
+      access: "LISTED",
+    });
+    createdSessionIds.push(session.id);
+    await replaceParticipants(owner, session.id, {
+      mode: "SELECTED",
+      userIds: [coderA.id, coderB.id],
+    });
+    await prisma.assessmentParticipant.update({
+      where: { sessionId_userId: { sessionId: session.id, userId: coderA.id } },
+      data: { readyState: "READY", connectionState: "ONLINE" },
+    });
+    // On another page of the app: online, but not on this session's page.
+    await prisma.assessmentParticipant.update({
+      where: { sessionId_userId: { sessionId: session.id, userId: coderB.id } },
+      data: { readyState: "READY", connectionState: "OFFLINE" },
+    });
+    await getRedis().sadd(REDIS_KEYS.presence(coderB.id), "spec-socket");
+
+    try {
+      const readiness = await getReadiness(owner, session.id);
+      expect(readiness.counts).toEqual({ ready: 1, notReady: 1, offline: 0, total: 2 });
+      expect(
+        readiness.participants.find((participant) => participant.userId === coderB.id)?.presence,
+      ).toBe("ELSEWHERE");
+    } finally {
+      await getRedis().del(REDIS_KEYS.presence(coderB.id));
+    }
+  });
+
+  it("shows expected Coders who have not started on the monitor", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Who has not begun");
+
+    const snapshot = await getMonitorSnapshot(owner, session.id, { includeEvents: false });
+    expect(snapshot.events).toEqual([]);
+    expect(snapshot.participants).toHaveLength(4);
+    expect(snapshot.participants.every((row) => row.attempt === null)).toBe(true);
+  });
+
+  it("says how much work deleting a session would take with it", async () => {
+    const assessment = await individualAssessment();
+    const session = await startedSession(assessment.id, "Counted work");
+    const attempt = await startAttempt(coderA, session.id);
+    createdAttemptIds.push(attempt.id);
+
+    const view = await getSession(owner, session.id);
+    expect(view.attemptCount).toBe(1);
+    expect(view.submissionCount).toBe(0);
   });
 });
 

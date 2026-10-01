@@ -125,7 +125,10 @@ async function scoredAssessment(
     timeLimitMs: null,
     memoryLimitMb: null,
   });
-  const created = await createSession(owner, assessment.id, { name: `${title} session` });
+  const created = await createSession(owner, assessment.id, {
+    name: `${title} session`,
+    access: "MODULE",
+  });
   createdSessionIds.push(created.id);
   const started = await startSession(owner, created.id, { force: true });
   if (!started.started) throw new Error("session did not start");
@@ -323,6 +326,55 @@ describe("grading records", () => {
     });
     expect(afterReset.total).toBe(1);
     expect(afterReset.items[0]?.userId).toBe(coderA.id);
+  });
+
+  // The order and the summary are built from SQL fragments the unit tests can
+  // only read as text. This is where Postgres gets to accept them.
+  it("sorts by the chosen column and summarises the whole filtered set", async () => {
+    const { assessmentId, session, caseId } = await scoredAssessment("Sorting");
+    const low = await scoreFor(coderA, session.id, caseId, 30);
+    await scoreFor(coderB, session.id, caseId, 90);
+
+    async function order(sort: "name" | "score" | "submittedAt", direction: "asc" | "desc") {
+      const page = await listAssessmentGrades(owner, assessmentId, {
+        page: 1,
+        pageSize: 25,
+        sort,
+        order: direction,
+      });
+      return page.items.map((record) => record.userId);
+    }
+
+    expect(await order("name", "asc")).toEqual([coderA.id, coderB.id]);
+    expect(await order("name", "desc")).toEqual([coderB.id, coderA.id]);
+    expect(await order("score", "desc")).toEqual([coderB.id, coderA.id]);
+    expect(await order("score", "asc")).toEqual([coderA.id, coderB.id]);
+    expect(await order("submittedAt", "desc")).toEqual([coderB.id, coderA.id]);
+
+    const before = await listAssessmentGrades(owner, assessmentId, { page: 1, pageSize: 1 });
+    expect(before.items).toHaveLength(1);
+    expect(before.summary).toEqual({
+      records: 2,
+      scored: 2,
+      averageScore: 60,
+      submitted: 2,
+      needsOfficialChoice: 0,
+    });
+
+    // A reset leaves the record with submitted work and no official attempt —
+    // the one state the summary counts as waiting on the Architect — and the
+    // unscored record sorts last by score in both directions.
+    const reset = await resetAttempt(owner, low.attemptId, { reason: "Wrong problem shown" });
+    createdAttemptIds.push(reset.newAttemptId);
+    const after = await listAssessmentGrades(owner, assessmentId, { page: 1, pageSize: 25 });
+    expect(after.summary).toEqual({
+      records: 2,
+      scored: 1,
+      averageScore: 90,
+      submitted: 2,
+      needsOfficialChoice: 1,
+    });
+    expect(await order("score", "asc")).toEqual([coderB.id, coderA.id]);
   });
 });
 

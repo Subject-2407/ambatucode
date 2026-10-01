@@ -13,25 +13,34 @@ import {
 import { getSocket } from "@/lib/socket";
 
 /**
- * The waiting room before a Live Assessment Session starts.
+ * The waiting room before an Assessment Session starts.
  *
  * The SRS has participants declare themselves READY so the Architect can see
- * who is actually at their machine before pressing Start. Two consequences
+ * who is actually at their machine before pressing Start. Three consequences
  * shape this hook.
  *
- * Presence is announced on arrival. Opening the lobby emits readiness as
- * `false`, which is what marks the participant ONLINE on the Architect's
- * board — otherwise a Coder sitting and waiting would be indistinguishable
- * from one who never turned up.
+ * Presence is announced on arrival. Opening the lobby sends this visit's
+ * readiness, which is what marks the Coder as here on the Architect's board —
+ * otherwise a Coder sitting and waiting would look exactly like one who never
+ * turned up.
  *
- * Reloading the page therefore clears READY. That is the honest behaviour: the
+ * A reconnect re-sends the same answer. It used to send "not ready" on every
+ * connect, so a Wi-Fi blip quietly withdrew a Coder's READY on the server
+ * while their screen went on saying they were ready.
+ *
+ * Leaving says so. The socket outlives the page — it belongs to the whole app —
+ * so without an explicit leave a Coder who wandered back to the dashboard
+ * stayed "in the lobby", and ready, for as long as the tab was open.
+ *
+ * Reloading the page still clears READY. That is the honest behaviour: the
  * Architect is about to start an exam on the strength of that number, and a
- * browser that has just been reloaded is not evidence that someone is sitting
- * in front of it.
+ * reloaded page is not evidence that someone is sitting in front of it.
  */
 
 export type LobbyState = {
   ready: boolean;
+  /** True while the server has not yet confirmed the last change. */
+  saving: boolean;
   status: AssessmentSessionStatus | null;
   counts: SessionCounts | null;
   /** Set when the server refused a readiness change, with its reason. */
@@ -48,10 +57,13 @@ export function useSessionLobby(input: {
   const { sessionId, enabled, onStarted } = input;
 
   const [ready, setReadyState] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<AssessmentSessionStatus | null>(null);
   const [counts, setCounts] = useState<SessionCounts | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
+  /** What this visit last said, read by the reconnect handler. */
+  const readyRef = useRef(false);
   const startedRef = useRef(onStarted);
   useEffect(() => {
     startedRef.current = onStarted;
@@ -60,15 +72,21 @@ export function useSessionLobby(input: {
   const emitReady = useCallback(
     (next: boolean) => {
       const socket = getSocket();
-      if (!socket.connected) return;
+      if (!socket.connected) {
+        // Sent on the next connect, which re-announces whatever readyRef says.
+        return;
+      }
+      setSaving(true);
       const ack: AckFn = (result) => {
+        setSaving(false);
         if (result.ok) {
           setProblem(null);
           return;
         }
         // The server refused — most often because the session has already
-        // started or this Coder is not on its list. Reflect its answer rather
-        // than leaving the toggle claiming something untrue.
+        // started or does not expect this Coder. Reflect its answer rather
+        // than leaving the button claiming something untrue.
+        readyRef.current = false;
         setReadyState(false);
         setProblem(result.message);
       };
@@ -81,7 +99,7 @@ export function useSessionLobby(input: {
     if (!enabled) return;
     const socket = getSocket();
 
-    const announcePresence = () => emitReady(false);
+    const announcePresence = () => emitReady(readyRef.current);
 
     const onSessionState = (payload: SessionStatePayload) => {
       if (payload.sessionId !== sessionId) return;
@@ -104,16 +122,18 @@ export function useSessionLobby(input: {
       socket.off("connect", announcePresence);
       socket.off(SERVER_EVENTS.SESSION_STATE, onSessionState);
       socket.off(SERVER_EVENTS.SESSION_STARTED, onSessionStarted);
+      if (socket.connected) socket.emit(CLIENT_EVENTS.LOBBY_LEAVE, { sessionId });
     };
   }, [emitReady, enabled, sessionId]);
 
   const setReady = useCallback(
     (next: boolean) => {
+      readyRef.current = next;
       setReadyState(next);
       emitReady(next);
     },
     [emitReady],
   );
 
-  return { ready, status, counts, problem, setReady };
+  return { ready, saving, status, counts, problem, setReady };
 }

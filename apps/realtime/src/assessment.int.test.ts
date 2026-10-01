@@ -6,6 +6,7 @@ import { prisma, type AssessmentEventType } from "@ambatucode/db";
 import {
   CLIENT_EVENTS,
   REDIS_CHANNELS,
+  REDIS_KEYS,
   SERVER_EVENTS,
   type Ack,
   type AssessmentBroadcastMessage,
@@ -148,8 +149,9 @@ async function makeSession(
   assessmentId: string,
   data: {
     executionMode: "INDIVIDUAL" | "LIVE" | null;
-    status: "DRAFT" | "RUNNING";
+    status: "DRAFT" | "READY" | "RUNNING";
     endsAt?: Date | null;
+    access?: "LISTED" | "MODULE";
   },
 ) {
   return prisma.assessmentSession.create({
@@ -159,6 +161,7 @@ async function makeSession(
       executionMode: data.executionMode,
       durationMinutes: data.executionMode === null ? null : 10,
       status: data.status,
+      access: data.access ?? "LISTED",
       startedAt: data.status === "RUNNING" ? new Date() : null,
       endsAt: data.endsAt ?? null,
     },
@@ -504,7 +507,18 @@ describe("attempt connection", () => {
     const payload = await state;
     expect(payload.status).toBe("SUBMITTED");
     expect(payload.remainingMs).toBeNull();
+
+    // Leaving the closed workspace releases the Coder quietly: they go offline,
+    // but a finished attempt has no disconnect worth logging.
     socket.disconnect();
+    await eventually(
+      () =>
+        prisma.assessmentParticipant.findUniqueOrThrow({
+          where: { sessionId_userId: { sessionId: session.id, userId: coderA.id } },
+        }),
+      (row) => row.connectionState === "OFFLINE",
+    );
+    expect(await eventTypes(attemptId)).toEqual(["CONNECTED"]);
   });
 });
 
@@ -527,7 +541,7 @@ describe("lobby and monitor", () => {
   });
 
   it("tracks readiness for listed participants only and reports the counts", async () => {
-    const session = await makeSession(warnAssessmentId, { executionMode: "LIVE", status: "DRAFT" });
+    const session = await makeSession(warnAssessmentId, { executionMode: "LIVE", status: "READY" });
     await prisma.assessmentParticipant.createMany({
       data: [coderA.id, coderB.id].map((userId) => ({
         sessionId: session.id,
@@ -560,6 +574,147 @@ describe("lobby and monitor", () => {
 
     monitor.disconnect();
     unlisted.disconnect();
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+describe("rosters, leaving, and presence", () => {
+  it("lets an enrolled Coder get ready in a session open to the module without being listed", async () => {
+    await prisma.moduleEnrollment.upsert({
+      where: { moduleId_userId: { moduleId, userId: coderC.id } },
+      create: { moduleId, userId: coderC.id, status: "APPROVED" },
+      update: { status: "APPROVED" },
+    });
+    const session = await makeSession(warnAssessmentId, {
+      executionMode: "INDIVIDUAL",
+      status: "READY",
+      access: "MODULE",
+    });
+
+    const coder = await client(coderC.cookie);
+    expect(
+      await send(coder, CLIENT_EVENTS.ATTEMPT_READY, { sessionId: session.id, ready: true }),
+    ).toEqual({ ok: true });
+    const row = await prisma.assessmentParticipant.findUniqueOrThrow({
+      where: { sessionId_userId: { sessionId: session.id, userId: coderC.id } },
+    });
+    // Tracked, ready, and still unlisted: being expected is not being listed.
+    expect(row).toMatchObject({ isListed: false, readyState: "READY", connectionState: "ONLINE" });
+
+    // Not enrolled, so not expected.
+    const stranger = await client(coderB.cookie);
+    expect(
+      await send(stranger, CLIENT_EVENTS.ATTEMPT_READY, { sessionId: session.id, ready: true }),
+    ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+
+    coder.disconnect();
+    stranger.disconnect();
+  });
+
+  it("refuses readiness while the lobby is still a draft", async () => {
+    const session = await makeSession(warnAssessmentId, { executionMode: "LIVE", status: "DRAFT" });
+    await prisma.assessmentParticipant.create({
+      data: { sessionId: session.id, userId: coderA.id, isListed: true },
+    });
+    const coder = await client(coderA.cookie);
+    expect(
+      await send(coder, CLIENT_EVENTS.ATTEMPT_READY, { sessionId: session.id, ready: true }),
+    ).toMatchObject({ ok: false, code: "CONFLICT" });
+    coder.disconnect();
+  });
+
+  it("takes readiness back when the Coder leaves the lobby for another page", async () => {
+    const session = await makeSession(warnAssessmentId, { executionMode: "LIVE", status: "READY" });
+    await prisma.assessmentParticipant.create({
+      data: { sessionId: session.id, userId: coderA.id, isListed: true },
+    });
+    const coder = await client(coderA.cookie);
+    await send(coder, CLIENT_EVENTS.ATTEMPT_READY, { sessionId: session.id, ready: true });
+
+    // The socket stays open: only the page changed.
+    expect(await send(coder, CLIENT_EVENTS.LOBBY_LEAVE, { sessionId: session.id })).toEqual({
+      ok: true,
+    });
+    const left = await eventually(
+      () =>
+        prisma.assessmentParticipant.findUniqueOrThrow({
+          where: { sessionId_userId: { sessionId: session.id, userId: coderA.id } },
+        }),
+      (row) => row.connectionState === "OFFLINE",
+    );
+    expect(left.readyState).toBe("NOT_READY");
+    expect(coder.connected).toBe(true);
+    coder.disconnect();
+  });
+
+  it("pauses an Individual clock when the Coder leaves the workspace without disconnecting", async () => {
+    const session = await makeSession(warnAssessmentId, {
+      executionMode: "INDIVIDUAL",
+      status: "RUNNING",
+    });
+    const attemptId = await makeAttempt(session.id, coderA.id, new Date(Date.now() + 10 * MINUTE));
+
+    const socket = await client(coderA.cookie);
+    await send(socket, CLIENT_EVENTS.ATTEMPT_JOIN, { attemptId });
+    await send(socket, CLIENT_EVENTS.ATTEMPT_LEAVE, { attemptId });
+
+    const paused = await eventually(
+      () => prisma.assessmentAttempt.findUniqueOrThrow({ where: { id: attemptId } }),
+      (attempt) => attempt.pausedAt !== null,
+    );
+    expect(paused.status).toBe("IN_PROGRESS");
+    const left = await prisma.assessmentEvent.findFirstOrThrow({
+      where: { attemptId, type: "DISCONNECTED" },
+    });
+    expect(left.payloadJson).toMatchObject({ reason: "LEFT" });
+
+    // Coming back resumes it, the same as a reconnect.
+    await send(socket, CLIENT_EVENTS.ATTEMPT_JOIN, { attemptId });
+    const resumed = await prisma.assessmentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+    expect(resumed.pausedAt).toBeNull();
+    socket.disconnect();
+  });
+
+  it("treats a leave and an immediate rejoin as nothing at all", async () => {
+    const session = await makeSession(warnAssessmentId, {
+      executionMode: "INDIVIDUAL",
+      status: "RUNNING",
+    });
+    const attemptId = await makeAttempt(session.id, coderB.id, new Date(Date.now() + 10 * MINUTE));
+
+    const socket = await client(coderB.cookie);
+    await send(socket, CLIENT_EVENTS.ATTEMPT_JOIN, { attemptId });
+    // React's development remount: cleanup and mount again at once.
+    socket.emit(CLIENT_EVENTS.ATTEMPT_LEAVE, { attemptId });
+    await send(socket, CLIENT_EVENTS.ATTEMPT_JOIN, { attemptId });
+    await sleep(DEBOUNCE_MS * 2);
+
+    expect(await eventTypes(attemptId)).toEqual(["CONNECTED"]);
+    const attempt = await prisma.assessmentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+    expect(attempt.pausedAt).toBeNull();
+    socket.disconnect();
+  });
+
+  it("records platform presence while any socket is open, and clears it when the last one closes", async () => {
+    const key = REDIS_KEYS.presence(coderC.id);
+    const first = await client(coderC.cookie);
+    const second = await client(coderC.cookie);
+    await eventually(
+      () => publisher.scard(key),
+      (members) => members === 2,
+    );
+
+    first.disconnect();
+    await eventually(
+      () => publisher.scard(key),
+      (members) => members === 1,
+    );
+    second.disconnect();
+    await eventually(
+      () => publisher.exists(key),
+      (exists) => exists === 0,
+    );
   });
 });
 

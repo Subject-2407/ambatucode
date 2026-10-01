@@ -2,6 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  BulkDecideEnrollmentsRequest,
+  BulkDecideEnrollmentsResult,
   DecideEnrollmentRequest,
   EnrollmentRequestResult,
   EnrollmentView,
@@ -61,6 +63,16 @@ export function useDecideEnrollment(moduleId: string) {
       apiClient.patch<EnrollmentView>(`/api/modules/${moduleId}/enrollments/${enrollmentId}`, {
         status,
       }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: enrollmentKeys.all }),
+  });
+}
+
+/** One decision across many requests: the ticked rows, or the whole pending queue. */
+export function useDecideEnrollments(moduleId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkDecideEnrollmentsRequest) =>
+      apiClient.patch<BulkDecideEnrollmentsResult>(`/api/modules/${moduleId}/enrollments`, input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: enrollmentKeys.all }),
   });
 }

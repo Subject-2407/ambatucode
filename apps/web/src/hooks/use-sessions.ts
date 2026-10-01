@@ -60,22 +60,53 @@ export function useSession(sessionId: string) {
   });
 }
 
-export function useReadiness(sessionId: string, enabled = true) {
+/**
+ * Read once whatever the session's state, and polled only while readiness can
+ * still change. It used to be switched off entirely for a finished session,
+ * which left that session's panel on a loading skeleton for good.
+ */
+export function useReadiness(sessionId: string, poll = true) {
   return useQuery({
     queryKey: sessionKeys.readiness(sessionId),
     queryFn: ({ signal }) =>
       apiClient.get<ReadinessView>(`/api/sessions/${sessionId}/readiness`, { signal }),
-    enabled,
-    refetchInterval: enabled ? READINESS_POLL_MS : false,
+    refetchInterval: poll ? READINESS_POLL_MS : false,
   });
 }
 
-export function useMonitorSnapshot(sessionId: string) {
+/** How often the monitor re-reads attempt state the feed does not carry. */
+const MONITOR_POLL_MS = 10_000;
+
+/**
+ * The monitor's participants, attempts and counts, kept current.
+ *
+ * It used to be read once and never again, on the reasoning that the socket
+ * feed took over. The feed carries connections and events, though, not
+ * attempts — so a Coder who started, submitted or was graded after the
+ * monitor opened stayed "Not started" on it until the page was reloaded, and
+ * a Coder who joined late never appeared at all. Events are left out of these
+ * re-reads; `useMonitorBacklog` fetched them once.
+ */
+export function useMonitorSnapshot(sessionId: string, enabled = true) {
   return useQuery({
-    queryKey: sessionKeys.monitor(sessionId),
+    queryKey: [...sessionKeys.monitor(sessionId), "rows"] as const,
     queryFn: ({ signal }) =>
-      apiClient.get<MonitorSnapshot>(`/api/sessions/${sessionId}/monitor`, { signal }),
-    // The live feed takes over from here; refetching would fight it.
+      apiClient.get<MonitorSnapshot>(`/api/sessions/${sessionId}/monitor`, {
+        signal,
+        query: { events: "false" },
+      }),
+    refetchInterval: enabled ? MONITOR_POLL_MS : false,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** The events that happened before the monitor opened. Read once; the feed continues it. */
+export function useMonitorBacklog(sessionId: string) {
+  return useQuery({
+    queryKey: [...sessionKeys.monitor(sessionId), "backlog"] as const,
+    queryFn: async ({ signal }) =>
+      (await apiClient.get<MonitorSnapshot>(`/api/sessions/${sessionId}/monitor`, { signal }))
+        .events,
     staleTime: Number.POSITIVE_INFINITY,
   });
 }

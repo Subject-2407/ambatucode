@@ -215,28 +215,30 @@ test.describe("assessment sessions", () => {
         mode: "SELECTED",
         userIds: [coderId, absent.userId],
       });
-      // A draft session is the Architect's alone; READY is what puts it in
-      // front of the Coders.
+      // Limited to those two, and the lobby opened from session control —
+      // a draft session is the Architect's alone until then.
       await api(architect.request, "patch", `/api/sessions/${fixture.sessionId}`, {
-        status: "READY",
+        access: "LISTED",
       });
+      await architect.goto(`/manage/sessions/${fixture.sessionId}`);
+      await architect.getByRole("button", { name: "Open lobby" }).click();
+      await expect(architect.getByText("Lobby open").first()).toBeVisible({ timeout: 30_000 });
 
       // --- The lobby ---------------------------------------------------------
       const network = await NetworkSwitch.attach(coder);
       await openAssessment(coder, fixture);
-      await expect(coder.getByText(/starts this session for everyone at once/)).toBeVisible({
-        timeout: 30_000,
-      });
-      await coder.getByText("I am ready").click();
+      await coder.getByRole("button", { name: "I'm ready" }).click({ timeout: 30_000 });
+      await expect(coder.getByText("You are ready")).toBeVisible({ timeout: 30_000 });
 
-      await architect.goto(`/manage/sessions/${fixture.sessionId}`);
+      // The board names who is there and who is not.
       await expect(architect.getByText("Coder 01").first()).toBeVisible({ timeout: 30_000 });
+      await expect(architect.getByText("Ready 1/2")).toBeVisible({ timeout: 30_000 });
 
       // --- Start with someone missing ----------------------------------------
       // Start is never disabled; the warning names who is missing.
       await architect.getByRole("button", { name: "Start session" }).click();
       const warning = architect.getByRole("dialog");
-      await expect(warning).toContainText("Not all selected participants are ready", {
+      await expect(warning).toContainText("Not all participants are ready", {
         timeout: 30_000,
       });
       await expect(warning).toContainText(SEED_USERS.unenrolledCoder.displayName);

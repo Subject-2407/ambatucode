@@ -9,15 +9,18 @@ import {
   Heading3,
   Italic,
   Link2,
+  Link2Off,
   List,
   ListOrdered,
   Minus,
   Quote,
+  Redo2,
   Strikethrough,
   SquareCode,
   Boxes,
+  Undo2,
 } from "lucide-react";
-import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
   INTERACTIVE_BLOCK_NODE_TYPE,
@@ -285,6 +288,33 @@ const BLOCK_ACTIONS: ToolbarAction[] = [
   },
 ];
 
+/**
+ * What the toolbar draws from the editor, read on every transaction.
+ *
+ * The editor does not re-render its host when only the selection moves, so a
+ * toolbar reading `isActive` during its own render showed the state of the
+ * last keystroke: click into a bold word and Bold stayed unlit. Selecting the
+ * flags through `useEditorState` re-renders the toolbar exactly when one of
+ * them changes, and no more often than that.
+ */
+function useToolbarState(editor: Editor) {
+  return useEditorState({
+    editor,
+    selector: ({ editor: current }) => ({
+      active: Object.fromEntries(
+        BLOCK_ACTIONS.map((action) => [action.key, action.isActive(current)]),
+      ),
+      link: current.isActive("link"),
+      // A link needs text to sit on: an empty selection outside a link has
+      // nothing for the mark to cover.
+      canLink: !current.state.selection.empty || current.isActive("link"),
+      interactiveBlock: current.isActive(INTERACTIVE_BLOCK_NODE_TYPE),
+      canUndo: current.can().undo(),
+      canRedo: current.can().redo(),
+    }),
+  });
+}
+
 function Toolbar({
   editor,
   onInteractiveBlock,
@@ -294,11 +324,17 @@ function Toolbar({
   onInteractiveBlock?: () => void;
 }) {
   const [linkOpen, setLinkOpen] = useState(false);
+  const state = useToolbarState(editor);
 
-  // getAttributes is untyped by design — the attribute set depends on the
-  // extension — so the href is narrowed rather than trusted.
-  const attributes: Record<string, unknown> = editor.getAttributes("link");
-  const currentHref = typeof attributes.href === "string" ? attributes.href : "";
+  /**
+   * getAttributes is untyped by design — the attribute set depends on the
+   * extension — so the href is narrowed rather than trusted. Read when the
+   * dialog opens, which is the only moment it is needed.
+   */
+  function currentHref(): string {
+    const attributes: Record<string, unknown> = editor.getAttributes("link");
+    return typeof attributes.href === "string" ? attributes.href : "";
+  }
 
   /**
    * The same scheme check the renderer applies, run before the mark is even
@@ -316,7 +352,13 @@ function Toolbar({
       });
       return;
     }
-    editor.chain().focus().setLink({ href }).run();
+    // Extended first, so editing a link with the cursor merely inside it
+    // rewrites the whole link rather than splitting it around the cursor.
+    editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+  }
+
+  function removeLink() {
+    editor.chain().focus().extendMarkRange("link").unsetLink().run();
   }
 
   return (
@@ -329,35 +371,74 @@ function Toolbar({
       borderColor="border.default"
       bg="bg.subtle"
     >
-      {BLOCK_ACTIONS.map((action) => (
-        <IconButton
-          key={action.key}
-          aria-label={action.label}
-          title={action.label}
-          size="xs"
-          variant={action.isActive(editor) ? "subtle" : "ghost"}
-          onClick={() => action.run(editor)}
-        >
-          {action.icon}
-        </IconButton>
-      ))}
+      <IconButton
+        aria-label="Undo"
+        title="Undo"
+        size="xs"
+        variant="ghost"
+        disabled={!state.canUndo}
+        onClick={() => editor.chain().focus().undo().run()}
+      >
+        <Undo2 size={16} />
+      </IconButton>
+      <IconButton
+        aria-label="Redo"
+        title="Redo"
+        size="xs"
+        variant="ghost"
+        disabled={!state.canRedo}
+        onClick={() => editor.chain().focus().redo().run()}
+      >
+        <Redo2 size={16} />
+      </IconButton>
+      <Separator orientation="vertical" height="6" alignSelf="center" mx="1" />
+      {BLOCK_ACTIONS.map((action) => {
+        const active = state.active[action.key] === true;
+        return (
+          <IconButton
+            key={action.key}
+            aria-label={action.label}
+            title={action.label}
+            size="xs"
+            variant={active ? "subtle" : "ghost"}
+            // Toggles say whether they are on; a lit button alone is colour
+            // doing the work of a state.
+            aria-pressed={action.key === "horizontalRule" ? undefined : active}
+            onClick={() => action.run(editor)}
+          >
+            {action.icon}
+          </IconButton>
+        );
+      })}
       <Separator orientation="vertical" height="6" alignSelf="center" mx="1" />
       <IconButton
-        aria-label="Link"
-        title="Link"
+        aria-label={state.link ? "Edit link" : "Link"}
+        title={state.canLink ? (state.link ? "Edit link" : "Link") : "Select text to link it"}
         size="xs"
-        variant={editor.isActive("link") ? "subtle" : "ghost"}
+        variant={state.link ? "subtle" : "ghost"}
+        disabled={!state.canLink}
         onClick={() => setLinkOpen(true)}
       >
         <Link2 size={16} />
       </IconButton>
+      {state.link ? (
+        <IconButton
+          aria-label="Remove link"
+          title="Remove link"
+          size="xs"
+          variant="ghost"
+          onClick={removeLink}
+        >
+          <Link2Off size={16} />
+        </IconButton>
+      ) : null}
 
       {onInteractiveBlock ? (
         <IconButton
           aria-label="Interactive block"
           title="Interactive block"
           size="xs"
-          variant={editor.isActive(INTERACTIVE_BLOCK_NODE_TYPE) ? "subtle" : "ghost"}
+          variant={state.interactiveBlock ? "subtle" : "ghost"}
           onClick={onInteractiveBlock}
         >
           <Boxes size={16} />
@@ -366,12 +447,12 @@ function Toolbar({
 
       {linkOpen ? (
         <PromptDialog
-          title="Add link"
+          title={state.link ? "Edit link" : "Add link"}
           label="URL"
-          initialValue={currentHref}
+          initialValue={currentHref()}
           placeholder="https://example.org"
           helperText="http, https, mailto, or a path inside Ambatucode."
-          confirmLabel="Add link"
+          confirmLabel={state.link ? "Update link" : "Add link"}
           onConfirm={setLink}
           onClose={() => setLinkOpen(false)}
         />

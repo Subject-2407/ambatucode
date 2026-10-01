@@ -3,6 +3,8 @@ import { type Prisma, prisma } from "@ambatucode/db";
 import {
   AppError,
   type AuthenticatedUser,
+  type BulkDecideEnrollmentsRequest,
+  type BulkDecideEnrollmentsResult,
   type DecideEnrollmentRequest,
   type EnrollmentRequestResult,
   type EnrollmentView,
@@ -146,4 +148,58 @@ export async function decideEnrollment(
   });
 
   return toEnrollmentView(updated);
+}
+
+/**
+ * Which rows a bulk decision may touch.
+ *
+ * Always scoped to the module in the path, so an id from someone else's module
+ * is simply not matched — the same rule `decideEnrollment` applies to one row.
+ * A row already in the chosen state is left out as well: approving a Coder who
+ * was approved last week would otherwise overwrite who approved them and when.
+ */
+export function bulkDecisionWhere(
+  moduleId: string,
+  input: BulkDecideEnrollmentsRequest,
+): Prisma.ModuleEnrollmentWhereInput {
+  return input.target === "ALL_PENDING"
+    ? { moduleId, status: "PENDING" }
+    : { moduleId, id: { in: input.enrollmentIds }, status: { not: input.status } };
+}
+
+/**
+ * One decision across many requests: the ticked rows, or the whole pending
+ * queue.
+ *
+ * A selection naming a request this module does not hold is refused outright,
+ * as a single decision on it would be, rather than quietly applied to the rest
+ * — a count that comes back short of what was ticked is a puzzle, while a
+ * refusal says something on the page is stale. The check and the write share a
+ * transaction so the answer describes the rows that were actually written.
+ */
+export async function decideEnrollments(
+  actor: AuthenticatedUser,
+  moduleId: string,
+  input: BulkDecideEnrollmentsRequest,
+): Promise<BulkDecideEnrollmentsResult> {
+  await requireModuleOwner(actor, moduleId);
+
+  const decision = { status: input.status, decidedById: actor.id, decidedAt: new Date() };
+
+  return prisma.$transaction(async (tx) => {
+    if (input.target === "SELECTED") {
+      const held = await tx.moduleEnrollment.count({
+        where: { moduleId, id: { in: input.enrollmentIds } },
+      });
+      if (held !== input.enrollmentIds.length) {
+        throw new AppError("NOT_FOUND", "Enrollment request not found");
+      }
+    }
+
+    const { count } = await tx.moduleEnrollment.updateMany({
+      where: bulkDecisionWhere(moduleId, input),
+      data: decision,
+    });
+    return { updated: count };
+  });
 }

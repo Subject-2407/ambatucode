@@ -38,9 +38,15 @@ export function useModules(query: ListModulesQuery) {
   });
 }
 
-/** The module with its section tree. Sections come back empty until the viewer may read them. */
+/**
+ * The module with its section tree. Sections come back empty until the viewer may read them.
+ *
+ * Idle while the id is empty, for callers that learn it from another query —
+ * otherwise the first render asks for `/api/modules/`, a request nobody wanted.
+ */
 export function useModule(moduleId: string) {
   return useQuery({
+    enabled: moduleId !== "",
     queryKey: moduleKeys.detail(moduleId),
     queryFn: ({ signal }) => apiClient.get<ModuleDetail>(`${BASE}/${moduleId}`, { signal }),
   });

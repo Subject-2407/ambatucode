@@ -98,11 +98,12 @@ export async function deleteSection(actor: AuthenticatedUser, sectionId: string)
     });
   } catch (error) {
     // An Assessment that has been answered cannot be deleted, so a Section
-    // holding graded history refuses to disappear with it.
+    // holding graded history refuses to disappear with it. Sections have no
+    // publish flag of their own, so the way to hide one is through what it holds.
     if (isPrismaErrorCode(error, PRISMA_FOREIGN_KEY_VIOLATION)) {
       throw new AppError(
         "CONFLICT",
-        "This section has graded history and cannot be deleted; unpublish it instead",
+        "This section holds an assessment with graded history and cannot be deleted; unpublish its materials and assessments instead",
       );
     }
     throw error;

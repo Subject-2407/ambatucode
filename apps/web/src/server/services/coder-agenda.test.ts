@@ -63,6 +63,10 @@ describe("classifySession", () => {
 
   it("points at the lobby of a session that is ready but not started", () => {
     expect(classifySession({ status: "READY", eligible: true, attempt: null })).toBe("WAITING");
+    // Admitted, but not expected: there is no ready button for them to press.
+    expect(
+      classifySession({ status: "READY", eligible: true, onRoster: false, attempt: null }),
+    ).toBeNull();
     expect(classifySession({ status: "DRAFT", eligible: true, attempt: null })).toBeNull();
   });
 });

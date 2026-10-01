@@ -190,6 +190,10 @@ export function useAttemptSocket(input: {
 
     return () => {
       clearInterval(heartbeat);
+      // The socket belongs to the whole app and outlives this page. Without
+      // saying so, a Coder who left for the dashboard stayed "in the attempt"
+      // and an Individual clock kept running while they were not working.
+      if (socket.connected) socket.emit(CLIENT_EVENTS.ATTEMPT_LEAVE, { attemptId });
       socket.off("connect", join);
       socket.off("disconnect", onDisconnect);
       socket.off(SERVER_EVENTS.ATTEMPT_STATE, onAttemptState);

@@ -14,7 +14,7 @@ import {
 } from "@/providers/color-mode";
 import { useSession } from "@/providers/session-provider";
 import { PIXEL, pixelSkin } from "@/theme/pixel";
-import type { NavItem } from "./navigation";
+import { isNavItemActive, type NavItem } from "./navigation";
 
 /**
  * Navigation as a row of equipment slots rather than a list of links.
@@ -57,10 +57,6 @@ const SLOT_HEIGHT = "56px";
  * instead of shifting Log out under the reader's thumb.
  */
 const PHONE_SLOT_MIN_WIDTH = "44px";
-
-function isActive(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
 
 export function InventoryRail({
   items,
@@ -111,7 +107,7 @@ export function InventoryRail({
         width={{ md: "full" }}
       >
         {items.map((item) => (
-          <RailSlot key={item.href} item={item} active={isActive(pathname, item.href)} />
+          <RailSlot key={item.href} item={item} active={isNavItemActive(pathname, item)} />
         ))}
       </Flex>
 

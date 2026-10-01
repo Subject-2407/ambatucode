@@ -27,10 +27,16 @@ export function AssessmentList({
   moduleId,
   sectionId,
   assessments,
+  beforeLeave = (proceed) => proceed(),
 }: {
   moduleId: string;
   sectionId: string | null;
   assessments: AssessmentSummary[];
+  /**
+   * Opening an Assessment leaves the builder, and with it any unsaved material
+   * edits. The builder decides whether that needs asking about first.
+   */
+  beforeLeave?: (proceed: () => void) => void;
 }) {
   const router = useRouter();
   const createAssessment = useCreateAssessment(moduleId, sectionId ?? "");
@@ -38,9 +44,16 @@ export function AssessmentList({
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<AssessmentSummary | null>(null);
 
+  function open(assessmentId: string) {
+    beforeLeave(() => router.push(routes.manageAssessment(assessmentId)));
+  }
+
+  /**
+   * The dialog stays open until the server answers, so its loading state is
+   * real and a failed create keeps the typed title for a retry.
+   */
   async function add(title: string) {
-    setAdding(false);
-    if (sectionId === null) return;
+    if (sectionId === null || createAssessment.isPending) return;
 
     try {
       // Created untimed and unpublished with a placeholder statement: the
@@ -69,7 +82,8 @@ export function AssessmentList({
         },
         isPublished: false,
       });
-      router.push(routes.manageAssessment(created.id));
+      setAdding(false);
+      open(created.id);
     } catch (error) {
       toaster.error({
         title: "Could not add the assessment",
@@ -79,7 +93,6 @@ export function AssessmentList({
   }
 
   async function remove(assessment: AssessmentSummary) {
-    setDeleting(null);
     try {
       await deleteAssessment.mutateAsync(assessment.id);
       toaster.success({ title: `Deleted ${assessment.title}` });
@@ -88,6 +101,8 @@ export function AssessmentList({
         title: "Could not delete the assessment",
         description: isApiError(error) ? error.userMessage : undefined,
       });
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -124,18 +139,11 @@ export function AssessmentList({
               key={assessment.id}
               align="center"
               gap="1"
-              {...pixelSkin(
-                "var(--amb-colors-border-default)",
-                "var(--amb-colors-bg-surface)",
-                2,
-              )}
+              {...pixelSkin("var(--amb-colors-border-default)", "var(--amb-colors-bg-surface)", 2)}
               padding="2"
             >
               <Box asChild flex="1" minWidth="0" textAlign="start">
-                <button
-                  type="button"
-                  onClick={() => router.push(routes.manageAssessment(assessment.id))}
-                >
+                <button type="button" onClick={() => open(assessment.id)}>
                   <HStack gap="2" minWidth="0">
                     <ClipboardCheck size={14} aria-hidden />
                     <Text fontSize="sm" truncate>

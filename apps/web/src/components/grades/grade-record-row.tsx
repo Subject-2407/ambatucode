@@ -6,6 +6,7 @@ import type { GradeAttemptView, GradeRecordView, SubmissionStatus } from "@ambat
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table } from "@/components/ui/table";
+import { needsOfficialChoice, unsubmittedAttemptLabel } from "./grade-record-state";
 
 /**
  * One Coder's work at one Assessment Session: every attempt, and which of them
@@ -96,8 +97,8 @@ function AttemptLine({
         </RadioGroup.Item>
 
         {attempt.submission === null ? (
-          <Badge tone="neutral" size="sm">
-            {attempt.status === "NOT_STARTED" ? "Not started" : "No submission"}
+          <Badge tone={attempt.status === "IN_PROGRESS" ? "info" : "neutral"} size="sm">
+            {unsubmittedAttemptLabel(attempt.status)}
           </Badge>
         ) : (
           <>
@@ -147,12 +148,15 @@ function AttemptLine({
 
 export function GradeRecordRow({
   record,
+  number,
   busy,
   onReset,
   onSetOfficial,
   onViewCode,
 }: {
   record: GradeRecordView;
+  /** Position in the whole filtered set, so "row 40" means the same thing on every page. */
+  number: number;
   busy: boolean;
   onReset: (attempt: GradeAttemptView) => void;
   onSetOfficial: (attemptId: string) => void;
@@ -160,6 +164,12 @@ export function GradeRecordRow({
 }) {
   return (
     <Table.Row>
+      <Table.Cell verticalAlign="top" textAlign="end">
+        <Text fontSize="xs" color="fg.muted" fontVariantNumeric="tabular-nums">
+          {number}
+        </Text>
+      </Table.Cell>
+
       <Table.Cell verticalAlign="top">
         <Stack gap="0.5">
           <Text fontWeight="medium">{record.displayName}</Text>
@@ -181,7 +191,7 @@ export function GradeRecordRow({
       <Table.Cell verticalAlign="top" textAlign="end">
         <Stack gap="0.5" align="end">
           <ScoreText score={record.officialScore} />
-          {record.officialAttemptId === null ? (
+          {needsOfficialChoice(record) ? (
             <Text fontSize="xs" color="warning.fg">
               Choose an attempt
             </Text>

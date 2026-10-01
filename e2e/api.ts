@@ -126,7 +126,9 @@ export async function buildAssessment(
     page.request,
     "post",
     `/api/assessments/${assessment.id}/sessions`,
-    { name: `Class ${suffix}` },
+    // Open to the module: a session limited to chosen Coders cannot start
+    // until someone is chosen, and most specs only need it to run.
+    { name: `Class ${suffix}`, access: "MODULE" },
   );
 
   return {

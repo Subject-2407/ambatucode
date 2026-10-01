@@ -12,6 +12,7 @@ import {
   ASSESSMENT_SESSION_STATUSES,
   CONNECTION_STATES,
   LANGUAGES,
+  PARTICIPANT_PRESENCES,
   READY_STATES,
   SUBMISSION_STATUSES,
   TEST_RESULT_STATUSES,
@@ -26,8 +27,16 @@ import type { AttemptStatus, Language } from "./enums";
 
 export const CLIENT_EVENTS = {
   ATTEMPT_JOIN: "attempt:join",
+  /**
+   * The workspace closed without the socket closing — the Coder went to another
+   * page of the app. Without it the server kept them "online" in the attempt
+   * and an Individual clock kept running while they read a Material.
+   */
+  ATTEMPT_LEAVE: "attempt:leave",
   ATTEMPT_HEARTBEAT: "attempt:heartbeat",
   ATTEMPT_READY: "attempt:ready",
+  /** The lobby closed without the socket closing, for the same reason. */
+  LOBBY_LEAVE: "lobby:leave",
   ATTEMPT_DRAFT: "attempt:draft",
   ANTICHEAT_FOCUS: "anticheat:focus",
   ANTICHEAT_CLIPBOARD: "anticheat:clipboard",
@@ -71,6 +80,8 @@ export const rooms = {
 // --- Client -> server payloads (validated on arrival) -----------------------
 
 export const attemptJoinPayloadSchema = z.object({ attemptId: z.string().min(1) });
+export const attemptLeavePayloadSchema = z.object({ attemptId: z.string().min(1) });
+export const lobbyLeavePayloadSchema = z.object({ sessionId: z.string().min(1) });
 export const attemptHeartbeatPayloadSchema = z.object({ attemptId: z.string().min(1) });
 export const attemptReadyPayloadSchema = z.object({
   sessionId: z.string().min(1),
@@ -96,6 +107,8 @@ export const leaderboardJoinPayloadSchema = z.object({
 });
 
 export type AttemptJoinPayload = z.infer<typeof attemptJoinPayloadSchema>;
+export type AttemptLeavePayload = z.infer<typeof attemptLeavePayloadSchema>;
+export type LobbyLeavePayload = z.infer<typeof lobbyLeavePayloadSchema>;
 export type AttemptHeartbeatPayload = z.infer<typeof attemptHeartbeatPayloadSchema>;
 export type AttemptReadyPayload = z.infer<typeof attemptReadyPayloadSchema>;
 export type AttemptDraftPayload = z.infer<typeof attemptDraftPayloadSchema>;
@@ -230,6 +243,7 @@ export const monitorParticipantPayloadSchema = z.object({
   displayName: z.string(),
   readyState: z.enum(READY_STATES),
   connectionState: z.enum(CONNECTION_STATES),
+  presence: z.enum(PARTICIPANT_PRESENCES),
   lastSeenAt: z.number().nullable(),
 });
 export type MonitorParticipantPayload = z.infer<typeof monitorParticipantPayloadSchema>;
@@ -265,6 +279,8 @@ export type { AchievementAwardedPayload, LeaderboardUpdatePayload };
 
 export type ClientToServerEvents = {
   [CLIENT_EVENTS.ATTEMPT_JOIN]: (payload: AttemptJoinPayload, ack?: AckFn) => void;
+  [CLIENT_EVENTS.ATTEMPT_LEAVE]: (payload: AttemptLeavePayload, ack?: AckFn) => void;
+  [CLIENT_EVENTS.LOBBY_LEAVE]: (payload: LobbyLeavePayload, ack?: AckFn) => void;
   [CLIENT_EVENTS.ATTEMPT_HEARTBEAT]: (payload: AttemptHeartbeatPayload, ack?: AckFn) => void;
   [CLIENT_EVENTS.ATTEMPT_READY]: (payload: AttemptReadyPayload, ack?: AckFn) => void;
   [CLIENT_EVENTS.ATTEMPT_DRAFT]: (payload: AttemptDraftPayload, ack?: AckFn) => void;
@@ -306,3 +322,11 @@ export const HEARTBEAT_INTERVAL_MS = 10_000;
 export const TICK_INTERVAL_MS = 5_000;
 /** A reload should not look like an incident — debounce before logging. */
 export const DISCONNECT_DEBOUNCE_MS = 3_000;
+/**
+ * How often apps/realtime vouches for the connections it holds, and how long a
+ * claim of "online" survives without being vouched for. The gap is what lets a
+ * row written by an instance that crashed — and so never marked anyone offline
+ * — correct itself instead of showing a Coder as present forever.
+ */
+export const PRESENCE_REFRESH_MS = 30_000;
+export const PRESENCE_STALE_MS = 90_000;

@@ -22,6 +22,23 @@ export const REDIS_CHANNELS = {
   GAMIFICATION: "ambatucode:gamification",
 } as const;
 
+/**
+ * Plain keys rather than channels, shared for the same reason: apps/realtime
+ * writes them and apps/web reads them.
+ *
+ * `presence` is the set of socket ids a user has open on any page of the
+ * platform. apps/realtime adds and removes members as sockets come and go and
+ * keeps the key alive with a TTL while it holds one, so a crashed instance's
+ * sockets age out instead of keeping a Coder "online" forever. apps/web only
+ * asks whether the key exists.
+ */
+export const REDIS_KEYS = {
+  presence: (userId: string) => `ambatucode:presence:${userId}` as const,
+} as const;
+
+/** Long enough to survive two missed refreshes; see PRESENCE_REFRESH_MS. */
+export const PRESENCE_KEY_TTL_SECONDS = 90;
+
 export const sessionRevokedMessageSchema = z.object({
   sessionIds: z.array(z.string().min(1)).min(1),
   userId: z.string().min(1),

@@ -15,7 +15,12 @@ import {
 import { getRedis, closeRedis } from "../redis";
 import { closeQueueConnection, getRunQueue, runOwnerKey } from "../queue/producer";
 import { createModule, deleteModule, getModule, listModules, updateModule } from "./modules";
-import { decideEnrollment, listEnrollments, requestEnrollment } from "./enrollments";
+import {
+  decideEnrollment,
+  decideEnrollments,
+  listEnrollments,
+  requestEnrollment,
+} from "./enrollments";
 import { createSection, deleteSection, listSections, reorderSections } from "./sections";
 import { createMaterial, getMaterial, listMaterials, updateMaterial } from "./materials";
 import { moduleSequence, nextModuleItem } from "./module-progression";
@@ -271,6 +276,73 @@ describe("enrollment", () => {
         decideEnrollment(owner, second.id, queue.items[0]!.id, { status: "APPROVED" }),
       ),
     ).toBe("NOT_FOUND");
+  });
+
+  it("decides many requests at once, inside the owner's own module only", async () => {
+    const [mine, theirs] = await Promise.all([
+      createModule(owner, { title: `Bulk A ${suffix}`, visibility: "CLOSED", isPublished: true }),
+      createModule(owner, { title: `Bulk B ${suffix}`, visibility: "CLOSED", isPublished: true }),
+    ]);
+    await requestEnrollment(enrolledCoder, mine.id);
+    await requestEnrollment(strangerCoder, mine.id);
+    await requestEnrollment(enrolledCoder, theirs.id);
+
+    const queue = await listEnrollments(owner, mine.id, { page: 1, pageSize: 25 });
+    const elsewhere = await listEnrollments(owner, theirs.id, { page: 1, pageSize: 25 });
+    const [first] = queue.items;
+    if (first === undefined || elsewhere.items[0] === undefined) throw new Error("no requests");
+
+    // A selection that reaches into another module is refused whole, not
+    // applied to the part that happened to fit.
+    expect(
+      await refusalCode(() =>
+        decideEnrollments(owner, mine.id, {
+          target: "SELECTED",
+          status: "REJECTED",
+          enrollmentIds: [first.id, elsewhere.items[0]!.id],
+        }),
+      ),
+    ).toBe("NOT_FOUND");
+    for (const reader of [otherArchitect, root, enrolledCoder]) {
+      expect(
+        await refusalCode(() =>
+          decideEnrollments(reader, mine.id, { target: "ALL_PENDING", status: "APPROVED" }),
+        ),
+      ).toBe("FORBIDDEN");
+    }
+
+    const declined = await decideEnrollments(owner, mine.id, {
+      target: "SELECTED",
+      status: "REJECTED",
+      enrollmentIds: [first.id],
+    });
+    expect(declined.updated).toBe(1);
+    // Already declined, so there is nothing to change — and its decider stays.
+    expect(
+      (
+        await decideEnrollments(owner, mine.id, {
+          target: "SELECTED",
+          status: "REJECTED",
+          enrollmentIds: [first.id],
+        })
+      ).updated,
+    ).toBe(0);
+
+    const approved = await decideEnrollments(owner, mine.id, {
+      target: "ALL_PENDING",
+      status: "APPROVED",
+    });
+    expect(approved.updated).toBe(1);
+    expect(
+      (await listEnrollments(owner, mine.id, { page: 1, pageSize: 25, status: "PENDING" })).total,
+    ).toBe(0);
+    // The declined request was not pending, so approving the queue left it alone.
+    expect(
+      (await listEnrollments(owner, mine.id, { page: 1, pageSize: 25, status: "REJECTED" })).total,
+    ).toBe(1);
+    expect(
+      (await listEnrollments(owner, theirs.id, { page: 1, pageSize: 25, status: "PENDING" })).total,
+    ).toBe(1);
   });
 });
 

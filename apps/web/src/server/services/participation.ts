@@ -6,6 +6,12 @@ export type SessionEligibility = {
   eligible: boolean;
   /** True when the Coder is on the participant list, not merely admitted. */
   listed: boolean;
+  /**
+   * True when the session expects this Coder, which is what gives them a
+   * readiness to declare. Mirrors `rosterSource`: the list when the session is
+   * limited to one, everyone enrolled when it is open to the Module.
+   */
+  onRoster: boolean;
 };
 
 /**
@@ -17,8 +23,9 @@ export type SessionEligibility = {
  *   to walk in without being named first, and it is what the implicit session
  *   behind an open-access Assessment always carries.
  * - A Live session is otherwise its list: nobody else takes part.
- * - An Individual or Untimed session is open to every enrolled Coder until the
- *   Architect writes a list, and restricted to that list once they have.
+ * - An Individual or Untimed session limited to a list with nobody on it is
+ *   open to every enrolled Coder. A session in that state can no longer be
+ *   started, so this only keeps sessions started before that rule usable.
  *
  * Coders who joined an open session also have participant rows, but unlisted
  * ones — they are tracked, not invited, so they never make a session restricted.
@@ -28,17 +35,18 @@ export async function sessionEligibility(
   userId: string,
   executionMode: ExecutionMode | null,
   access: SessionAccess = "LISTED",
+  isOpenAccess = false,
 ): Promise<SessionEligibility> {
   const own = await prisma.assessmentParticipant.findUnique({
     where: { sessionId_userId: { sessionId, userId } },
     select: { isListed: true },
   });
-  if (own?.isListed) return { eligible: true, listed: true };
-  if (access === "MODULE") return { eligible: true, listed: false };
-  if (executionMode === "LIVE") return { eligible: false, listed: false };
+  if (own?.isListed) return { eligible: true, listed: true, onRoster: !isOpenAccess };
+  if (access === "MODULE") return { eligible: true, listed: false, onRoster: !isOpenAccess };
+  if (executionMode === "LIVE") return { eligible: false, listed: false, onRoster: false };
 
   const listed = await prisma.assessmentParticipant.count({
     where: { sessionId, isListed: true },
   });
-  return { eligible: listed === 0, listed: false };
+  return { eligible: listed === 0, listed: false, onRoster: false };
 }
