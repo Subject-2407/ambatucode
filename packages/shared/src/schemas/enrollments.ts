@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ENROLLMENT_STATUSES, type EnrollmentStatus } from "../enums";
+import { cuidSchema } from "./common";
 
 /**
  * Enrollment. A Public Module grants access on request; a Closed one records
@@ -18,6 +19,42 @@ export const decideEnrollmentRequestSchema = z.object({
   status: z.enum(ENROLLMENT_DECISIONS),
 });
 export type DecideEnrollmentRequest = z.infer<typeof decideEnrollmentRequestSchema>;
+
+/** The most requests one bulk decision may name: the largest page the queue serves. */
+export const BULK_ENROLLMENT_LIMIT = 100;
+
+/**
+ * One decision applied to many requests at once.
+ *
+ * `SELECTED` names the rows the Architect ticked, and either decision may be
+ * applied to them. `ALL_PENDING` names no rows — it is the whole queue as it
+ * stands when the request lands — and may only approve: clearing a queue by
+ * letting everybody in is the routine case, while declining a class nobody has
+ * looked at is a mistake the shortcut should not make easy.
+ */
+export const bulkDecideEnrollmentsRequestSchema = z.discriminatedUnion("target", [
+  z.object({
+    target: z.literal("SELECTED"),
+    status: z.enum(ENROLLMENT_DECISIONS),
+    enrollmentIds: z
+      .array(cuidSchema)
+      .min(1)
+      .max(BULK_ENROLLMENT_LIMIT)
+      .refine((ids) => new Set(ids).size === ids.length, {
+        message: "Each enrollment request may be named once",
+      }),
+  }),
+  z.object({
+    target: z.literal("ALL_PENDING"),
+    status: z.literal("APPROVED"),
+  }),
+]);
+export type BulkDecideEnrollmentsRequest = z.infer<typeof bulkDecideEnrollmentsRequestSchema>;
+
+export type BulkDecideEnrollmentsResult = {
+  /** Requests whose status changed. One already in the chosen state is left alone. */
+  updated: number;
+};
 
 export const listEnrollmentsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
