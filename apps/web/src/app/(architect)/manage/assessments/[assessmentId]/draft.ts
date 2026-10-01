@@ -5,7 +5,9 @@ import type {
   ExitPolicy,
   GradingStrategy,
   Language,
+  SampleCaseView,
   StarterCodeMap,
+  TestCaseView,
   TimeMode,
   UpdateAssessmentRequest,
 } from "@ambatucode/shared";
@@ -88,6 +90,107 @@ export function diffAssessment(
   if (draft.isOpenAccess !== saved.isOpenAccess) patch.isOpenAccess = draft.isOpenAccess;
 
   return patch;
+}
+
+export type DraftField = keyof AssessmentDraft;
+
+/** How a field is named when the editor has to talk about it. */
+export const DRAFT_FIELD_LABEL: Readonly<Record<DraftField, string>> = {
+  title: "Title",
+  problemStatement: "Problem statement",
+  allowedLanguages: "Allowed languages",
+  starterCode: "Starter code",
+  timeMode: "Time constraint",
+  durationMinutes: "Duration",
+  executionMode: "Execution mode",
+  timeLimitMs: "Time limit",
+  memoryLimitMb: "Memory limit",
+  gradingStrategy: "Grading",
+  exitPolicy: "Leaving the workspace",
+  antiCheat: "Anti-cheat",
+  isPublished: "Published",
+  isOpenAccess: "Open access",
+};
+
+/** The fields where `draft` says something other than `saved`. */
+export function changedFields(
+  saved: AssessmentArchitectView,
+  draft: AssessmentDraft,
+): DraftField[] {
+  // The patch already holds exactly one key per differing field, and its keys
+  // are the draft's own; computing equality twice would let the two drift.
+  return Object.keys(diffAssessment(saved, draft)) as DraftField[];
+}
+
+/**
+ * Carries an in-progress draft across a change to the saved Assessment.
+ *
+ * The saved Assessment changes under the editor more often than it looks:
+ * saving a reference solution, adding a test case, or a validation finishing
+ * all re-read it. Reseeding the draft from each new read threw away whatever
+ * the Architect had not saved yet, and keeping the old draft unchanged would
+ * quietly revert, on the next save, any field someone else had changed since.
+ *
+ * So this is a three-way merge against the read the draft started from. Fields
+ * the Architect edited keep their edit; every other field takes the new saved
+ * value. A field both sides changed, to different values, keeps the
+ * Architect's edit and is reported, because saving will overwrite the other
+ * change and they should know that before they do.
+ */
+export function rebaseDraft(
+  base: AssessmentArchitectView,
+  draft: AssessmentDraft,
+  latest: AssessmentArchitectView,
+): { draft: AssessmentDraft; conflicts: DraftField[] } {
+  const mine = changedFields(base, draft);
+  const theirs = new Set(changedFields(base, draftFrom(latest)));
+
+  const next = draftFrom(latest);
+  for (const field of mine) copyField(next, draft, field);
+
+  const stillDiffers = new Set(changedFields(latest, next));
+  const conflicts = mine.filter((field) => theirs.has(field) && stillDiffers.has(field));
+
+  return { draft: next, conflicts };
+}
+
+/** Replaces the named fields of `draft` with their saved values. */
+export function takeSaved(
+  draft: AssessmentDraft,
+  saved: AssessmentArchitectView,
+  fields: readonly DraftField[],
+): AssessmentDraft {
+  const next = { ...draft };
+  const source = draftFrom(saved);
+  for (const field of fields) copyField(next, source, field);
+  return next;
+}
+
+function copyField<K extends DraftField>(
+  target: AssessmentDraft,
+  source: AssessmentDraft,
+  field: K,
+): void {
+  target[field] = source[field];
+}
+
+/**
+ * The sample cases a Coder is shown: the public test cases, in order, with
+ * nothing but their name, input, and expected output.
+ *
+ * Mirrors the server's workspace serializer, so the editor's preview can show
+ * exactly what an attempt will. The fields are copied out one by one rather
+ * than spread, so a weight or a comparison mode never rides along into a
+ * component built for the Coder's view.
+ */
+export function sampleCasesFrom(testCases: readonly TestCaseView[]): SampleCaseView[] {
+  return testCases
+    .filter((testCase) => testCase.kind === "PUBLIC")
+    .map((testCase) => ({
+      name: testCase.name,
+      input: testCase.input,
+      expectedOutput: testCase.expectedOutput,
+    }));
 }
 
 /**

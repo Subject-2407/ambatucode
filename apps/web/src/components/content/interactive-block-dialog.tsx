@@ -15,11 +15,13 @@ import {
 } from "@ambatucode/shared";
 import { SourceEditor } from "@/components/editor/code-editor";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal } from "@/components/ui/modal";
 import { TextField } from "@/components/ui/input";
 import { TabBar, TabPanel } from "@/components/ui/tabs";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { InteractiveBlock } from "./interactive-block";
+import { blockChanged, previewNotice } from "./interactive-block-draft";
 
 /**
  * Authoring an Interactive Block: three source panes and a live preview.
@@ -63,6 +65,7 @@ export function InteractiveBlockDialog({
   const [draft, setDraft] = useState(block);
   const [activePane, setActivePane] = useState<PaneKey>("html");
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const panelId = useId();
 
   // Every new document tears the frame down and restarts it, so previewing on
@@ -81,132 +84,166 @@ export function InteractiveBlockDialog({
   const overflowing = PANES.filter((pane) => utf8ByteLength(draft[pane.key]) > pane.limit);
   const parsed = interactiveBlockAttrsSchema.safeParse(draft);
   const canSave = parsed.success && overflowing.length === 0;
+  const notice = previewNotice({
+    previewValid: preview.success,
+    draftValid: parsed.success,
+    overflowing: overflowing.map((pane) => pane.label),
+    firstIssue: parsed.success ? undefined : parsed.error.issues[0]?.message,
+  });
+
+  /**
+   * Every way out — Cancel, Escape, the close button, a click on the backdrop —
+   * asks first when there is something to lose. Three panes of source are an
+   * afternoon's work, and one stray click outside the dialog used to discard it.
+   */
+  function requestClose() {
+    if (blockChanged(block, draft)) setConfirmingDiscard(true);
+    else onClose();
+  }
 
   return (
-    <Modal
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-      title="Interactive block"
-      size="lg"
-      footer={
-        <Flex gap="2" justify="flex-end">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            disabled={!canSave}
-            onClick={() => {
-              if (parsed.success) onSave(parsed.data);
-            }}
-          >
-            Save block
-          </Button>
-        </Flex>
-      }
-    >
-      <Flex direction="column" gap="4">
-        <TextField
-          label="Title"
-          helperText="Shown in the platform framing around the block."
-          value={draft.title}
-          maxLength={160}
-          placeholder="Binary search visualiser"
-          onChange={(event) => update("title", event.target.value)}
-        />
+    <>
+      <Modal
+        open={open}
+        onOpenChange={(next) => {
+          if (!next) requestClose();
+        }}
+        title="Interactive block"
+        size="lg"
+        footer={
+          <Flex gap="2" justify="flex-end">
+            <Button variant="ghost" onClick={requestClose}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!canSave}
+              onClick={() => {
+                if (parsed.success) onSave(parsed.data);
+              }}
+            >
+              Save block
+            </Button>
+          </Flex>
+        }
+      >
+        <Flex direction="column" gap="4">
+          <TextField
+            label="Title"
+            helperText="Shown in the platform framing around the block."
+            value={draft.title}
+            maxLength={160}
+            placeholder="Binary search visualiser"
+            onChange={(event) => update("title", event.target.value)}
+          />
 
-        <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap="4" alignItems="start">
-          <Flex direction="column" gap="2" minWidth="0">
-            <TabBar
-              aria-label="Block source"
-              value={activePane}
-              onValueChange={(value) => setActivePane(value as PaneKey)}
-              items={PANES.map((pane) => ({
-                value: pane.key,
-                label: paneLabel(pane, draft[pane.key]),
-              }))}
-              controls={panelId}
-            />
-            <TabPanel id={panelId} value={activePane}>
-              {PANES.map((pane) => (
-                // Every pane stays mounted. Monaco is expensive to create, and
-                // unmounting one would throw away the undo history an Architect
-                // built up in it.
-                <Box
-                  key={pane.key}
-                  display={pane.key === activePane ? "block" : "none"}
-                  height="20rem"
-                  borderWidth="1px"
-                  borderColor={
-                    utf8ByteLength(draft[pane.key]) > pane.limit ? "border.error" : "border.default"
-                  }
-                  borderRadius="md"
-                  overflow="hidden"
-                >
-                  <SourceEditor
-                    monacoLanguage={pane.monaco}
-                    tabSize={2}
-                    value={draft[pane.key]}
-                    onChange={(value) => update(pane.key, value)}
-                    ariaLabel={`Interactive block ${pane.label}`}
+          <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap="4" alignItems="start">
+            <Flex direction="column" gap="2" minWidth="0">
+              <TabBar
+                aria-label="Block source"
+                value={activePane}
+                onValueChange={(value) => setActivePane(value as PaneKey)}
+                items={PANES.map((pane) => ({
+                  value: pane.key,
+                  label: paneLabel(pane, draft[pane.key]),
+                }))}
+                controls={panelId}
+              />
+              <TabPanel id={panelId} value={activePane}>
+                {PANES.map((pane) => (
+                  // Every pane stays mounted. Monaco is expensive to create, and
+                  // unmounting one would throw away the undo history an Architect
+                  // built up in it.
+                  <Box
+                    key={pane.key}
+                    display={pane.key === activePane ? "block" : "none"}
+                    height="20rem"
+                    borderWidth="1px"
+                    borderColor={
+                      utf8ByteLength(draft[pane.key]) > pane.limit
+                        ? "border.error"
+                        : "border.default"
+                    }
+                    borderRadius="md"
+                    overflow="hidden"
+                  >
+                    <SourceEditor
+                      monacoLanguage={pane.monaco}
+                      tabSize={2}
+                      value={draft[pane.key]}
+                      onChange={(value) => update(pane.key, value)}
+                      ariaLabel={`Interactive block ${pane.label}`}
+                    />
+                  </Box>
+                ))}
+              </TabPanel>
+            </Flex>
+
+            <Flex direction="column" gap="2" minWidth="0">
+              <Text fontSize="sm" color="fg.muted">
+                Preview
+              </Text>
+              <Box maxHeight="22rem" overflowY="auto">
+                {notice === null && preview.success ? (
+                  <InteractiveBlock
+                    key={preview.data.id}
+                    block={preview.data}
+                    onRuntimeError={setRuntimeError}
+                    eager
                   />
-                </Box>
-              ))}
-            </TabPanel>
-          </Flex>
-
-          <Flex direction="column" gap="2" minWidth="0">
-            <Text fontSize="sm" color="fg.muted">
-              Preview
-            </Text>
-            <Box maxHeight="22rem" overflowY="auto">
-              {preview.success ? (
-                <InteractiveBlock
-                  key={preview.data.id}
-                  block={preview.data}
-                  onRuntimeError={setRuntimeError}
-                  eager
-                />
-              ) : (
-                <Text fontSize="sm" color="fg.muted">
-                  Fix the fields flagged below to see a preview.
-                </Text>
-              )}
-            </Box>
-            {runtimeError ? (
-              <Box
-                borderWidth="1px"
-                borderColor="border.error"
-                borderRadius="md"
-                bg="bg.error"
-                px="3"
-                py="2"
-              >
-                {/* A block has no console of its own; without this an Architect
-                    debugging one is completely blind. */}
-                <Text fontSize="xs" textStyle="data" color="fg.error">
-                  {runtimeError}
-                </Text>
+                ) : (
+                  <Text fontSize="sm" color="fg.muted">
+                    {notice}
+                  </Text>
+                )}
               </Box>
-            ) : null}
-          </Flex>
-        </Grid>
+              {runtimeError ? (
+                <Box
+                  borderWidth="1px"
+                  borderColor="border.error"
+                  borderRadius="md"
+                  bg="bg.error"
+                  px="3"
+                  py="2"
+                >
+                  {/* A block has no console of its own; without this an Architect
+                    debugging one is completely blind. */}
+                  <Text fontSize="xs" textStyle="data" color="fg.error">
+                    {runtimeError}
+                  </Text>
+                </Box>
+              ) : null}
+            </Flex>
+          </Grid>
 
-        {overflowing.length > 0 ? (
-          <Text fontSize="sm" color="fg.error">
-            Over the limit: {overflowing.map((pane) => pane.label).join(", ")}. Trim before saving.
-          </Text>
-        ) : (
-          <Text fontSize="sm" color="fg.muted">
-            {formatBytes(used)} in this block. A material holds at most {MAX_BLOCKS_PER_MATERIAL}{" "}
-            blocks and {formatBytes(MAX_BLOCK_BYTES_PER_MATERIAL)} of block content in total.
-          </Text>
-        )}
+          {overflowing.length > 0 ? (
+            <Text fontSize="sm" color="fg.error">
+              Over the limit: {overflowing.map((pane) => pane.label).join(", ")}. Trim before
+              saving.
+            </Text>
+          ) : (
+            <Text fontSize="sm" color="fg.muted">
+              {formatBytes(used)} in this block. A material holds at most {MAX_BLOCKS_PER_MATERIAL}{" "}
+              blocks and {formatBytes(MAX_BLOCK_BYTES_PER_MATERIAL)} of block content in total.
+            </Text>
+          )}
 
-        <ConstraintNotice />
-      </Flex>
-    </Modal>
+          <ConstraintNotice />
+        </Flex>
+      </Modal>
+
+      <ConfirmDialog
+        open={confirmingDiscard}
+        title="Discard your changes?"
+        description="The edits to this interactive block have not been saved into the material."
+        confirmLabel="Discard"
+        destructive
+        onConfirm={() => {
+          setConfirmingDiscard(false);
+          onClose();
+        }}
+        onClose={() => setConfirmingDiscard(false)}
+      />
+    </>
   );
 }
 

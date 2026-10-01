@@ -6,6 +6,13 @@ export type NavItem = {
   href: string;
   label: string;
   icon: SpriteName;
+  /**
+   * Other path prefixes that belong to this destination. An Assessment is
+   * edited at `/manage/assessments/...` but reached from inside a Module, and
+   * a rail with nothing lit there tells the Architect they have left the place
+   * they are still working in.
+   */
+  alsoActiveUnder?: readonly string[];
 };
 
 /**
@@ -25,7 +32,12 @@ const NAV_BY_ROLE: Readonly<Record<UserRole, readonly NavItem[]>> = {
     { href: routes.profile, label: "Profile", icon: "user" },
   ],
   ARCHITECT: [
-    { href: routes.manageModules, label: "Modules", icon: "books" },
+    {
+      href: routes.manageModules,
+      label: "Modules",
+      icon: "books",
+      alsoActiveUnder: ["/manage/assessments"],
+    },
     // Supervising a live session was three screens deep — module, assessment,
     // session — which is two too many for something an Architect opens while a
     // lab is already running.
@@ -40,6 +52,16 @@ const NAV_BY_ROLE: Readonly<Record<UserRole, readonly NavItem[]>> = {
 
 export function navItemsForRole(role: UserRole): readonly NavItem[] {
   return NAV_BY_ROLE[role];
+}
+
+/**
+ * Whether the rail marks `item` as where the user is. Prefixes match whole
+ * segments only, so `/manage/modules` does not claim `/manage/modules-archive`.
+ */
+export function isNavItemActive(pathname: string, item: NavItem): boolean {
+  return [item.href, ...(item.alsoActiveUnder ?? [])].some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 /** How a role is named in the UI. Matches the SRS vocabulary exactly. */

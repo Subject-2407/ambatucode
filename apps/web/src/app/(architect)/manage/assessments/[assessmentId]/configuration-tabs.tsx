@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Checkbox, Stack, Text } from "@chakra-ui/react";
 import {
   ASSESSMENT_DURATION_MINUTES,
@@ -11,32 +12,31 @@ import {
 } from "@ambatucode/shared";
 import { TextField } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select";
+import { describeRange, readInt, settleInt, typingProblem, type IntRange } from "./number-input";
 import type { TabProps } from "./problem-tabs";
+
+// Mirrors the bounds in the shared assessment schema, which is what the server
+// enforces. Duration already has a named constant there and uses it.
+const TIME_LIMIT_MS: IntRange = { min: 100, max: 60_000 };
+const MEMORY_LIMIT_MB: IntRange = { min: 16, max: 2_048 };
+const FOCUS_LOSS_THRESHOLD: IntRange = { min: 0, max: 100 };
 
 /** Execution and memory ceilings applied to every run and submission. */
 export function LimitsTab({ draft, onChange }: TabProps) {
   return (
     <Stack gap="5" maxWidth="32rem">
-      <TextField
+      <NumberField
         label="Time limit per test case (ms)"
-        type="number"
-        min={100}
-        max={60_000}
-        value={String(draft.timeLimitMs)}
-        onChange={(event) =>
-          onChange({ timeLimitMs: toInt(event.currentTarget.value, 100, 60_000) })
-        }
+        range={TIME_LIMIT_MS}
+        value={draft.timeLimitMs}
+        onChange={(timeLimitMs) => onChange({ timeLimitMs })}
       />
 
-      <TextField
+      <NumberField
         label="Memory limit (MB)"
-        type="number"
-        min={16}
-        max={2_048}
-        value={String(draft.memoryLimitMb)}
-        onChange={(event) =>
-          onChange({ memoryLimitMb: toInt(event.currentTarget.value, 16, 2_048) })
-        }
+        range={MEMORY_LIMIT_MB}
+        value={draft.memoryLimitMb}
+        onChange={(memoryLimitMb) => onChange({ memoryLimitMb })}
       />
 
       <SelectField
@@ -76,21 +76,11 @@ export function TimingTab({ draft, onChange }: TabProps) {
 
       {draft.timeMode === "TIMED" ? (
         <>
-          <TextField
+          <NumberField
             label="Duration (minutes)"
-            type="number"
-            min={ASSESSMENT_DURATION_MINUTES.min}
-            max={ASSESSMENT_DURATION_MINUTES.max}
-            value={String(draft.durationMinutes ?? ASSESSMENT_DURATION_MINUTES.min)}
-            onChange={(event) =>
-              onChange({
-                durationMinutes: toInt(
-                  event.currentTarget.value,
-                  ASSESSMENT_DURATION_MINUTES.min,
-                  ASSESSMENT_DURATION_MINUTES.max,
-                ),
-              })
-            }
+            range={ASSESSMENT_DURATION_MINUTES}
+            value={draft.durationMinutes ?? ASSESSMENT_DURATION_MINUTES.min}
+            onChange={(durationMinutes) => onChange({ durationMinutes })}
           />
 
           <SelectField
@@ -215,15 +205,11 @@ export function AntiCheatTab({ draft, onChange }: TabProps) {
             ]}
           />
 
-          <TextField
+          <NumberField
             label="Losses tolerated first"
-            type="number"
-            min={0}
-            max={100}
-            value={String(antiCheat.focusLossThreshold)}
-            onChange={(event) =>
-              set({ focusLossThreshold: toInt(event.currentTarget.value, 0, 100) })
-            }
+            range={FOCUS_LOSS_THRESHOLD}
+            value={antiCheat.focusLossThreshold}
+            onChange={(focusLossThreshold) => set({ focusLossThreshold })}
             helperText="0 acts on the first one. 2 lets two pass and acts on the third."
           />
         </>
@@ -273,9 +259,60 @@ function Toggle({
   );
 }
 
-/** A number input can hold anything, including nothing. Clamp rather than trust. */
-function toInt(raw: string, min: number, max: number): number {
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return min;
-  return Math.min(max, Math.max(min, parsed));
+/**
+ * A whole number, held as the text being typed and committed to the draft only
+ * once that text reads as a number in range. Leaving the field pulls whatever
+ * is there into range, so the draft never holds a value the server refuses —
+ * and the Architect watches the correction happen rather than finding it later.
+ */
+function NumberField({
+  label,
+  range,
+  value,
+  onChange,
+  helperText,
+}: {
+  label: string;
+  range: IntRange;
+  value: number;
+  onChange: (value: number) => void;
+  helperText?: string;
+}) {
+  const [raw, setRaw] = useState(String(value));
+  const [committed, setCommitted] = useState(value);
+
+  // A value set from outside — the server, a reload — replaces the text. One
+  // that came from this field's own typing is already on screen, perhaps as
+  // "0250", and rewriting it under the cursor would fight the Architect.
+  if (value !== committed) {
+    setCommitted(value);
+    const current = readInt(raw, range);
+    if (current.kind !== "valid" || current.value !== value) setRaw(String(value));
+  }
+
+  const rangeText = describeRange(range);
+
+  return (
+    <TextField
+      label={label}
+      type="number"
+      inputMode="numeric"
+      min={range.min}
+      max={range.max}
+      value={raw}
+      onChange={(event) => {
+        const next = event.currentTarget.value;
+        setRaw(next);
+        const reading = readInt(next, range);
+        if (reading.kind === "valid" && reading.value !== value) onChange(reading.value);
+      }}
+      onBlur={() => {
+        const settled = settleInt(raw, range, value);
+        setRaw(String(settled));
+        if (settled !== value) onChange(settled);
+      }}
+      errorText={typingProblem(readInt(raw, range), range)}
+      helperText={helperText ? `${rangeText} ${helperText}` : rangeText}
+    />
+  );
 }
