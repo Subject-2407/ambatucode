@@ -80,7 +80,7 @@ const SCREENS: Screen[] = [
     name: "live monitor",
     role: "architect",
     path: (f) => `/manage/sessions/${f.sessionId}/monitor`,
-    ready: "Events",
+    ready: "Activity",
   },
   { name: "grading records", role: "architect", path: () => "/manage/grades", ready: "Grades" },
   {
